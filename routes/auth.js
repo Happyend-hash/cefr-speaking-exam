@@ -35,6 +35,52 @@ router.post('/register', async (req, res, next) => {
 });
 
 /**
+ * @route   POST /api/auth/signup
+ * @desc    Register and sign in immediately, returning a usable token.
+ * @access  Public
+ *
+ * Exists because /register deliberately returns no token (it expects email
+ * verification first), which leaves a new user stranded at the sign-up screen.
+ * Accepts either a single `name` or separate `firstName`/`lastName`.
+ */
+router.post('/signup', async (req, res, next) => {
+  try {
+    const { email, password, name } = req.body;
+    let { firstName, lastName } = req.body;
+
+    if (!firstName && name) {
+      const parts = String(name).trim().split(/\s+/);
+      firstName = parts.shift() || '';
+      lastName = parts.join(' ') || firstName;
+    }
+
+    if (!email || !password || !firstName) {
+      throw new APIError('Name, email and password are all required', 400);
+    }
+    if (String(password).length < 8) {
+      throw new APIError('Password must be at least 8 characters', 400);
+    }
+
+    await AuthService.register({
+      email,
+      firstName,
+      lastName: lastName || firstName,
+      password
+    });
+
+    const result = await AuthService.login(email, password);
+
+    res.status(201).json({
+      success: true,
+      message: 'Account created',
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * @route   POST /api/auth/login
  * @desc    Login user
  * @access  Public

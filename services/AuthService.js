@@ -97,7 +97,7 @@ class AuthService {
    */
   async refreshAccessToken(refreshToken) {
     try {
-      const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
+      const decoded = jwt.verify(refreshToken, this.getRefreshTokenSecret());
       const user = await User.findById(decoded.id);
 
       if (!user) {
@@ -256,6 +256,32 @@ class AuthService {
   }
 
   /**
+   * Secret used to sign refresh tokens.
+   *
+   * REFRESH_TOKEN_SECRET is not configured in every environment, and jwt.sign
+   * throws outright on an undefined secret — which made every login fail with a
+   * 500 rather than anything diagnosable. Falling back to a value derived from
+   * JWT_SECRET keeps login working; setting a distinct secret is still better,
+   * because it means a leaked access-token secret cannot mint refresh tokens.
+   */
+  getRefreshTokenSecret() {
+    const dedicated = process.env.REFRESH_TOKEN_SECRET;
+    if (dedicated) return dedicated;
+
+    if (!process.env.JWT_SECRET) {
+      throw new Error('Neither REFRESH_TOKEN_SECRET nor JWT_SECRET is set — cannot issue tokens');
+    }
+
+    if (!this._warnedAboutRefreshSecret) {
+      console.warn(
+        '⚠ REFRESH_TOKEN_SECRET is not set; deriving it from JWT_SECRET. Set a separate secret in production.'
+      );
+      this._warnedAboutRefreshSecret = true;
+    }
+    return `${process.env.JWT_SECRET}:refresh`;
+  }
+
+  /**
    * Generate refresh token
    */
   generateRefreshToken(user) {
@@ -263,7 +289,7 @@ class AuthService {
       {
         id: user._id.toString()
       },
-      process.env.REFRESH_TOKEN_SECRET,
+      this.getRefreshTokenSecret(),
       { expiresIn: process.env.REFRESH_TOKEN_EXPIRE || '30d' }
     );
   }
