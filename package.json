@@ -9,6 +9,7 @@
     "dev": "nodemon server.js",
     "test": "node --test test/**/*.test.js",
     "seed": "node scripts/seedDb.js",
+    "make-admin": "node scripts/makeAdmin.js",
     "smoke": "node scripts/smoke-test.js",
     "check:api": "node scripts/check-api.js",
     "check": "node scripts/check-api.js"

@@ -151,9 +151,11 @@ router.get('/', async (req, res, next) => {
     const filter = { isActive: true, isPublished: true };
     if (req.query.level) filter.level = req.query.level;
 
+    if (req.query.module) filter.module = req.query.module;
+
     const exams = await Exam.find(filter)
-      .select('title level description totalTasks duration maxScore tags')
-      .sort({ level: 1 })
+      .select('title module level description totalTasks duration maxScore tags')
+      .sort({ module: 1, title: 1 })
       .lean();
 
     res.json({
@@ -161,7 +163,8 @@ router.get('/', async (req, res, next) => {
       data: exams.map(e => ({
         id: e._id,
         title: e.title,
-        level: e.level,
+        module: e.module || 'speaking',
+        level: e.level || null,
         description: e.description,
         totalTasks: e.totalTasks,
         duration: e.duration,
@@ -193,17 +196,21 @@ router.get('/:id', async (req, res, next) => {
       data: {
         id: exam._id,
         title: exam.title,
-        level: exam.level,
+        module: exam.module || 'speaking',
+        level: exam.level || null,
         description: exam.description,
         duration: exam.duration,
         totalTasks: exam.totalTasks,
         tasks: exam.tasks.map(t => ({
           taskNumber: t.taskNumber,
           type: t.type,
+          part: t.part,
+          instructions: t.instructions,
           question: t.question,
           images: t.images || [],
           followUpQuestions: t.followUpQuestions || [],
-          timeLimit: t.timeLimit
+          timeLimit: t.timeLimit,
+          minWords: t.minWords
         }))
       }
     });
@@ -244,8 +251,9 @@ router.post('/:id/start', async (req, res, next) => {
     const result = await ExamResult.create({
       student: req.user.id,
       exam: exam._id,
-      examLevel: exam.level,
-      overallLevel: exam.level, // provisional; recalculated after evaluation
+      examLevel: exam.level || undefined,
+      module: exam.module || 'speaking',
+      // overallLevel is the outcome of the test, so it stays unset until evaluated.
       status: 'in_progress',
       startedAt: new Date(),
       taskResults: [],
@@ -398,7 +406,8 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
           question: task.question,
           cefrLevel: exam.level,
           referenceImages: task.images,
-          followUpQuestions: task.followUpQuestions
+          followUpQuestions: task.followUpQuestions,
+          minWords: task.minWords
         });
 
         taskResult.aiEvaluation = {

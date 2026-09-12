@@ -16,10 +16,16 @@ const examResultSchema = new mongoose.Schema(
     },
 
     // Exam Metadata
+    // Optional: a Multilevel test is not tied to a level, it determines one.
     examLevel: {
       type: String,
-      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
-      required: true
+      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', null]
+    },
+
+    module: {
+      type: String,
+      enum: ['speaking', 'writing'],
+      default: 'speaking'
     },
 
     // Status
@@ -53,27 +59,16 @@ const examResultSchema = new mongoose.Schema(
           score: Number, // 0-100
 
           // CEFR Assessment Criteria
+          // A free-form map of { criterionName: { score, feedback } }.
+          //
+          // Fixed keys only worked for speaking. Writing is assessed on task
+          // achievement, coherence, lexical resource and grammatical range —
+          // pronunciation and fluency are meaningless on a written answer, and
+          // a fixed schema forced empty scores for them. The client renders
+          // whatever keys are present, so both modules work unchanged.
           criteria: {
-            grammar: {
-              score: Number,
-              feedback: String
-            },
-            vocabulary: {
-              score: Number,
-              feedback: String
-            },
-            fluency: {
-              score: Number,
-              feedback: String
-            },
-            pronunciation: {
-              score: Number,
-              feedback: String
-            },
-            coherence: {
-              score: Number,
-              feedback: String
-            }
+            type: mongoose.Schema.Types.Mixed,
+            default: {}
           },
 
           overallFeedback: String,
@@ -110,10 +105,11 @@ const examResultSchema = new mongoose.Schema(
     // Overall Results
     overallScore: Number, // Average of all tasks
 
+    // The outcome of the test, not an input to it — so it is only set once
+    // evaluation has run. Requiring it made starting an attempt impossible.
     overallLevel: {
       type: String,
-      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
-      required: true
+      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', null]
     },
 
     isPassed: {

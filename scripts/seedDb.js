@@ -1,10 +1,24 @@
 /**
- * Seed the database with the six CEFR speaking exams.
+ * Seed the starter question bank.
  *
- * Idempotent: running it repeatedly updates the existing exams in place rather
- * than creating duplicates. Safe to run against production.
+ * Structured to the O'zbekiston Multilevel format: one Speaking test with Parts
+ * 1.1, 1.2, 2 and 3, and one Writing test with Task 1 and Task 2. Unlike a
+ * per-level CEFR test, a Multilevel sitting is not tied to a level — it
+ * determines one.
+ *
+ * Every question here is original, written to the format. They are a starting
+ * point, not a fixed syllabus: add, edit and delete them in the Manage Questions
+ * page (/admin.html) rather than by editing this file.
  *
  *   npm run seed
+ *
+ * Idempotent — re-running updates the seeded tests in place and leaves anything
+ * you created yourself untouched. It will overwrite edits to the seeded tests,
+ * so rename a test if you want it protected from a future re-seed.
+ *
+ * IMPORTANT: verify timings and question counts against the official Multilevel
+ * specification before using this with students. The structure here follows the
+ * published format, but exact allowances should come from the official source.
  */
 
 import mongoose from 'mongoose';
@@ -14,208 +28,210 @@ import User from '../models/User.js';
 
 dotenv.config();
 
-// Must satisfy the User model's email validator, which only accepts a 2-3
-// character TLD — a .local address is rejected and the seed aborts.
 const SYSTEM_EMAIL = process.env.SEED_ADMIN_EMAIL || 'system@cefr-exam.com';
 
-const EXAMS = [
-  {
-    level: 'A1',
-    description:
-      'Basic everyday exchanges. You introduce yourself and talk about familiar things in simple phrases.',
-    tasks: [
-      {
-        type: 'personal_question',
-        question:
-          'Introduce yourself. Say your name, where you are from, and how old you are.',
-        timeLimit: 60,
-        scoringCriteria: ['Basic personal information', 'Simple present tense', 'Clear pronunciation of familiar words']
-      },
-      {
-        type: 'personal_question',
-        question: 'Describe your family. Who do you live with? What do they do?',
-        timeLimit: 90,
-        scoringCriteria: ['Family vocabulary', 'Simple connectors (and, but)', 'Present simple']
-      },
-      {
-        type: 'personal_question',
-        question: 'What do you do every day? Describe your daily routine from morning to evening.',
-        timeLimit: 90,
-        scoringCriteria: ['Time expressions', 'Sequencing (then, after that)', 'Common verbs']
-      }
-    ]
-  },
-  {
-    level: 'A2',
-    description:
-      'Simple, direct exchanges on routine matters. You describe experiences and give short reasons.',
-    tasks: [
-      {
-        type: 'personal_question',
-        question: 'Describe your hometown. What do you like about it, and what would you change?',
-        timeLimit: 90,
-        scoringCriteria: ['Descriptive adjectives', 'Expressing preference', 'Simple reasons (because)']
-      },
-      {
-        type: 'storytelling',
-        question: 'Tell me about your last holiday or a trip you took. Where did you go and what did you do?',
-        timeLimit: 120,
-        scoringCriteria: ['Past simple', 'Chronological narrative', 'Travel vocabulary']
-      },
-      {
-        type: 'discussion',
-        question: 'What are your plans for the next year? Talk about something you want to learn or achieve.',
-        timeLimit: 90,
-        scoringCriteria: ['Future forms (going to, will)', 'Expressing intention', 'Basic justification']
-      }
-    ]
-  },
-  {
-    level: 'B1',
-    description:
-      'Connected speech on familiar topics. You explain opinions, narrate events, and handle most travel situations.',
-    tasks: [
-      {
-        type: 'discussion',
-        question:
-          'Some people prefer working from home, others prefer an office. Which do you prefer, and why?',
-        timeLimit: 120,
-        scoringCriteria: ['Opinion language', 'Comparison', 'Supporting arguments with examples']
-      },
-      {
-        type: 'storytelling',
-        question:
-          'Describe a time when you had to solve a difficult problem. What happened, and how did you handle it?',
-        timeLimit: 150,
-        scoringCriteria: ['Past narrative tenses', 'Cause and effect', 'Reflection on outcome']
-      },
-      {
-        type: 'interview',
-        question: 'Talk about a skill you would like to develop and why it matters to you.',
-        followUpQuestions: [
-          'What is stopping you from learning it right now?',
-          'How would your life change if you mastered it?'
-        ],
-        timeLimit: 150,
-        scoringCriteria: ['Sustained turn', 'Hypothetical language', 'Responding to follow-ups']
-      }
-    ]
-  },
-  {
-    level: 'B2',
-    description:
-      'Clear, detailed speech on a wide range of subjects. You argue a viewpoint and weigh advantages against disadvantages.',
-    tasks: [
-      {
-        type: 'discussion',
-        question:
-          'Should social media platforms be responsible for the content their users post? Argue your position.',
-        timeLimit: 150,
-        scoringCriteria: ['Structured argument', 'Concession and rebuttal', 'Precise vocabulary']
-      },
-      {
-        type: 'discussion',
-        question:
-          'What are the advantages and disadvantages of remote education compared with classroom teaching?',
-        timeLimit: 150,
-        scoringCriteria: ['Balanced analysis', 'Discourse markers', 'Range of structures']
-      },
-      {
-        type: 'interview',
-        question:
-          'Describe a significant change in your country over the last decade and its effects on daily life.',
-        followUpQuestions: [
-          'Who benefited most from this change, and who lost out?',
-          'Do you expect the trend to continue?'
-        ],
-        timeLimit: 180,
-        scoringCriteria: ['Abstract discussion', 'Speculation', 'Coherent extended turn']
-      }
-    ]
-  },
-  {
-    level: 'C1',
-    description:
-      'Fluent, spontaneous speech for social, academic and professional purposes, with flexible and effective language use.',
-    tasks: [
-      {
-        type: 'discussion',
-        question:
-          'To what extent should governments regulate artificial intelligence? Develop a reasoned position.',
-        timeLimit: 180,
-        scoringCriteria: ['Nuanced argumentation', 'Hedging and qualification', 'Idiomatic control']
-      },
-      {
-        type: 'discussion',
-        question:
-          'Some argue economic growth is incompatible with environmental protection. How far do you agree?',
-        timeLimit: 180,
-        scoringCriteria: ['Evaluating competing claims', 'Abstract reasoning', 'Cohesive devices']
-      },
-      {
-        type: 'interview',
-        question:
-          'Discuss a piece of work — a book, film, or project — that changed how you think about something.',
-        followUpQuestions: [
-          'What specifically made it persuasive?',
-          'Has your view of it shifted since?',
-          'Would you recommend it to someone who disagrees with its premise?'
-        ],
-        timeLimit: 210,
-        scoringCriteria: ['Critical analysis', 'Spontaneous elaboration', 'Register control']
-      }
-    ]
-  },
-  {
-    level: 'C2',
-    description:
-      'Effortless, precise expression with fine shades of meaning, even in complex or unfamiliar situations.',
-    tasks: [
-      {
-        type: 'discussion',
-        question:
-          'Is objectivity achievable in journalism, or is every account inevitably shaped by perspective?',
-        timeLimit: 210,
-        scoringCriteria: ['Conceptual precision', 'Sophisticated structures', 'Effortless fluency']
-      },
-      {
-        type: 'discussion',
-        question:
-          'Argue for a position you personally disagree with, as convincingly as you can.',
-        timeLimit: 210,
-        scoringCriteria: ['Rhetorical control', 'Anticipating counterarguments', 'Stylistic range']
-      },
-      {
-        type: 'interview',
-        question:
-          'Assess the claim that technological progress has outpaced our ethical frameworks.',
-        followUpQuestions: [
-          'Which domain illustrates that gap most sharply?',
-          'What would closing it actually require?',
-          'Is the premise itself sound?'
-        ],
-        timeLimit: 240,
-        scoringCriteria: ['Abstract synthesis', 'Precision under pressure', 'Subtlety of meaning']
-      }
-    ]
-  }
-];
+const SPEAKING_TEST = {
+  title: 'Multilevel Speaking — Test 1',
+  module: 'speaking',
+  description:
+    'Full speaking test in the Multilevel format: Parts 1.1, 1.2, 2 and 3. Your level is determined from your performance.',
+  tasks: [
+    // ---- Part 1.1 — short factual answers about yourself ----
+    {
+      part: '1.1',
+      type: 'personal_question',
+      instructions: 'Answer briefly. You have 30 seconds for each question.',
+      question: 'Where are you from, and how long have you lived there?',
+      timeLimit: 30,
+      scoringCriteria: ['Clear factual answer', 'Basic accuracy', 'Audible delivery']
+    },
+    {
+      part: '1.1',
+      type: 'personal_question',
+      instructions: 'Answer briefly. You have 30 seconds.',
+      question: 'What do you do — do you work or study? Tell me a little about it.',
+      timeLimit: 30,
+      scoringCriteria: ['Relevant detail', 'Present simple accuracy', 'Everyday vocabulary']
+    },
+    {
+      part: '1.1',
+      type: 'personal_question',
+      instructions: 'Answer briefly. You have 30 seconds.',
+      question: 'How do you usually travel around your city, and why?',
+      timeLimit: 30,
+      scoringCriteria: ['Reason given', 'Connectors (because, so)', 'Fluency at short length']
+    },
+
+    // ---- Part 1.2 — longer turn on a familiar topic ----
+    {
+      part: '1.2',
+      type: 'extended_answer',
+      instructions:
+        'You have 1 minute to prepare and 2 minutes to speak. Cover all the points below.',
+      question:
+        'Describe a place in your country that you would recommend to a visitor. Say where it is, what people can do there, why you would recommend it, and when the best time to go is.',
+      timeLimit: 120,
+      scoringCriteria: [
+        'Covers every prompt point',
+        'Sustains a two-minute turn',
+        'Descriptive vocabulary',
+        'Organisation and linking'
+      ]
+    },
+    {
+      part: '1.2',
+      type: 'extended_answer',
+      instructions: 'You have 1 minute to prepare and 2 minutes to speak.',
+      question:
+        'Describe a skill you have learned outside school or university. Say what it is, how you learned it, how difficult it was, and how you use it now.',
+      timeLimit: 120,
+      scoringCriteria: [
+        'Past narrative control',
+        'Sequencing across the answer',
+        'Range of structures',
+        'Sustained fluency'
+      ]
+    },
+
+    // ---- Part 2 — compare and contrast two pictures ----
+    {
+      part: '2',
+      type: 'picture_comparison',
+      instructions:
+        'Compare the two situations. Say how they are similar, how they differ, and which you would prefer. You have 2 minutes.',
+      question:
+        'Compare these two ways of studying: studying alone at home, and studying in a group at a library or learning centre. What are the advantages of each, and which would suit you better?',
+      timeLimit: 120,
+      images: [],
+      scoringCriteria: [
+        'Comparison and contrast language',
+        'Balanced treatment of both options',
+        'Justified preference',
+        'Precision of vocabulary'
+      ]
+    },
+    {
+      part: '2',
+      type: 'picture_comparison',
+      instructions: 'Compare the two situations and give your view. You have 2 minutes.',
+      question:
+        'Compare shopping in a local bazaar with shopping in a large supermarket. Describe what each experience is like, and explain which you think most families in your country prefer, and why.',
+      timeLimit: 120,
+      images: [],
+      scoringCriteria: [
+        'Descriptive detail',
+        'Comparative structures',
+        'Speculation about others',
+        'Coherent organisation'
+      ]
+    },
+
+    // ---- Part 3 — opinion, with examiner follow-ups ----
+    {
+      part: '3',
+      type: 'opinion',
+      instructions:
+        'Give your opinion and support it with reasons and examples. Be ready for follow-up questions. You have 2 minutes.',
+      question:
+        'Some people think young people should be required to spend a year working or volunteering before starting university. Do you agree?',
+      followUpQuestions: [
+        'What might someone gain from that year that university cannot teach?',
+        'Who would find such a requirement most difficult?',
+        'Should it be compulsory, or a personal choice?'
+      ],
+      timeLimit: 120,
+      scoringCriteria: [
+        'Clear position with support',
+        'Responds to follow-ups',
+        'Abstract and hypothetical language',
+        'Fluency under pressure'
+      ]
+    },
+    {
+      part: '3',
+      type: 'opinion',
+      instructions: 'Give your opinion with reasons and examples. You have 2 minutes.',
+      question:
+        'In many countries people are moving from villages to large cities. Is this change good or bad for a society overall?',
+      followUpQuestions: [
+        'What is lost when a village empties?',
+        'What could persuade young people to stay?',
+        'Will this trend continue in your country?'
+      ],
+      timeLimit: 120,
+      scoringCriteria: [
+        'Weighing competing effects',
+        'Cause and consequence language',
+        'Extended reasoning',
+        'Range and accuracy'
+      ]
+    }
+  ]
+};
+
+const WRITING_TEST = {
+  title: 'Multilevel Writing — Test 1',
+  module: 'writing',
+  description:
+    'Full writing test in the Multilevel format: Task 1 describes visual information, Task 2 is an opinion essay.',
+  tasks: [
+    {
+      part: 'Task 1',
+      type: 'writing_task1',
+      instructions:
+        'Describe the information below. Report the main features and make comparisons where relevant. Write at least 150 words. You have about 20 minutes.',
+      question:
+        'The table shows how students at one university in Tashkent travel to campus, in 2015 and 2025.\n\n' +
+        'Method            2015     2025\n' +
+        'Bus / metro        46%      38%\n' +
+        'Private car        18%      27%\n' +
+        'Walking            24%      16%\n' +
+        'Bicycle / scooter   4%      14%\n' +
+        'Taxi / ride-share   8%       5%\n\n' +
+        'Summarise the main changes and compare the figures. Do not give your opinion.',
+      timeLimit: 1200,
+      minWords: 150,
+      scoringCriteria: [
+        'Task achievement — reports key features accurately',
+        'Makes relevant comparisons',
+        'Organisation and paragraphing',
+        'Range and accuracy of language',
+        'No unsupported opinion'
+      ]
+    },
+    {
+      part: 'Task 2',
+      type: 'writing_task2',
+      instructions:
+        'Write an essay giving your opinion. Support it with reasons and examples from your knowledge or experience. Write at least 250 words. You have about 40 minutes.',
+      question:
+        'Some people believe that school students should be taught practical life skills — managing money, cooking, basic repairs — instead of some traditional academic subjects. Others argue academic subjects matter more for a student\'s future.\n\nDiscuss both views and give your own opinion.',
+      timeLimit: 2400,
+      minWords: 250,
+      scoringCriteria: [
+        'Addresses both views and states a clear position',
+        'Develops ideas with reasons and examples',
+        'Coherence, cohesion and paragraphing',
+        'Lexical range and precision',
+        'Grammatical range and accuracy'
+      ]
+    }
+  ]
+};
+
+const TESTS = [SPEAKING_TEST, WRITING_TEST];
 
 async function seed() {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) {
+  if (!process.env.MONGODB_URI) {
     console.error('✗ MONGODB_URI is not set. Add it to your .env file.');
     process.exit(1);
   }
 
-  await mongoose.connect(uri);
+  await mongoose.connect(process.env.MONGODB_URI);
   console.log('✓ Connected to MongoDB');
 
-  // Exams need a creator. Reuse any existing admin before inventing one.
-  let author = await User.findOne({ role: 'admin' });
-  if (!author) {
-    author = await User.findOne({ email: SYSTEM_EMAIL });
-  }
+  // Tests need an author. Reuse an existing admin before inventing one.
+  let author = (await User.findOne({ role: 'admin' })) || (await User.findOne({ email: SYSTEM_EMAIL }));
   if (!author) {
     author = await User.create({
       email: SYSTEM_EMAIL,
@@ -226,37 +242,52 @@ async function seed() {
       status: 'active',
       isEmailVerified: true
     });
-    console.log(`✓ Created system author ${SYSTEM_EMAIL} (random password — sign in via a real admin account)`);
+    console.log(`✓ Created system author ${SYSTEM_EMAIL}`);
+  }
+
+  // Retire the old per-level CEFR tests, which do not match the Multilevel
+  // format. Unpublished rather than deleted so existing attempts keep working.
+  const retired = await Exam.updateMany(
+    { title: /^CEFR Speaking [A-C][12]$/, isPublished: true },
+    { $set: { isPublished: false, isActive: false } }
+  );
+  if (retired.modifiedCount) {
+    console.log(`✓ Retired ${retired.modifiedCount} old per-level test(s) — hidden from students, attempts preserved`);
   }
 
   let created = 0;
   let updated = 0;
 
-  for (const spec of EXAMS) {
-    const title = `CEFR Speaking ${spec.level}`;
+  for (const spec of TESTS) {
     const tasks = spec.tasks.map((task, index) => ({ taskNumber: index + 1, ...task }));
 
-    const existing = await Exam.findOne({ level: spec.level });
+    const existing = await Exam.findOne({ title: spec.title });
     const target = existing || new Exam({ createdBy: author._id });
 
-    target.title = title;
-    target.level = spec.level;
+    target.title = spec.title;
+    target.module = spec.module;
     target.description = spec.description;
     target.tasks = tasks;
     target.isActive = true;
     target.isPublished = true;
     target.publishedAt = target.publishedAt || new Date();
     target.updatedBy = author._id;
-    target.tags = ['speaking', spec.level.toLowerCase()];
-    target.category = 'speaking';
+    target.tags = ['multilevel', spec.module];
+    target.category = spec.module;
     target.calculateDuration();
 
     await target.save();
     existing ? updated++ : created++;
-    console.log(`  ${existing ? 'updated' : 'created'}  ${title}  (${tasks.length} tasks, ${target.duration}s)`);
+
+    const minutes = Math.round(target.duration / 60);
+    console.log(`  ${existing ? 'updated' : 'created'}  ${spec.title}  (${tasks.length} questions, ~${minutes} min)`);
+    for (const task of tasks) {
+      console.log(`      Part ${task.part}  ${task.question.split('\n')[0].slice(0, 58)}…`);
+    }
   }
 
   console.log(`\n✓ Seed complete — ${created} created, ${updated} updated`);
+  console.log('  Edit these at /admin.html (sign in with an admin account).');
   await mongoose.disconnect();
 }
 

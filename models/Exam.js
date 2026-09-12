@@ -3,17 +3,31 @@ import mongoose from 'mongoose';
 const examSchema = new mongoose.Schema(
   {
     // Basic Info
+    // Free text: the enum here used to allow only "CEFR Speaking <level>", which
+    // made the Multilevel format impossible to express.
     title: {
       type: String,
       required: true,
-      enum: ['CEFR Speaking A1', 'CEFR Speaking A2', 'CEFR Speaking B1', 'CEFR Speaking B2', 'CEFR Speaking C1', 'CEFR Speaking C2']
+      trim: true
     },
 
+    // Which exam module this test belongs to.
+    module: {
+      type: String,
+      enum: ['speaking', 'writing'],
+      required: true,
+      default: 'speaking'
+    },
+
+    // Multilevel is a single test that DETERMINES the candidate's level, so a
+    // test is not tied to one. Kept optional for level-targeted practice sets.
     level: {
       type: String,
-      required: true,
-      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
+      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', null]
     },
+
+    // Display label for the part, e.g. "1.1", "2", "Task 1".
+    partLabel: String,
 
     description: String,
 
@@ -26,19 +40,47 @@ const examSchema = new mongoose.Schema(
         },
         type: {
           type: String,
-          enum: ['personal_question', 'image_description', 'discussion', 'storytelling', 'interview'],
+          enum: [
+            // Speaking
+            'personal_question',    // Part 1.1 — short factual answers
+            'extended_answer',      // Part 1.2 — longer turn on a familiar topic
+            'picture_comparison',   // Part 2  — compare and contrast two images
+            'image_description',    // Part 2  — describe a single image
+            'opinion',              // Part 3  — argue a position, with follow-ups
+            'discussion',
+            'storytelling',
+            'interview',
+            // Writing
+            'writing_task1',        // Describe visual information
+            'writing_task2'         // Opinion essay
+          ],
           required: true
         },
+
+        // Part label as candidates know it: "1.1", "1.2", "2", "3", "Task 1".
+        part: String,
+
         question: {
           type: String,
           required: true
         },
-        images: [String], // URLs to images for description tasks
-        followUpQuestions: [String], // For interviews
+
+        // Shown before the question — what the candidate must do.
+        instructions: String,
+
+        images: [String], // URLs to images for description/comparison tasks
+
+        followUpQuestions: [String],
+
         timeLimit: {
           type: Number,
-          default: 120 // seconds
+          default: 120 // seconds; for writing tasks this is the whole allowance
         },
+
+        // Writing only — the expected length, shown to the candidate and
+        // passed to the evaluator so under-length answers are penalised.
+        minWords: Number,
+
         scoringCriteria: [String], // What to evaluate
         sampleAnswer: String // For admin reference
       }

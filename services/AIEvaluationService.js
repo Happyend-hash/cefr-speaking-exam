@@ -45,14 +45,20 @@ class AIEvaluationService {
         };
       }
 
-      const prompt = this.buildEvaluationPrompt(
-        transcription,
-        taskType,
-        question,
-        cefrLevel,
-        referenceImages,
-        followUpQuestions
-      );
+      // Writing is assessed against different criteria from speaking — there is
+      // nothing to say about pronunciation or fluency in a written answer.
+      const isWriting = String(taskType || '').startsWith('writing_');
+
+      const prompt = isWriting
+        ? this.buildWritingPrompt(transcription, taskType, question, taskData.minWords)
+        : this.buildEvaluationPrompt(
+            transcription,
+            taskType,
+            question,
+            cefrLevel,
+            referenceImages,
+            followUpQuestions
+          );
 
       const response = await this.callClaudeAPI(prompt);
       const evaluation = this.parseEvaluation(response);
@@ -62,6 +68,66 @@ class AIEvaluationService {
       console.error('Error in evaluateTask:', error);
       throw new Error(`AI Evaluation failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Build the evaluation prompt for a written answer.
+   *
+   * Mirrors the speaking prompt's JSON contract exactly, so the same parser and
+   * the same result shape work for both modules — only the criteria differ.
+   */
+  buildWritingPrompt(answer, taskType, question, minWords) {
+    const wordCount = answer.trim().split(/\s+/).filter(Boolean).length;
+    const isTask1 = taskType === 'writing_task1';
+
+    const lengthNote = minWords
+      ? `\nLENGTH: the task required at least ${minWords} words; the candidate wrote ${wordCount}. ` +
+        (wordCount < minWords
+          ? 'An under-length answer cannot reach the higher bands — penalise task achievement accordingly.'
+          : 'The length requirement is met.')
+      : `\nLENGTH: the candidate wrote ${wordCount} words.`;
+
+    return `You are an experienced examiner for the Uzbekistan Multilevel English examination. Assess the written answer below against the CEFR scale.
+
+TASK TYPE: ${isTask1 ? 'Task 1 — describing visual information' : 'Task 2 — opinion essay'}
+
+QUESTION:
+${question}
+${lengthNote}
+
+CANDIDATE'S ANSWER:
+"""
+${answer}
+"""
+
+Assess it on these four criteria, each scored 0-100:
+- taskAchievement: ${isTask1
+      ? 'Does it report the key features accurately, make relevant comparisons, and avoid opinion and invented data?'
+      : 'Does it address every part of the prompt, take a clear position, and develop ideas with relevant support?'}
+- coherence: paragraphing, logical progression, and cohesive devices used accurately rather than mechanically.
+- vocabulary: range, precision and appropriacy, including collocation and any awkward or misused items.
+- grammar: range of structures and accuracy, noting whether errors impede understanding.
+
+Respond with ONLY valid JSON in exactly this structure, and nothing else:
+
+{
+  "score": (0-100, the overall band for this answer),
+  "criteria": {
+    "taskAchievement": { "score": (0-100), "feedback": "Specific comment, quoting the answer where useful" },
+    "coherence": { "score": (0-100), "feedback": "Specific comment" },
+    "vocabulary": { "score": (0-100), "feedback": "Specific comment" },
+    "grammar": { "score": (0-100), "feedback": "Name the actual error patterns you found" }
+  },
+  "overallFeedback": "A short paragraph summarising the level of this answer and why",
+  "strengths": ["Strength 1", "Strength 2", "Strength 3"],
+  "areasForImprovement": ["Specific, actionable point 1", "Point 2", "Point 3"],
+  "suggestedLevel": "CEFR level (A1/A2/B1/B2/C1/C2)"
+}
+
+BAND GUIDANCE:
+- 0-35: A1   - 35-50: A2   - 50-65: B1   - 65-75: B2   - 75-85: C1   - 85-100: C2
+
+Be rigorous and specific. Quote the candidate's own words when pointing out an error, and make every improvement point something they could act on in their next attempt. Do not be generically encouraging.`;
   }
 
   /**

@@ -60,7 +60,9 @@ for (const match of server.matchAll(/app\.(get|post)\(\s*['"](\/api\/[^'"]*)['"]
 
 // ---- 3. Every call the client makes ---------------------------------------
 
-const client = read('public/app.js');
+// Both browser clients are checked: the student app and the admin page.
+const CLIENTS = ['public/app.js', 'public/admin.js'];
+const client = CLIENTS.map(file => read(file)).join('\n');
 const calls = []; // { method, path }
 
 // Each string form is matched separately: a template literal may legitimately

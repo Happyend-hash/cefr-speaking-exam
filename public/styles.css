@@ -174,6 +174,22 @@ main { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
 .timer { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .timer.over { color: var(--red); }
 
+/* Writing tasks: the prompt may contain a table or line breaks that matter. */
+.question-pre { white-space: pre-wrap; font-size: 17px; }
+
+.essay {
+  width: 100%;
+  min-height: 340px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+  line-height: 1.7;
+  resize: vertical;
+}
+.essay:focus { outline: none; border-color: var(--indigo-500); box-shadow: 0 0 0 3px var(--indigo-100); }
+
 .transcript {
   background: var(--ground); border: 1px solid var(--line); border-radius: 9px;
   padding: 14px; font-size: 15px; min-height: 72px; white-space: pre-wrap;

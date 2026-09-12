@@ -362,6 +362,63 @@
 
   const currentTask = () => state.exam?.tasks?.[state.taskIndex] || null;
 
+  const countWords = text => (text || '').trim().split(/\s+/).filter(Boolean).length;
+
+  /** Submit a written answer. Same endpoint as speaking, with text and no audio. */
+  async function submitWriting() {
+    const task = currentTask();
+    const text = (document.getElementById('essay')?.value || '').trim();
+    if (!task || !text) return setState({ error: 'Write your answer before saving it.' });
+
+    rec.uploading = true;
+    render();
+
+    try {
+      const form = new FormData();
+      form.append('transcription', text);
+      form.append('duration', '0');
+
+      const data = await api(`/exam/results/${state.resultId}/tasks/${task.taskNumber}`, {
+        method: 'POST',
+        form
+      });
+
+      state.answered[task.taskNumber] = { transcription: data.transcription, hasAudio: false };
+      rec.uploading = false;
+
+      const isLast = state.taskIndex >= state.exam.tasks.length - 1;
+      setState({ taskIndex: isLast ? state.taskIndex : state.taskIndex + 1, error: '', notice: '' });
+    } catch (error) {
+      rec.uploading = false;
+      setState({ error: error.message });
+    }
+  }
+
+  /** The answer area for a writing task. */
+  function writingBlock(task, done, isLast, allAnswered) {
+    if (done) {
+      return `<div class="alert alert-ok">Answer saved for ${esc(task.part || 'this task')}.</div>
+        <div class="transcript" style="margin-top:12px">${esc(done.transcription)}</div>
+        <p class="muted" style="margin-top:8px">${countWords(done.transcription)} words</p>
+        <div class="row" style="margin-top:16px;justify-content:space-between">
+          <button class="btn btn-ghost btn-sm" data-action="redo">Rewrite</button>
+          ${isLast
+            ? (allAnswered ? '<button class="btn" data-action="finish">Submit for assessment</button>' : '')
+            : '<button class="btn" data-action="next">Next task</button>'}
+        </div>`;
+    }
+
+    return `
+      <textarea id="essay" class="essay" placeholder="Write your answer here…"
+                oninput="document.getElementById('wc').textContent = this.value.trim().split(/\\s+/).filter(Boolean).length"></textarea>
+      <div class="row" style="justify-content:space-between;margin-top:10px">
+        <span class="muted"><span id="wc">0</span> words${task.minWords ? ` · at least ${task.minWords} required` : ''}</span>
+        <button class="btn" data-action="save-writing" ${rec.uploading ? 'disabled' : ''}>
+          ${rec.uploading ? 'Saving…' : 'Save answer'}
+        </button>
+      </div>`;
+  }
+
   // ------------------------------------------------------------ rendering
 
   function render() {
@@ -382,6 +439,9 @@
       <div class="brand" ${state.screen !== 'exam' ? 'data-go="dashboard" style="cursor:pointer"' : ''}>CEFR Speaking</div>
       <div class="nav-right">
         <span class="nav-user">${esc(state.user.firstName || state.user.email)}</span>
+        ${state.user.role === 'admin' && state.screen !== 'exam'
+          ? '<a class="btn btn-ghost btn-sm" href="/admin.html">Manage questions</a>'
+          : ''}
         ${state.screen !== 'exam' ? '<button class="btn btn-ghost btn-sm" data-go="dashboard">Dashboard</button>' : ''}
         <button class="btn btn-ghost btn-sm" data-action="signout">Sign out</button>
       </div>
@@ -474,14 +534,14 @@
           <div class="card exam-card">
             <div class="row" style="justify-content:space-between">
               <h3>${esc(exam.title)}</h3>
-              <span class="badge">${esc(exam.level)}</span>
+              <span class="badge">${esc(exam.module === 'writing' ? 'Writing' : 'Speaking')}</span>
             </div>
             <p class="muted">${esc(exam.description || '')}</p>
             <div class="exam-meta">
-              <span>${exam.totalTasks} tasks</span>
+              <span>${exam.totalTasks} ${exam.module === 'writing' ? 'tasks' : 'questions'}</span>
               <span>~${Math.round((exam.duration || 0) / 60)} min</span>
             </div>
-            <div><button class="btn btn-sm" data-start="${esc(exam.id)}">Start exam</button></div>
+            <div><button class="btn btn-sm" data-start="${esc(exam.id)}">Start test</button></div>
           </div>`).join('')}</div>`
       : `<div class="card"><p class="muted">No exams are published yet. An administrator can add them by running <code>npm run seed</code>.</p></div>`;
 
@@ -518,6 +578,7 @@
     const done = state.answered[task.taskNumber];
     const isLast = state.taskIndex >= total - 1;
     const allAnswered = answeredCount >= total;
+    const isWriting = exam.module === 'writing';
 
     const recorderBlock = done
       ? `<div class="alert alert-ok">Answer saved for task ${task.taskNumber}.</div>
@@ -556,20 +617,21 @@
       <div class="card">
         <div class="row" style="justify-content:space-between;margin-bottom:12px">
           <div>
-            <span class="badge">${esc(exam.level)}</span>
-            <span class="muted" style="margin-left:8px">Task ${task.taskNumber} of ${total}</span>
+            <span class="badge">${esc(task.part ? `Part ${task.part}` : (isWriting ? 'Writing' : 'Speaking'))}</span>
+            <span class="muted" style="margin-left:8px">${task.taskNumber} of ${total}</span>
           </div>
           <span class="muted">${answeredCount}/${total} answered</span>
         </div>
         <div class="progress-track"><div class="progress-fill" style="width:${(answeredCount / total) * 100}%"></div></div>
 
-        <div class="question">${esc(task.question)}</div>
+        ${task.instructions ? `<p class="muted" style="margin-top:10px">${esc(task.instructions)}</p>` : ''}
+        <div class="question${isWriting ? ' question-pre' : ''}">${esc(task.question)}</div>
         ${task.followUpQuestions?.length
           ? `<div class="section-title">The examiner may also ask</div>
              <ul class="followups">${task.followUpQuestions.map(q => `<li>${esc(q)}</li>`).join('')}</ul>`
           : ''}
 
-        ${recorderBlock}
+        ${isWriting ? writingBlock(task, done, isLast, allAnswered) : recorderBlock}
       </div>
 
       <div class="row" style="justify-content:space-between">
@@ -669,6 +731,7 @@
     switch (action) {
       case 'signout': return signOut();
       case 'save': return submitTask();
+      case 'save-writing': return submitWriting();
       case 'discard': resetRecorder(); return render();
       case 'redo':
         delete state.answered[currentTask().taskNumber];
