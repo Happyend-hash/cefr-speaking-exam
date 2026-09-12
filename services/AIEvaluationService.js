@@ -134,29 +134,53 @@ Be fair but rigorous in assessment. Consider accuracy, fluency, coherence, and a
    * Call Claude API
    */
   async callClaudeAPI(prompt) {
-    const response = await axios.post(
-      this.apiUrl,
-      {
-        model: this.model,
-        max_tokens: this.maxTokens,
-        messages: [
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        temperature: 0.7
-      },
-      {
+    const payload = {
+      model: this.model,
+      max_tokens: this.maxTokens,
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ]
+    };
+
+    // Temperature is sent only when explicitly configured. Some models accept a
+    // narrower range than others, and an unsupported value is rejected with a
+    // 400 for the whole request — not worth risking for a grading task, where
+    // the default (deterministic-leaning) sampling is what you want anyway.
+    if (process.env.CLAUDE_TEMPERATURE !== undefined) {
+      payload.temperature = Number(process.env.CLAUDE_TEMPERATURE);
+    }
+
+    try {
+      const response = await axios.post(this.apiUrl, payload, {
         headers: {
           'x-api-key': this.apiKey,
           'anthropic-version': '2023-06-01',
           'content-type': 'application/json'
         }
-      }
-    );
+      });
 
-    return response.data.content[0].text;
+      return response.data.content[0].text;
+    } catch (error) {
+      // Axios reduces an API rejection to "Request failed with status code 400",
+      // which hides the one thing that matters: which field was wrong. Surface
+      // the API's own explanation, and name the likely cause per status code.
+      const status = error.response?.status;
+      const detail =
+        error.response?.data?.error?.message ||
+        (error.response?.data ? JSON.stringify(error.response.data).slice(0, 400) : error.message);
+
+      const hint =
+        status === 401 ? ' — CLAUDE_API_KEY is invalid'
+        : status === 404 ? ` — model "${this.model}" does not exist; set CLAUDE_MODEL to one your key can use`
+        : status === 400 ? ' — the request was rejected; check CLAUDE_MODEL, CLAUDE_MAX_TOKENS and CLAUDE_TEMPERATURE'
+        : status === 429 ? ' — rate limited or out of credit'
+        : '';
+
+      throw new Error(`Claude API ${status || 'request'} failed: ${detail}${hint}`);
+    }
   }
 
   /**

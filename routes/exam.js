@@ -423,7 +423,7 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
       result.status = 'submitted';
       await result.save();
       throw new APIError(
-        `Evaluation failed for every task. ${failures[0]?.error || ''} Your recordings are saved — check CLAUDE_API_KEY and try again.`.trim(),
+        `Evaluation failed for every task. ${failures[0]?.error || ''} Your answers are saved — fix the configuration and submit again.`.trim(),
         502
       );
     }
