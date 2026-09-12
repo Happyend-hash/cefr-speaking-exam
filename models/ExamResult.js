@@ -33,8 +33,17 @@ const examResultSchema = new mongoose.Schema(
     taskResults: [
       {
         taskNumber: Number,
-        type: String, // personal_question, image_description, etc
-        audioUrl: String, // S3 or cloud storage URL
+
+        // Written as { type: String } rather than a bare `String` deliberately.
+        // `type` is a reserved key: when its value is a bare type, Mongoose reads
+        // the WHOLE surrounding object as a type declaration, so `taskResults`
+        // silently became an array of plain strings and every save failed with
+        // "Cast to string failed ... at path taskResults". Wrapping it makes the
+        // value a nested object, which Mongoose treats as an ordinary field.
+        // Exam.tasks[].type already uses this form, which is why exams saved fine.
+        type: { type: String }, // personal_question, image_description, etc
+
+        audioUrl: String, // legacy; recordings are addressed by audioKey via GridFS
         audioKey: String, // For file management
         transcription: String, // AI-generated transcription
         duration: Number, // Recording duration in seconds

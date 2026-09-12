@@ -11,7 +11,16 @@ export const notFound = (req, res, next) => {
  * Global Error Handler
  */
 export const errorHandler = (error, req, res, next) => {
-  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  // Prefer the status the error itself carries. Reading only res.statusCode meant
+  // every APIError — 400 validation, 403 ownership, 404 not-found — was reported
+  // as a 500, because the response status is still 200 when the error is thrown.
+  // Mongoose validation and cast failures are client errors too, not server faults.
+  let statusCode = error.statusCode;
+
+  if (!statusCode) {
+    if (error.name === 'ValidationError' || error.name === 'CastError') statusCode = 400;
+    else statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  }
 
   // Log error in production
   if (process.env.NODE_ENV === 'production') {

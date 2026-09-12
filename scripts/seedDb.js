@@ -14,7 +14,9 @@ import User from '../models/User.js';
 
 dotenv.config();
 
-const SYSTEM_EMAIL = process.env.SEED_ADMIN_EMAIL || 'system@cefr-exam.local';
+// Must satisfy the User model's email validator, which only accepts a 2-3
+// character TLD — a .local address is rejected and the seed aborts.
+const SYSTEM_EMAIL = process.env.SEED_ADMIN_EMAIL || 'system@cefr-exam.com';
 
 const EXAMS = [
   {
