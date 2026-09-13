@@ -141,6 +141,7 @@ SCORING SCALE — out of 75, the O'zbekiston Multilevel scale:
 
 Never award more than 75, and make "suggestedLevel" agree with the band the score falls in.
 
+${this.languageInstruction}
 Be rigorous and specific. Quote the candidate's own words when pointing out an error, and make every improvement point something they could act on in their next attempt. Do not be generically encouraging.`;
   }
 
@@ -236,6 +237,7 @@ SCORING SCALE — score out of 75, exactly as the O'zbekiston Multilevel exam do
 Never award more than 75. Set "suggestedLevel" to the band the score falls in,
 using the table above — the two must agree.
 
+${this.languageInstruction}
 Be fair but rigorous. Judge accuracy, fluency, coherence, and how well the answer
 does what this part of the exam asks. Do not mark a short answer down for being
 short when the part calls for a short answer.`;
@@ -356,6 +358,44 @@ short when the part calls for a short answer.`;
       wrapped.status = status;
       throw wrapped;
     }
+  }
+
+
+  /**
+   * Tell the model which language to write feedback in.
+   *
+   * The students are Uzbek teenagers preparing for a national exam. Feedback
+   * they cannot read is feedback they cannot act on, and a B1 candidate cannot
+   * reliably read a paragraph of C1-level English about their own mistakes.
+   *
+   * The English they actually said stays in English, though: correcting
+   * "both has" to "both have" only teaches anything if both forms are shown as
+   * the student would write them.
+   */
+  get languageInstruction() {
+    const lang = (process.env.FEEDBACK_LANGUAGE || 'uz').toLowerCase();
+    if (lang === 'en') return '';
+
+    const named = {
+      uz: "Uzbek, using the Latin alphabet (o'zbek lotin), not Cyrillic",
+      'uz-cyrl': 'Uzbek, using the Cyrillic alphabet',
+      ru: 'Russian'
+    }[lang] || lang;
+
+    return `
+LANGUAGE OF THE FEEDBACK — IMPORTANT:
+Write "overallFeedback", every "feedback" field, "strengths" and
+"areasForImprovement" in ${named}. The student is a school-age learner, so keep
+the language plain and encouraging, and explain grammar terms rather than
+assuming them.
+
+Two things stay in English:
+- Any words you quote from the student's answer. Quote them exactly as spoken,
+  then explain in ${named} what was wrong and give the corrected English.
+- "suggestedLevel", which is a CEFR code (A1-C2).
+
+Numbers stay numbers. Do not translate the JSON field names.
+`;
   }
 
   /**

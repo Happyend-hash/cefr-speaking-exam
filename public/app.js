@@ -84,6 +84,31 @@
   const pctOfMax = score =>
     Math.max(0, Math.min(100, Math.round(((Number(score) || 0) / MAX_SCORE) * 100)));
 
+  /**
+   * Uzbek labels for the marking criteria and the headings around them.
+   *
+   * The AI writes its feedback in Uzbek (FEEDBACK_LANGUAGE on the server), so
+   * leaving these headings in English would read as half-translated. The KEYS
+   * stay English — they are data the server sends and code matches on; only
+   * what the student reads is translated. An unknown key falls back to itself,
+   * so adding a criterion server-side never shows a blank heading.
+   */
+  const CRITERION_LABELS = {
+    grammar: 'Grammatika',
+    vocabulary: "Lug'at boyligi",
+    fluency: 'Ravonlik',
+    pronunciation: 'Talaffuz',
+    coherence: 'Bog\'lanish va izchillik',
+    taskAchievement: 'Topshiriqni bajarish'
+  };
+
+  const UI_TEXT = {
+    strengths: 'Kuchli tomonlar',
+    improvements: 'Ustida ishlash kerak'
+  };
+
+  const criterionLabel = key => CRITERION_LABELS[key] || key;
+
   const esc = value =>
     String(value ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1274,7 +1299,7 @@
             ${Object.entries(criteria).map(([name, value]) => `
               <div class="criterion">
                 <div class="criterion-head">
-                  <span class="criterion-name">${esc(name)}</span>
+                  <span class="criterion-name">${esc(criterionLabel(name))}</span>
                   <span class="criterion-score">${value?.score ?? 0} / ${MAX_SCORE}</span>
                 </div>
                 <div class="bar-track"><div class="bar-fill" style="width:${pctOfMax(value?.score)}%"></div></div>
@@ -1282,8 +1307,8 @@
               </div>`).join('')}
           </div>
 
-          ${e.strengths?.length ? `<div style="margin-top:14px"><div class="section-title">Strengths</div><ul class="pill-list">${e.strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
-          ${e.areasForImprovement?.length ? `<div style="margin-top:12px"><div class="section-title">Work on next</div><ul class="pill-list">${e.areasForImprovement.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
+          ${e.strengths?.length ? `<div style="margin-top:14px"><div class="section-title">${esc(UI_TEXT.strengths)}</div><ul class="pill-list">${e.strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
+          ${e.areasForImprovement?.length ? `<div style="margin-top:12px"><div class="section-title">${esc(UI_TEXT.improvements)}</div><ul class="pill-list">${e.areasForImprovement.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
         </div>`;
       }).join('')}
 
