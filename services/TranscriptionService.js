@@ -83,16 +83,37 @@ class TranscriptionService {
   async transcribeWithWhisper(audioBuffer, filename, contentType) {
     const form = new FormData();
     form.append('file', new Blob([audioBuffer], { type: contentType }), filename);
-    form.append('model', process.env.WHISPER_MODEL || 'whisper-1');
+    // gpt-4o-mini-transcribe is half the price of legacy whisper-1 ($0.003 vs
+    // $0.006 a minute) and newer, which matters for accented speech. Override
+    // with WHISPER_MODEL if it ever mishears these students.
+    form.append('model', process.env.WHISPER_MODEL || 'gpt-4o-mini-transcribe');
     form.append('language', process.env.EXAM_LANGUAGE || 'en');
 
-    const response = await axios.post(WHISPER_URL, form, {
-      headers: { Authorization: `Bearer ${this.whisperKey}` },
-      timeout: 120000,
-      maxBodyLength: Infinity
-    });
+    try {
+      const response = await axios.post(WHISPER_URL, form, {
+        headers: { Authorization: `Bearer ${this.whisperKey}` },
+        timeout: 120000,
+        maxBodyLength: Infinity
+      });
 
-    return response.data?.text || '';
+      return response.data?.text || '';
+    } catch (error) {
+      // Say which of the handful of likely causes it is. Without this, a wrong
+      // key, an empty balance and a bad model name all read the same in the
+      // logs, and the student just sees an unmarked answer.
+      const status = error.response?.status;
+      const detail = error.response?.data?.error?.message || error.message;
+      const hint =
+        status === 401 ? ' — OPENAI_API_KEY is wrong or was revoked'
+        : status === 429 ? ' — rate limited, or the API credit balance is empty'
+        : status === 400 ? ` — request rejected; check WHISPER_MODEL (currently "${process.env.WHISPER_MODEL || 'gpt-4o-mini-transcribe'}")`
+        : status === 404 ? ' — that transcription model does not exist for this account'
+        : '';
+
+      const wrapped = new Error(`OpenAI transcription ${status || 'request'} failed: ${detail}${hint}`);
+      wrapped.status = status;
+      throw wrapped;
+    }
   }
 }
 
