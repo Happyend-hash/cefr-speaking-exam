@@ -258,6 +258,22 @@ audio { width: 100%; margin-top: 10px; }
 }
 .stimulus-images figcaption { font-size: 13px; color: var(--ink-faint); margin-top: 6px; text-align: center; }
 
+/* Pictures arrive via an authenticated fetch, so there is a moment before the
+   blob URL is attached. Hold the space with a calm placeholder instead of
+   flashing a broken-image icon. */
+.stimulus-images img:not([src]) {
+  min-height: 180px;
+  background: var(--ground);
+}
+.media-failed {
+  min-height: 120px;
+  background: var(--red-bg, #fef2f2);
+  border-color: var(--red, #dc2626);
+  padding: 12px;
+  font-size: 14px;
+  color: var(--red, #dc2626);
+}
+
 .stimulus-topic {
   margin: 16px 0; padding: 14px 16px;
   background: var(--indigo-50); border-left: 3px solid var(--indigo-600);

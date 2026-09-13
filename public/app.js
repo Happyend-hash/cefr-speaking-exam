@@ -762,7 +762,7 @@
 
     const stimulus = `
       ${q.images?.length ? `<div class="stimulus-images">
-        ${q.images.map((url, i) => `<figure><img src="${esc(url)}" alt="${q.images.length > 1 ? `Picture ${i + 1}` : 'Pictures for this question'}" loading="eager" />${
+        ${q.images.map((url, i) => `<figure><img data-authsrc="${esc(url)}" alt="${q.images.length > 1 ? `Picture ${i + 1}` : 'Pictures for this question'}" loading="eager" />${
           // Only number them when they arrive as separate files. A single file
           // that already holds both pictures must not be labelled "Picture 1".
           q.images.length > 1 ? `<figcaption>Picture ${i + 1}</figcaption>` : ''
@@ -951,7 +951,7 @@
             <h3>Task ${task.taskNumber}</h3>
             <span class="badge">${task.finalScore ?? 0}/100</span>
           </div>
-          ${task.audioUrl ? `<audio controls src="${esc(task.audioUrl)}"></audio>` : ''}
+          ${task.audioUrl ? `<audio controls data-authsrc="${esc(task.audioUrl)}"></audio>` : ''}
           ${task.transcription ? `<div style="margin-top:12px"><div class="section-title">What you said</div><div class="transcript" style="margin-top:6px">${esc(task.transcription)}</div></div>` : ''}
           ${e.overallFeedback ? `<p style="margin-top:14px">${esc(e.overallFeedback)}</p>` : ''}
 
@@ -977,7 +977,54 @@
 
   // ------------------------------------------------------------- wiring
 
+  /**
+   * Load media that sits behind the API's authentication.
+   *
+   * Every /api/exam route requires an Authorization header, and a plain
+   * <img src> or <audio src> cannot send one — the browser just gets a 401 and
+   * shows a broken image or a dead player. So the markup carries the address in
+   * data-authsrc, and here we fetch it with the token and hand the element a
+   * blob URL instead. Recordings stay private and no token ever appears in a URL.
+   */
+  const mediaCache = new Map();
+
+  async function resolveAuthedMedia() {
+    const pending = root.querySelectorAll('[data-authsrc]');
+    for (const el of pending) {
+      const url = el.dataset.authsrc;
+      if (!url) continue;
+
+      const cached = mediaCache.get(url);
+      if (cached) { el.src = cached; el.removeAttribute('data-authsrc'); continue; }
+
+      try {
+        const response = await fetch(url, {
+          headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
+        });
+        if (!response.ok) throw new Error(`${response.status}`);
+        const objectUrl = URL.createObjectURL(await response.blob());
+        mediaCache.set(url, objectUrl);
+        el.src = objectUrl;
+        el.removeAttribute('data-authsrc');
+      } catch (error) {
+        // Say so rather than leaving a silent broken-image icon: a student who
+        // cannot see the Part 1.2 pictures cannot answer the question.
+        el.removeAttribute('data-authsrc');
+        el.alt = 'This picture could not be loaded';
+        el.classList.add('media-failed');
+        console.error('Could not load', url, error.message);
+        if (el.tagName === 'IMG' && !state.error) {
+          state.error = 'The pictures for this question could not be loaded. Tell your teacher before answering.';
+          const box = document.querySelector('.alert-error');
+          if (!box) render();
+        }
+      }
+    }
+  }
+
   function wire() {
+    resolveAuthedMedia();
+
     root.querySelectorAll('[data-go]').forEach(el => {
       el.addEventListener('click', event => {
         event.preventDefault();
