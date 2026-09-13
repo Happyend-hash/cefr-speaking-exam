@@ -121,37 +121,92 @@ router.get('/results', async (req, res, next) => {
  * still their voice. If a recording fails to delete the attempt is kept, so the
  * history never shows "deleted" while the audio is still stored.
  */
+async function removeResult(result) {
+  if (result.status === 'evaluating') {
+    return { ok: false, reason: 'it is being marked right now' };
+  }
+
+  const keys = result.taskResults.map(t => t.audioKey).filter(Boolean);
+  const failed = [];
+  for (const key of keys) {
+    if (!(await AudioStorageService.delete(key))) failed.push(key);
+  }
+
+  // Keep the attempt if its audio survived, so the history can never claim
+  // something is gone while the student's voice is still stored.
+  if (failed.length) {
+    return { ok: false, reason: `${failed.length} of ${keys.length} recordings could not be deleted` };
+  }
+
+  await result.deleteOne();
+  return { ok: true, recordingsDeleted: keys.length };
+}
+
 router.delete('/results/:resultId', async (req, res, next) => {
   try {
     const result = await loadOwnedResult(req, req.params.resultId);
+    const outcome = await removeResult(result);
 
-    if (result.status === 'evaluating') {
+    if (!outcome.ok) {
       throw new APIError(
-        'This attempt is being marked right now — wait for it to finish, then delete it',
-        409
+        `This attempt was kept — ${outcome.reason}.`,
+        outcome.reason.includes('marked') ? 409 : 500
       );
     }
-
-    const keys = result.taskResults.map(t => t.audioKey).filter(Boolean);
-    const failed = [];
-    for (const key of keys) {
-      const ok = await AudioStorageService.delete(key);
-      if (!ok) failed.push(key);
-    }
-
-    if (failed.length) {
-      throw new APIError(
-        `Could not delete ${failed.length} of ${keys.length} recording(s), so the attempt was kept. Please try again.`,
-        500
-      );
-    }
-
-    await result.deleteOne();
 
     res.json({
       success: true,
       message: 'Attempt deleted',
-      data: { id: String(result._id), recordingsDeleted: keys.length }
+      data: { id: String(result._id), recordingsDeleted: outcome.recordingsDeleted }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/exam/results/bulk-delete
+ * @desc    Delete several attempts at once, with their recordings.
+ * @access  Private (owner or admin)
+ *
+ * One request rather than one per row: the API is rate limited, and a student
+ * clearing twenty old attempts should not spend twenty of their allowance.
+ *
+ * Each id is checked and deleted on its own, and the response reports exactly
+ * what went and what stayed. A partial failure is a normal outcome here, not an
+ * error — the client shows which attempts survived and why.
+ */
+router.post('/results/bulk-delete', async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+    if (!ids || ids.length === 0) {
+      throw new APIError('Select at least one attempt to delete', 400);
+    }
+    if (ids.length > 100) {
+      throw new APIError('Delete at most 100 attempts at a time', 400);
+    }
+
+    const deleted = [];
+    const kept = [];
+
+    for (const id of ids) {
+      try {
+        const result = await loadOwnedResult(req, id);
+        const outcome = await removeResult(result);
+        if (outcome.ok) deleted.push(String(id));
+        else kept.push({ id: String(id), reason: outcome.reason });
+      } catch (error) {
+        // One bad id must not abandon the rest of the selection.
+        kept.push({ id: String(id), reason: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: kept.length
+        ? `Deleted ${deleted.length}; kept ${kept.length}`
+        : `Deleted ${deleted.length} attempt${deleted.length === 1 ? '' : 's'}`,
+      data: { deleted, kept }
     });
   } catch (error) {
     next(error);

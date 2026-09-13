@@ -102,6 +102,18 @@ main { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
   border: 1px solid var(--red, #dc2626);
 }
 .confirm-delete .muted { font-size: 13px; }
+
+.select-bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 10px;
+  border: 1px solid var(--indigo-500); border-radius: 10px;
+  background: var(--indigo-50);
+}
+.select-bar .spacer { flex: 1 1 auto; }
+
+.pick { width: 17px; height: 17px; accent-color: var(--indigo-600); cursor: pointer; flex: none; }
+.pick + label { cursor: pointer; }
+.row-selected { border-color: var(--indigo-500); background: var(--indigo-50); }
 .btn-sm { padding: 7px 14px; font-size: 14px; }
 .btn-block { width: 100%; }
 :focus-visible { outline: 2px solid var(--indigo-500); outline-offset: 2px; }

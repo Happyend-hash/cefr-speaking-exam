@@ -354,6 +354,33 @@
     }
   }
 
+  /**
+   * Delete every selected attempt in one request.
+   *
+   * A partial result is normal — an attempt being marked right now is kept —
+   * so report exactly what survived instead of claiming a clean sweep.
+   */
+  async function deleteSelected() {
+    const ids = state.history.filter(h => (state.selected || {})[h.id]).map(h => h.id);
+    if (!ids.length) return;
+
+    setState({ confirmBulk: false, error: '', notice: `Deleting ${ids.length}…` });
+    try {
+      const data = await api('/exam/results/bulk-delete', { method: 'POST', body: { ids } });
+      const kept = data.kept || [];
+
+      state.selected = {};
+      setState({
+        notice: kept.length
+          ? `Deleted ${data.deleted.length}. Kept ${kept.length}: ${kept[0].reason}`
+          : `Deleted ${data.deleted.length} attempt${data.deleted.length === 1 ? '' : 's'}.`
+      });
+      loadDashboard();
+    } catch (error) {
+      setState({ notice: '', error: `Could not delete those attempts — ${error.message}` });
+    }
+  }
+
   async function openResult(resultId) {
     setState({ screen: 'result', loading: true, error: '', result: null });
     try {
@@ -742,12 +769,40 @@
           </div>`).join('')}</div>`
       : `<div class="card"><p class="muted">No exams are published yet. An administrator can add them by running <code>npm run seed</code>.</p></div>`;
 
+    const selected = state.selected || {};
+    const selectedIds = state.history.filter(h => selected[h.id]).map(h => h.id);
+    const allSelected = state.history.length > 0 && selectedIds.length === state.history.length;
+
+    // The selection bar only appears once something is selected, so the normal
+    // view of "my results" stays uncluttered for a student who just wants to read them.
+    const selectionBar = selectedIds.length
+      ? `<div class="select-bar">
+           <strong>${selectedIds.length} selected</strong>
+           <button class="btn btn-ghost btn-sm" data-select-all="${allSelected ? 'none' : 'all'}">
+             ${allSelected ? 'Clear selection' : `Select all ${state.history.length}`}
+           </button>
+           <span class="spacer"></span>
+           ${state.confirmBulk
+             ? `<span class="confirm-delete">
+                  <span class="muted">Delete ${selectedIds.length} attempt${selectedIds.length === 1 ? '' : 's'} and their recordings?</span>
+                  <button class="btn btn-danger btn-sm" data-bulk-confirm="1">Yes, delete ${selectedIds.length}</button>
+                  <button class="btn btn-ghost btn-sm" data-bulk-cancel="1">Keep</button>
+                </span>`
+             : `<button class="btn btn-danger btn-sm" data-bulk-delete="1">Delete selected</button>`}
+         </div>`
+      : '';
+
     const history = state.history.length
-      ? `<div class="stack">${state.history.map(item => `
-          <div class="card row" style="justify-content:space-between">
-            <div>
-              <strong>${esc(item.examTitle)}</strong>
-              <div class="muted">${esc(item.status === 'completed' ? fmtDate(item.completedAt) : item.status.replace('_', ' '))}</div>
+      ? `${selectionBar}<div class="stack">${state.history.map(item => `
+          <div class="card row ${selected[item.id] ? 'row-selected' : ''}" style="justify-content:space-between">
+            <div class="row">
+              <input type="checkbox" class="pick" id="pick-${esc(item.id)}"
+                     data-pick="${esc(item.id)}" ${selected[item.id] ? 'checked' : ''}
+                     aria-label="Select this attempt" />
+              <label for="pick-${esc(item.id)}">
+                <strong>${esc(item.examTitle)}</strong>
+                <div class="muted">${esc(item.status === 'completed' ? fmtDate(item.completedAt) : item.status.replace('_', ' '))}</div>
+              </label>
             </div>
             <div class="row">
               ${item.status === 'completed'
@@ -1077,6 +1132,30 @@
 
     root.querySelectorAll('[data-delete-confirm]').forEach(el =>
       el.addEventListener('click', () => deleteResult(el.dataset.deleteConfirm)));
+
+    root.querySelectorAll('[data-pick]').forEach(el =>
+      el.addEventListener('change', () => {
+        const picked = { ...(state.selected || {}) };
+        if (el.checked) picked[el.dataset.pick] = true;
+        else delete picked[el.dataset.pick];
+        setState({ selected: picked, confirmBulk: false });
+      }));
+
+    root.querySelectorAll('[data-select-all]').forEach(el =>
+      el.addEventListener('click', () => {
+        const picked = {};
+        if (el.dataset.selectAll === 'all') state.history.forEach(h => { picked[h.id] = true; });
+        setState({ selected: picked, confirmBulk: false });
+      }));
+
+    root.querySelectorAll('[data-bulk-delete]').forEach(el =>
+      el.addEventListener('click', () => setState({ confirmBulk: true, error: '' })));
+
+    root.querySelectorAll('[data-bulk-cancel]').forEach(el =>
+      el.addEventListener('click', () => setState({ confirmBulk: false })));
+
+    root.querySelectorAll('[data-bulk-confirm]').forEach(el =>
+      el.addEventListener('click', () => deleteSelected()));
 
     root.querySelectorAll('[data-action]').forEach(el =>
       el.addEventListener('click', () => handleAction(el.dataset.action)));
