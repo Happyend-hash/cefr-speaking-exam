@@ -598,3 +598,77 @@ audio { width: 100%; margin-top: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .card-hover, .card-hover:hover, .skill-fill, .attempt { transition: none; transform: none; }
 }
+
+/* ---------- briefing and microphone check ---------- */
+
+.section-head h2 { display: flex; align-items: center; gap: 8px; }
+.section-head h2 svg { width: 18px; height: 18px; color: var(--indigo-600); }
+
+.brief-parts { display: flex; flex-direction: column; gap: 10px; }
+.brief-part {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px; border: 1px solid var(--line); border-radius: 12px;
+}
+.brief-part .grow { flex: 1 1 auto; min-width: 0; }
+.brief-part strong { font-size: 15px; }
+.brief-part p { font-size: 13px; margin-top: 2px; }
+.brief-time {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: 13px; font-weight: 600; color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.brief-time svg { width: 14px; height: 14px; }
+
+/* Numbered because the order is the information: these things happen to the
+   student in this sequence, whether or not they press anything. */
+.brief-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.brief-steps li { font-size: 15px; line-height: 1.5; }
+
+.mic-card { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.mic-card p { font-size: 14px; }
+.mic-card audio { width: 100%; max-width: 420px; }
+
+.mic-live { display: flex; align-items: center; gap: 14px; width: 100%; }
+.mic-meter {
+  flex: 1 1 auto; height: 12px; border-radius: var(--radius-pill);
+  background: var(--ground); border: 1px solid var(--line); overflow: hidden;
+}
+/* Amber until it is loud enough to count, green once it is — so the bar says
+   "heard you", not merely "moving". */
+.mic-level { height: 100%; width: 0; background: var(--amber); transition: width .06s linear; }
+.mic-level.is-live { background: var(--green); }
+.mic-countdown {
+  flex: none; font-weight: 700; font-size: 15px; color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.mic-verdict { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.mic-verdict svg { width: 18px; height: 18px; flex: none; }
+.mic-verdict.ok { color: var(--green); }
+.mic-verdict.warn { color: var(--amber-text); }
+.mic-verdict.bad { color: var(--red); }
+
+.brief-start { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; margin: 8px 0 40px; }
+.brief-start p { font-size: 14px; }
+
+/* An escape hatch, deliberately made to look like prose rather than a button:
+   a student who cannot pass the check on a school machine must still be able
+   to sit the test, but should not reach for this first. */
+.link-inline {
+  background: none; border: 0; padding: 0;
+  font: inherit; color: var(--indigo-600); text-decoration: underline;
+  cursor: pointer;
+}
+.link-inline:hover { color: var(--indigo-700); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mic-level { transition: none; }
+}
+
+/* At phone width three columns squeeze the description into two-word lines, so
+   the time drops to its own row and the text gets the full card. */
+@media (max-width: 700px) {
+  .brief-part { flex-wrap: wrap; row-gap: 6px; }
+  .brief-part .grow { flex: 1 1 calc(100% - 60px); }
+  .brief-time { width: 100%; padding-left: 60px; }
+}

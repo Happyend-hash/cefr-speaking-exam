@@ -171,6 +171,7 @@
   }
 
   function signOut() {
+    stopMicCheck();
     store.remove('token');
     store.remove('user');
     Object.assign(state, {
@@ -183,6 +184,9 @@
   // ------------------------------------------------------------- loaders
 
   async function loadDashboard() {
+    // Leaving the briefing by the nav rather than its own button would
+    // otherwise leave the microphone open and the recording light on.
+    stopMicCheck();
     setState({ screen: 'dashboard', loading: true, error: '' });
     try {
       const [exams, history, profile] = await Promise.all([
@@ -217,9 +221,12 @@
       const questions = started.questions?.length ? started.questions : null;
 
       setState({
-        screen: 'exam',
+        // Speaking goes through the briefing first: what is coming, and proof
+        // the microphone works. Writing needs neither, so it starts directly.
+        screen: questions ? 'briefing' : 'exam',
         exam,
         questions,
+        micCheck: { phase: 'idle' },
         serverTranscription: Boolean(started.serverTranscription),
         mode: started.mode || mode,
         part: started.part || part,
@@ -837,6 +844,7 @@
       dashboard: dashboardScreen,
       mocks: mocksScreen,
       results: resultsScreen,
+      briefing: briefingScreen,
       exam: examScreen,
       evaluating: evaluatingScreen,
       result: resultScreen
@@ -1378,6 +1386,311 @@
         </div>`).join('')}</div>`;
   }
 
+  // -------------------------------------------------- briefing and mic check
+
+  /**
+   * Live objects for the microphone check, kept out of `state` for the same
+   * reason the recorder is: they must survive a re-render.
+   */
+  const mic = {
+    stream: null,
+    recorder: null,
+    chunks: [],
+    context: null,
+    analyser: null,
+    frame: null,
+    blobUrl: null,
+    peak: 0,
+    stopAt: 0
+  };
+
+  const MIC_CHECK_SECONDS = 4;
+  // Below this the microphone is delivering something, but nothing you could
+  // call speech — a muted input, or a phone held too far away. Room tone alone
+  // sits around 1-2%, so 5% is roughly "someone spoke".
+  const MIC_QUIET_PEAK = 0.05;
+
+  /** Let go of the microphone and stop drawing. Safe to call at any point. */
+  function stopMicCheck({ keepPlayback = false } = {}) {
+    if (mic.frame) cancelAnimationFrame(mic.frame);
+    mic.frame = null;
+    try { mic.recorder?.state === 'recording' && mic.recorder.stop(); } catch { /* already stopped */ }
+    mic.stream?.getTracks().forEach(track => track.stop());
+    mic.stream = null;
+    try { mic.context?.close(); } catch { /* already closed */ }
+    mic.context = null;
+    mic.analyser = null;
+    if (!keepPlayback && mic.blobUrl) {
+      URL.revokeObjectURL(mic.blobUrl);
+      mic.blobUrl = null;
+    }
+  }
+
+  /**
+   * Record a few seconds, play them back, and say whether they carried sound.
+   *
+   * This exists because of a real failure: students recorded whole mocks on
+   * phones and were handed zeros, because nothing had ever proved the
+   * microphone worked. Four seconds before the first question is the cheapest
+   * possible moment to find out — and hearing themselves back is the only
+   * check a student can actually trust.
+   */
+  async function runMicCheck() {
+    stopMicCheck();
+    mic.peak = 0;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      return setState({
+        micCheck: {
+          phase: 'failed',
+          message: 'This browser will not give a page access to the microphone. Open the site in Chrome and try again.'
+        }
+      });
+    }
+
+    setState({ micCheck: { phase: 'asking' } });
+
+    try {
+      mic.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      const denied = /NotAllowed|Permission|Security/i.test(error.name || '');
+      return setState({
+        micCheck: {
+          phase: 'failed',
+          message: denied
+            ? 'The microphone was blocked. Allow it for this site in your browser, then run the check again.'
+            : `The microphone could not be opened (${error.name || 'unknown error'}). Check that nothing else is using it.`
+        }
+      });
+    }
+
+    // Meter first: a student watching a bar move knows the microphone is live
+    // before any of the machinery behind it has finished.
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      mic.context = new AudioContextClass();
+      mic.analyser = mic.context.createAnalyser();
+      mic.analyser.fftSize = 1024;
+      mic.context.createMediaStreamSource(mic.stream).connect(mic.analyser);
+    } catch {
+      // No meter on this browser. The playback is still the real test, so the
+      // check goes ahead without it rather than failing.
+      mic.analyser = null;
+    }
+
+    mic.chunks = [];
+    try {
+      mic.recorder = new MediaRecorder(mic.stream);
+    } catch (error) {
+      stopMicCheck();
+      return setState({
+        micCheck: { phase: 'failed', message: `This browser cannot record audio (${error.name || 'unknown error'}).` }
+      });
+    }
+
+    mic.recorder.ondataavailable = event => {
+      if (event.data.size) mic.chunks.push(event.data);
+    };
+
+    mic.recorder.onstop = () => {
+      const blob = new Blob(mic.chunks, { type: mic.recorder.mimeType || 'audio/webm' });
+      const heard = mic.peak >= MIC_QUIET_PEAK;
+      if (mic.blobUrl) URL.revokeObjectURL(mic.blobUrl);
+      mic.blobUrl = blob.size ? URL.createObjectURL(blob) : null;
+
+      stopMicCheck({ keepPlayback: true });
+
+      setState({
+        micCheck: {
+          phase: heard && mic.blobUrl ? 'passed' : 'quiet',
+          peak: Math.round(mic.peak * 100),
+          playback: mic.blobUrl,
+          message: mic.blobUrl
+            ? ''
+            : 'Nothing was recorded at all. Try a different browser.'
+        }
+      });
+    };
+
+    mic.stopAt = Date.now() + MIC_CHECK_SECONDS * 1000;
+    mic.recorder.start();
+    setState({ micCheck: { phase: 'listening', peak: 0 } });
+    meterTick();
+  }
+
+  /**
+   * Drive the level meter and the countdown straight through the DOM.
+   *
+   * Sixty re-renders a second would rebuild the page under the student's
+   * fingers, so this writes to the two elements it owns and nothing else.
+   */
+  function meterTick() {
+    const bar = document.getElementById('mic-level');
+    const countdown = document.getElementById('mic-countdown');
+    if (!bar) return;
+
+    let level = 0;
+    if (mic.analyser) {
+      const samples = new Uint8Array(mic.analyser.fftSize);
+      mic.analyser.getByteTimeDomainData(samples);
+      let furthest = 0;
+      for (const sample of samples) furthest = Math.max(furthest, Math.abs(sample - 128));
+      level = furthest / 128;
+      mic.peak = Math.max(mic.peak, level);
+    }
+
+    // A little headroom so normal speech fills most of the bar rather than
+    // pinning it — the point is to show movement, not to be a meter.
+    bar.style.width = `${Math.min(100, level * 180)}%`;
+    bar.classList.toggle('is-live', level >= MIC_QUIET_PEAK);
+
+    const left = Math.max(0, Math.ceil((mic.stopAt - Date.now()) / 1000));
+    if (countdown) countdown.textContent = String(left);
+
+    if (Date.now() >= mic.stopAt) {
+      try { mic.recorder?.state === 'recording' && mic.recorder.stop(); } catch { /* already stopped */ }
+      return;
+    }
+    mic.frame = requestAnimationFrame(meterTick);
+  }
+
+  function micCheckCard() {
+    const check = state.micCheck || { phase: 'idle' };
+    const canTranscribe = state.serverTranscription || Boolean(SpeechRecognition);
+
+    const body = {
+      idle: `<p class="muted">Record ${MIC_CHECK_SECONDS} seconds and play them back, so you know the
+               microphone works before a mark depends on it.</p>
+             <button class="btn" data-action="mic-check">${icon('mic')} Test my microphone</button>`,
+
+      asking: `<p class="muted">Your browser is asking for permission — choose <strong>Allow</strong>.</p>
+               <span class="spinner"></span>`,
+
+      listening: `<div class="mic-live">
+                    <div class="mic-meter"><div class="mic-level" id="mic-level"></div></div>
+                    <span class="mic-countdown"><span id="mic-countdown">${MIC_CHECK_SECONDS}</span>s</span>
+                  </div>
+                  <p class="muted">Say something — <em>"My name is …, and I am taking a speaking test."</em></p>`,
+
+      passed: `<div class="mic-verdict ok">${icon('check')} <strong>Your microphone works.</strong></div>
+               <p class="muted">Play it back to be sure it is you and not the room.</p>
+               <audio controls src="${esc(check.playback || '')}"></audio>
+               <button class="btn btn-ghost btn-sm" data-action="mic-check">Test again</button>`,
+
+      quiet: `<div class="mic-verdict warn"><strong>The microphone is on, but barely heard you.</strong></div>
+              <p class="muted">Peak volume was ${check.peak ?? 0}%. Move closer, unmute the microphone, or take
+                 the headset off — then test again. Listen back first:</p>
+              ${check.playback ? `<audio controls src="${esc(check.playback)}"></audio>` : ''}
+              <button class="btn" data-action="mic-check">Test again</button>`,
+
+      failed: `<div class="mic-verdict bad"><strong>The microphone could not be used.</strong></div>
+               <p class="muted">${esc(check.message || '')}</p>
+               <button class="btn" data-action="mic-check">Try again</button>`
+    }[check.phase] || '';
+
+    return `<div class="card mic-card">
+      <div class="section-head"><h2>${icon('mic')} Microphone check</h2>
+        <p>Nothing is marked here — this recording is thrown away.</p></div>
+      ${body}
+      ${canTranscribe ? '' : transcriptionWarning()}
+    </div>`;
+  }
+
+  /**
+   * What the student sees between choosing a mock and starting it.
+   *
+   * A mock runs to the end once begun, so everything that could go wrong has to
+   * be settled before that: what is coming, how long each part gives them, and
+   * whether the microphone actually works.
+   */
+  function briefingScreen() {
+    const exam = state.exam;
+    if (!exam || !state.questions) return `<div class="center-note"><span class="spinner"></span></div>`;
+
+    const isMock = state.mode === 'mock';
+    const check = state.micCheck || { phase: 'idle' };
+    const ready = check.phase === 'passed';
+
+    // Group the questions by part so the student sees the shape of the test
+    // rather than a list of eight items.
+    const parts = [];
+    for (const q of state.questions) {
+      const last = parts[parts.length - 1];
+      if (last && last.part === q.part) {
+        last.count += 1;
+        last.seconds += (q.prepTime || 0) + (q.answerTime || 0);
+      } else {
+        parts.push({
+          part: q.part,
+          count: 1,
+          seconds: (q.prepTime || 0) + (q.answerTime || 0)
+        });
+      }
+    }
+    const totalSeconds = parts.reduce((sum, p) => sum + p.seconds, 0);
+
+    const PART_BLURB = {
+      '1.1': 'Short questions about you. Answer straight away.',
+      '1.2': 'Two pictures to compare and contrast.',
+      '2': 'One situation, three questions. Answer all three in one turn.',
+      '3': 'A topic with arguments for and against. Give your own view.'
+    };
+
+    return `
+      <button class="crumb" data-action="leave-briefing">${icon('left')} Back to mocks</button>
+
+      <div class="card" style="margin-top:12px">
+        <div class="row" style="justify-content:space-between;gap:10px">
+          <h1 style="font-size:24px">${esc(exam.title)}</h1>
+          <span class="chip ${isMock ? 'chip-speaking' : 'chip-new'}">${isMock ? 'Full mock' : `Practice · Part ${esc(state.part || '')}`}</span>
+        </div>
+        <p class="muted" style="margin-top:6px">${state.questions.length} question${state.questions.length === 1 ? '' : 's'}
+          · about ${Math.ceil(totalSeconds / 60)} minutes of speaking and thinking time.</p>
+      </div>
+
+      <div class="card">
+        <div class="section-head"><h2>What you will do</h2></div>
+        <div class="brief-parts">
+          ${parts.map(p => `
+            <div class="brief-part">
+              <div class="icon-tile">${icon(PART_ICON[p.part] || 'mic')}</div>
+              <div class="grow">
+                <strong>Part ${esc(p.part)}</strong>
+                <p class="muted">${esc(PART_BLURB[p.part] || `${p.count} question${p.count === 1 ? '' : 's'}.`)}</p>
+              </div>
+              <span class="brief-time">${icon('clock')} ~${Math.ceil(p.seconds / 60)} min</span>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-head"><h2>How it runs</h2></div>
+        <ol class="brief-steps">
+          <li>Each question shows thinking time first. Use it — nothing is recorded yet.</li>
+          <li>Recording then starts <strong>by itself</strong> and stops when the time is up.</li>
+          <li>Your answer saves on its own and the next question follows.</li>
+          ${isMock
+            ? '<li>A mock runs straight to the end. You cannot pause, skip, or record an answer again.</li>'
+            : '<li>In practice you may skip a question or record it again.</li>'}
+          <li>Stay on this page until the end. Leaving loses the answer being recorded.</li>
+        </ol>
+        <p class="muted" style="margin-top:12px">Find somewhere quiet first — background voices end up in the
+          recording and are marked as part of your answer.</p>
+      </div>
+
+      ${micCheckCard()}
+
+      <div class="brief-start">
+        <button class="btn btn-lg" data-action="start-questions" ${ready ? '' : 'disabled'}>
+          ${isMock ? 'Start the mock exam' : 'Start practising'} ${icon('right')}
+        </button>
+        ${ready
+          ? `<p class="muted">${isMock ? 'The first question begins as soon as you press this.' : ''}</p>`
+          : `<p class="muted">Pass the microphone check to start.
+               <button class="link-inline" data-action="start-questions-anyway">Start without testing</button></p>`}
+      </div>`;
+  }
+
   function examScreen() {
     const exam = state.exam;
     if (!exam) return `<div class="center-note">Loading…</div>`;
@@ -1825,6 +2138,21 @@
   function handleAction(action) {
     switch (action) {
       case 'signout': return signOut();
+      case 'mic-check': return runMicCheck();
+      case 'start-questions':
+      case 'start-questions-anyway':
+        // The check holds the microphone open; the recorder needs it free.
+        stopMicCheck();
+        go('exam');
+        // The briefing IS the start screen for a mock, so going straight into
+        // the first question's thinking time saves a second button that asks
+        // nothing. Practice keeps its own start, since a student there chooses
+        // which question to attempt.
+        if (state.mode === 'mock') beginPrep();
+        return;
+      case 'leave-briefing':
+        stopMicCheck();
+        return go('mocks');
       case 'save': return submitTask();
       case 'save-writing': return submitWriting();
       case 'begin': return beginPrep();
