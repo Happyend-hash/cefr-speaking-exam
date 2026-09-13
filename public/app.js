@@ -335,6 +335,25 @@
     }
   }
 
+  /**
+   * Delete one attempt from the student's history.
+   *
+   * Removes the row optimistically so the list does not jump, but re-reads the
+   * history from the server afterwards — the truth about what was deleted is
+   * the server's, not this list's.
+   */
+  async function deleteResult(resultId) {
+    setState({ confirmDelete: null, error: '', notice: 'Deleting…' });
+    try {
+      await api(`/exam/results/${resultId}`, { method: 'DELETE' });
+      state.history = state.history.filter(item => item.id !== resultId);
+      setState({ notice: 'Attempt deleted.' });
+      loadDashboard();
+    } catch (error) {
+      setState({ notice: '', error: `Could not delete that attempt — ${error.message}` });
+    }
+  }
+
   async function openResult(resultId) {
     setState({ screen: 'result', loading: true, error: '', result: null });
     try {
@@ -735,6 +754,15 @@
                 ? `<span class="badge ${item.isPassed ? 'badge-pass' : 'badge-fail'}">${item.overallScore} · ${esc(item.overallLevel)}</span>
                    <button class="btn btn-ghost btn-sm" data-result="${esc(item.id)}">View</button>`
                 : `<span class="badge">${esc(item.status.replace('_', ' '))}</span>`}
+              ${state.confirmDelete === item.id
+                // Deleting also destroys the recordings, so it takes a second,
+                // deliberate click rather than a dialog that can be dismissed by reflex.
+                ? `<span class="confirm-delete">
+                     <span class="muted">Delete this attempt and its recordings?</span>
+                     <button class="btn btn-danger btn-sm" data-delete-confirm="${esc(item.id)}">Yes, delete</button>
+                     <button class="btn btn-ghost btn-sm" data-delete-cancel="1">Keep</button>
+                   </span>`
+                : `<button class="btn btn-ghost btn-sm btn-quiet" data-delete="${esc(item.id)}" title="Delete this attempt">Delete</button>`}
             </div>
           </div>`).join('')}</div>`
       : '';
@@ -1040,6 +1068,15 @@
 
     root.querySelectorAll('[data-result]').forEach(el =>
       el.addEventListener('click', () => openResult(el.dataset.result)));
+
+    root.querySelectorAll('[data-delete]').forEach(el =>
+      el.addEventListener('click', () => setState({ confirmDelete: el.dataset.delete, error: '' })));
+
+    root.querySelectorAll('[data-delete-cancel]').forEach(el =>
+      el.addEventListener('click', () => setState({ confirmDelete: null })));
+
+    root.querySelectorAll('[data-delete-confirm]').forEach(el =>
+      el.addEventListener('click', () => deleteResult(el.dataset.deleteConfirm)));
 
     root.querySelectorAll('[data-action]').forEach(el =>
       el.addEventListener('click', () => handleAction(el.dataset.action)));

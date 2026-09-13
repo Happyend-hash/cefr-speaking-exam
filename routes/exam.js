@@ -112,6 +112,53 @@ router.get('/results', async (req, res, next) => {
 });
 
 /**
+ * @route   DELETE /api/exam/results/:resultId
+ * @desc    Remove one attempt from the student's history, with its recordings.
+ * @access  Private (owner or admin)
+ *
+ * The recordings go too. Deleting the attempt on its own would leave the audio
+ * orphaned in GridFS — invisible to the student, still taking up space, and
+ * still their voice. If a recording fails to delete the attempt is kept, so the
+ * history never shows "deleted" while the audio is still stored.
+ */
+router.delete('/results/:resultId', async (req, res, next) => {
+  try {
+    const result = await loadOwnedResult(req, req.params.resultId);
+
+    if (result.status === 'evaluating') {
+      throw new APIError(
+        'This attempt is being marked right now — wait for it to finish, then delete it',
+        409
+      );
+    }
+
+    const keys = result.taskResults.map(t => t.audioKey).filter(Boolean);
+    const failed = [];
+    for (const key of keys) {
+      const ok = await AudioStorageService.delete(key);
+      if (!ok) failed.push(key);
+    }
+
+    if (failed.length) {
+      throw new APIError(
+        `Could not delete ${failed.length} of ${keys.length} recording(s), so the attempt was kept. Please try again.`,
+        500
+      );
+    }
+
+    await result.deleteOne();
+
+    res.json({
+      success: true,
+      message: 'Attempt deleted',
+      data: { id: String(result._id), recordingsDeleted: keys.length }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * @route   GET /api/exam/results/:resultId
  * @desc    Full detail for one attempt, including per-task feedback
  * @access  Private (owner or admin)
