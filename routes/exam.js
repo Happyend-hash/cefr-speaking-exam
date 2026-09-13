@@ -594,8 +594,19 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
         data: { ...result.getEvaluationSummary(), resultId: result._id }
       });
     }
+    // An attempt only stays in 'evaluating' while a request is actively marking
+    // it. If the process restarted mid-marking — a deploy, a crash — the flag is
+    // never cleared and the attempt would be locked out of submission forever,
+    // with its recordings stranded. Treat a long-stale flag as abandoned and let
+    // the student try again.
+    const STALE_EVALUATION_MS = 10 * 60 * 1000;
     if (result.status === 'evaluating') {
-      throw new APIError('This attempt is currently being evaluated', 409);
+      const startedAt = result.submittedAt ? new Date(result.submittedAt).getTime() : 0;
+      const stale = startedAt && Date.now() - startedAt > STALE_EVALUATION_MS;
+      if (!stale) {
+        throw new APIError('This attempt is currently being evaluated', 409);
+      }
+      console.warn(`Result ${result._id} was stuck in 'evaluating' — re-marking it.`);
     }
     if (result.taskResults.length === 0) {
       throw new APIError('Answer at least one task before submitting', 400);

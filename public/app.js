@@ -554,15 +554,79 @@
     }
   }
 
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  const EVAL_POLL_MS = 4000;
+  const EVAL_GIVE_UP_MS = 6 * 60 * 1000;
+
+  /**
+   * Submit an attempt and wait for the mark.
+   *
+   * The outcome is read by polling the attempt, NOT by awaiting the submit
+   * request. Marking runs inside that request and can take a minute or more,
+   * and on a phone a request that long is routinely suspended when the screen
+   * locks or the browser backgrounds the tab — after which it may never settle,
+   * neither resolving nor rejecting. Awaiting it was leaving the page on
+   * "Assessing your answers" forever while the server had in fact finished and
+   * saved the result.
+   *
+   * Polling also means a student can lock their phone, come back, and still get
+   * their score.
+   */
   async function submitExam() {
-    setState({ screen: 'evaluating', loading: true, error: '' });
-    try {
-      const summary = await api(`/exam/results/${state.resultId}/submit`, { method: 'POST' });
-      resetRecorder();
-      await openResult(summary.resultId || state.resultId);
-    } catch (error) {
-      setState({ screen: 'exam', loading: false, error: error.message });
+    const resultId = state.resultId;
+    setState({ screen: 'evaluating', loading: true, error: '', evalStartedAt: Date.now() });
+    resetRecorder();
+
+    let submitError = null;
+    api(`/exam/results/${resultId}/submit`, { method: 'POST' }).catch(err => { submitError = err; });
+
+    const deadline = Date.now() + EVAL_GIVE_UP_MS;
+
+    while (Date.now() < deadline) {
+      await sleep(EVAL_POLL_MS);
+
+      // The student navigated away or started something else — stop polling.
+      if (state.screen !== 'evaluating' || state.resultId !== resultId) return;
+
+      try {
+        const result = await api(`/exam/results/${resultId}`);
+
+        if (result.status === 'completed') {
+          setState({ result, screen: 'result', loading: false, error: '' });
+          return;
+        }
+
+        // Back to 'submitted' means marking ran and failed for every task.
+        if (result.status === 'submitted') {
+          setState({
+            screen: 'exam',
+            loading: false,
+            error: submitError?.message ||
+              'Marking did not finish. Your answers are saved — you can submit again.'
+          });
+          return;
+        }
+      } catch {
+        // A failed poll is expected on a flaky connection; keep waiting.
+      }
+
+      // A real rejection from the API (not a dropped connection) is worth
+      // showing immediately rather than waiting out the whole deadline.
+      if (submitError && !/fetch|network|load failed|aborted/i.test(submitError.message)) {
+        setState({ screen: 'exam', loading: false, error: submitError.message });
+        return;
+      }
+
+      render(); // refresh the elapsed-time line
     }
+
+    setState({
+      screen: 'exam',
+      loading: false,
+      error: 'Marking is taking longer than usual. Your answers are saved — ' +
+             'open this attempt from your history in a few minutes to see the result.'
+    });
   }
 
   const currentTask = () => state.exam?.tasks?.[state.taskIndex] || null;
@@ -1057,10 +1121,20 @@
   }
 
   function evaluatingScreen() {
+    const seconds = Math.round((Date.now() - (state.evalStartedAt || Date.now())) / 1000);
     return `<div class="center-note">
       <span class="spinner"></span>
       <h2 style="margin:16px 0 8px">Assessing your answers</h2>
-      <p class="muted">Each task is being scored against the CEFR descriptors. This usually takes under a minute.</p>
+      <p class="muted">Each answer is scored against the CEFR descriptors. A full mock takes a minute or two.</p>
+      ${seconds > 5 ? `<p class="muted" style="margin-top:10px">Waiting… ${fmtTime(seconds)}</p>` : ''}
+      ${seconds > 45
+        // Reassurance that matters on a phone: the marking is happening on the
+        // server, so leaving the page does not lose it.
+        ? `<p class="muted" style="margin-top:10px;max-width:26rem">
+             You can lock your phone or leave this page — the marking carries on,
+             and the result will be in your history.
+           </p>`
+        : ''}
     </div>`;
   }
 
