@@ -1,27 +1,44 @@
 /* CEFR Speaking Exam — hand-authored stylesheet, no build step. */
 
 :root {
+  /* Indigo — the brand. --indigo-600 is the primary action colour. */
   --indigo-50: #eef2ff;
   --indigo-100: #e0e7ff;
   --indigo-200: #c7d2fe;
   --indigo-500: #6366f1;
   --indigo-600: #4f46e5;
   --indigo-700: #4338ca;
-  --ink: #1e1b31;
-  --ink-soft: #4b5563;
-  --ink-faint: #6b7280;
+
+  /* Text: one near-black for anything that carries meaning, one cool grey for
+     everything supporting it. Two weights of text, not five. */
+  --ink: #111827;
+  --ink-soft: #64748b;
+  --ink-faint: #94a3b8;
+
   --line: #e5e7eb;
   --surface: #ffffff;
-  --ground: #f5f6ff;
-  --green: #047857;
-  --green-bg: #ecfdf5;
-  --red: #b91c1c;
+  --ground: #f8fafc;
+
+  /* Semantic colour is separate from the brand accent and used sparingly.
+     --amber is the indicator; --amber-text is the readable version on a tint,
+     because #f59e0b as body text on a pale background fails contrast. */
+  --green: #16a34a;
+  --green-bg: #f0fdf4;
+  --red: #dc2626;
   --red-bg: #fef2f2;
-  --amber: #92400e;
+  --amber: #f59e0b;
+  --amber-text: #b45309;
   --amber-bg: #fffbeb;
-  --radius: 12px;
-  --shadow: 0 1px 2px rgba(16, 15, 40, .04), 0 8px 24px rgba(16, 15, 40, .06);
-  --shadow-lg: 0 2px 4px rgba(16, 15, 40, .05), 0 16px 40px rgba(16, 15, 40, .1);
+
+  --radius: 16px;        /* cards */
+  --radius-btn: 10px;    /* buttons */
+  --radius-pill: 999px;  /* badges, bars */
+
+  /* Subtle depth. A border does most of the separating; the shadow only lifts. */
+  --shadow: 0 4px 20px rgba(15, 23, 42, .06);
+  --shadow-lg: 0 8px 28px rgba(15, 23, 42, .10);
+
+  --maxw: 1200px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -46,8 +63,9 @@ a { color: var(--indigo-600); }
   position: sticky; top: 0; z-index: 50;
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px;
-  padding: 14px 24px;
-  background: rgba(255,255,255,.85);
+  min-height: 72px;
+  padding: 0 32px;
+  background: rgba(255,255,255,.92);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
 }
@@ -69,7 +87,44 @@ a { color: var(--indigo-600); }
 .nav-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .nav-user { color: var(--ink-soft); font-size: 14px; }
 
-main { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
+/* Destinations sit in the middle of the bar, the account at the right. The
+   current one is underlined rather than merely coloured, so it still reads as
+   current to anyone who cannot separate the two greys. */
+.nav-links { display: flex; align-items: center; gap: 4px; margin-right: auto; margin-left: 8px; }
+.nav-link {
+  appearance: none; background: none; border: 0;
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--ink-soft);
+  text-decoration: none; cursor: pointer;
+  padding: 8px 12px; border-radius: var(--radius-btn);
+  transition: background .15s ease, color .15s ease;
+}
+.nav-link:hover { background: var(--ground); color: var(--ink); }
+.nav-link:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--indigo-100); }
+.nav-link.is-current { color: var(--indigo-600); background: var(--indigo-50); }
+
+.avatar {
+  display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: var(--radius-pill);
+  background: var(--indigo-100); color: var(--indigo-700);
+  font-size: 13px; font-weight: 700;
+}
+
+/* A phone cannot hold the brand, two destinations and the account on one line —
+   squeezed together they wrap mid-word. So the bar becomes two rows: who you
+   are on top, where you can go underneath. */
+@media (max-width: 700px) {
+  .nav { flex-wrap: wrap; min-height: 0; padding: 10px 16px 0; gap: 8px; }
+  .brand { white-space: nowrap; font-size: 17px; }
+  .nav-user, .avatar { display: none; }
+  .nav-links {
+    order: 3; width: 100%; margin: 0; gap: 2px;
+    border-top: 1px solid var(--line);
+  }
+  .nav-link { padding: 10px 10px; font-size: 14px; border-radius: 0 0 8px 8px; }
+}
+
+main { max-width: var(--maxw); margin: 0 auto; padding: 32px 32px 80px; }
+@media (max-width: 900px) { main { padding: 24px 20px 64px; } }
 
 /* ---------- buttons ---------- */
 
@@ -77,11 +132,18 @@ main { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 11px 20px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-btn);
   background: var(--indigo-600); color: #fff;
   font-weight: 600; font-size: 15px;
   transition: background .15s ease, transform .05s ease;
 }
+/* An inline SVG with no width carries no intrinsic size, so left alone it
+   expands to fill its button and swallows the label. Every icon that sits
+   beside text is sized here, and never allowed to shrink the text instead. */
+.btn svg, .link-more svg, .nav-link svg, .attempt svg { width: 16px; height: 16px; flex: none; }
+.btn-lg svg { width: 18px; height: 18px; }
+.btn { white-space: nowrap; }
+
 .btn:hover:not(:disabled) { background: var(--indigo-700); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
@@ -142,7 +204,7 @@ main { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 22px;
+  padding: 24px;
   box-shadow: var(--shadow);
 }
 .stack { display: flex; flex-direction: column; gap: 18px; }
@@ -178,7 +240,7 @@ main { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
 
 .alert { padding: 12px 14px; border-radius: 9px; font-size: 14px; border: 1px solid; }
 .alert-error { background: var(--red-bg); color: var(--red); border-color: #fecaca; }
-.alert-warn { background: var(--amber-bg); color: var(--amber); border-color: #fde68a; }
+.alert-warn { background: var(--amber-bg); color: var(--amber-text); border-color: #fde68a; }
 .alert-ok { background: var(--green-bg); color: var(--green); border-color: #a7f3d0; }
 
 /* ---------- badges ---------- */
@@ -357,3 +419,182 @@ audio { width: 100%; margin-top: 10px; }
 @media (prefers-reduced-motion: reduce) { .rec-live { animation: none; } }
 
 .badge-mock { background: #fef3c7; color: #92400e; margin-left: 6px; }
+
+
+/* ==========================================================================
+   Dashboard
+   Built to answer five questions at a glance: what level am I, what is my
+   score, how far to the next level, what do I do next, am I improving.
+   Everything below is ordered by that priority, not by how much data exists.
+   ========================================================================== */
+
+.welcome { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; margin-bottom: 28px; }
+.welcome h1 { font-size: clamp(24px, 3vw, 30px); margin-bottom: 6px; }
+.welcome p { color: var(--ink-soft); font-size: 15px; }
+.btn-lg { padding: 14px 24px; font-size: 16px; }
+
+/* ---------- statistics ---------- */
+
+.stat-grid { display: grid; gap: 16px; grid-template-columns: 1fr; margin-bottom: 36px; }
+@media (min-width: 640px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 940px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
+
+.stat-card { display: flex; gap: 16px; align-items: flex-start; }
+.stat-label { font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-soft); }
+/* tabular-nums so the three cards' figures line up rather than dancing. */
+.stat-figure { font-size: 34px; font-weight: 800; color: var(--indigo-600); line-height: 1.1; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.stat-figure .of { font-size: 18px; font-weight: 700; color: var(--ink-faint); }
+.stat-note { font-size: 13px; color: var(--ink-soft); margin-top: 6px; }
+.stat-note.up { color: var(--green); font-weight: 600; }
+
+.icon-tile { width: 44px; height: 44px; flex: none; border-radius: 12px; display: grid; place-items: center; background: var(--indigo-50); color: var(--indigo-600); }
+.icon-tile svg { width: 22px; height: 22px; }
+
+/* ---------- the mock cards ---------- */
+
+.section-head { margin: 0 0 14px; }
+.section-head h2 { font-size: 20px; margin-bottom: 4px; }
+.section-head p { color: var(--ink-soft); font-size: 14px; }
+
+/* Speaking is the product. It gets the width, the tint and the big control;
+   writing gets a quieter card. Equal weight would misrepresent the app. */
+.feature-card {
+  display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border-left: 3px solid var(--indigo-600);
+  background: linear-gradient(90deg, var(--indigo-50), var(--surface) 55%);
+}
+.feature-card .grow { flex: 1 1 280px; min-width: 0; }
+.feature-card h3 { font-size: 20px; margin-bottom: 4px; }
+.feature-icon { width: 56px; height: 56px; border-radius: 14px; background: var(--indigo-600); color: #fff; display: grid; place-items: center; flex: none; }
+.feature-icon svg { width: 26px; height: 26px; }
+
+.secondary-card { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.secondary-card .grow { flex: 1 1 240px; min-width: 0; }
+.secondary-card h3 { font-size: 17px; margin-bottom: 4px; }
+.secondary-icon { width: 44px; height: 44px; border-radius: 12px; background: #f1f5f9; color: #475569; display: grid; place-items: center; flex: none; }
+.secondary-icon svg { width: 21px; height: 21px; }
+
+.meta-row { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; color: var(--ink-soft); font-size: 13px; }
+.meta-row span { display: inline-flex; align-items: center; gap: 6px; }
+.meta-row svg { width: 14px; height: 14px; }
+
+/* ---------- CEFR progress ---------- */
+
+/* Deliberately not a percentage bar: the point is where the student sits
+   between named CEFR boundaries, not how "full" they are. */
+.cefr { margin-top: 8px; }
+.cefr-track { position: relative; height: 10px; border-radius: var(--radius-pill); background: var(--line); margin: 34px 0 10px; }
+.cefr-fill { position: absolute; inset: 0 auto 0 0; border-radius: var(--radius-pill); background: var(--indigo-600); }
+.cefr-tick { position: absolute; top: -8px; bottom: -8px; width: 2px; background: #cbd5e1; transform: translateX(-1px); }
+.cefr-marker { position: absolute; top: 50%; width: 20px; height: 20px; border-radius: 50%; background: var(--indigo-600); border: 3px solid #fff; box-shadow: 0 2px 8px rgba(79,70,229,.45); transform: translate(-50%, -50%); }
+.cefr-marker-label { position: absolute; top: -32px; transform: translateX(-50%); font-size: 13px; font-weight: 800; color: var(--indigo-600); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cefr-scale { position: relative; height: 20px; }
+.cefr-band { position: absolute; transform: translateX(-50%); font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.cefr-summary { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+.cefr-level { font-size: 30px; font-weight: 800; color: var(--ink); }
+.cefr-score { font-size: 17px; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.cefr-next { color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
+.cefr-next strong { color: var(--indigo-600); }
+
+/* ---------- skills ---------- */
+
+.skill { margin-bottom: 16px; }
+.skill:last-child { margin-bottom: 0; }
+.skill-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 7px; }
+.skill-name { font-size: 14px; font-weight: 600; color: var(--ink); }
+.skill-score { font-size: 13px; font-weight: 700; color: var(--indigo-600); font-variant-numeric: tabular-nums; }
+.skill-track { height: 8px; border-radius: var(--radius-pill); background: var(--line); overflow: hidden; }
+.skill-fill { height: 100%; border-radius: var(--radius-pill); background: var(--indigo-600); transition: width .3s ease; }
+.skill-insights { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-soft); }
+.skill-insights b { color: var(--ink); font-weight: 700; }
+
+/* ---------- recent attempts ---------- */
+
+.attempt { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 13px 10px; border: 0; background: none; border-radius: 10px; border-bottom: 1px solid var(--line); transition: background .15s ease; }
+.attempt:last-of-type { border-bottom: 0; }
+.attempt:hover { background: var(--indigo-50); }
+.attempt-name { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 14px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attempt-score { font-weight: 700; font-size: 14px; color: var(--ink); font-variant-numeric: tabular-nums; flex: none; }
+.attempt-date { font-size: 13px; color: var(--ink-soft); flex: none; }
+/* On a phone the four columns leave the exam name a couple of characters, so
+   the name takes its own line and the figures line up underneath it. */
+@media (max-width: 700px) {
+  .attempt { flex-wrap: wrap; gap: 6px 12px; padding: 12px 8px; }
+  .attempt-name { flex: 1 0 100%; white-space: normal; }
+  .attempt-date { margin-left: auto; }
+}
+
+.link-more { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; background: none; border: 0; padding: 0; color: var(--indigo-600); font-weight: 600; font-size: 14px; }
+.link-more:hover { color: var(--indigo-700); }
+
+/* ---------- badges ---------- */
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 700; letter-spacing: .01em; }
+.chip svg { width: 13px; height: 13px; }
+.chip-speaking { background: var(--indigo-50); color: var(--indigo-600); }
+.chip-writing { background: #f1f5f9; color: #475569; }
+.chip-done { background: var(--green-bg); color: var(--green); }
+.chip-progress { background: var(--amber-bg); color: var(--amber-text); }
+.chip-new { background: #f1f5f9; color: var(--ink-soft); }
+
+/* ---------- empty state ---------- */
+
+.empty-state { text-align: center; padding: 40px 24px; }
+.empty-state .icon-tile { width: 60px; height: 60px; margin: 0 auto 18px; border-radius: 16px; }
+.empty-state .icon-tile svg { width: 28px; height: 28px; }
+.empty-state h3 { font-size: 19px; margin-bottom: 8px; }
+.empty-state p { color: var(--ink-soft); font-size: 14px; max-width: 30rem; margin: 0 auto 20px; }
+
+/* ---------- two-column analytics ---------- */
+
+.split { display: grid; gap: 16px; grid-template-columns: 1fr; }
+@media (min-width: 940px) { .split { grid-template-columns: 1fr 1fr; align-items: start; } }
+
+/* ==========================================================================
+   Mocks listing
+   ========================================================================== */
+
+.toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 20px; }
+.toolbar .search { position: relative; flex: 1 1 260px; min-width: 0; }
+.toolbar .search svg { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: var(--ink-faint); pointer-events: none; }
+.toolbar input[type=search] { width: 100%; padding: 10px 13px 10px 38px; border: 1px solid var(--line); border-radius: var(--radius-btn); background: #fff; font-size: 14px; }
+.toolbar input[type=search]:focus { outline: none; border-color: var(--indigo-500); box-shadow: 0 0 0 3px var(--indigo-100); }
+.toolbar select { padding: 10px 13px; border: 1px solid var(--line); border-radius: var(--radius-btn); background: #fff; font-size: 14px; color: var(--ink); }
+.toolbar select:focus { outline: none; border-color: var(--indigo-500); box-shadow: 0 0 0 3px var(--indigo-100); }
+
+.crumb { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: var(--ink-soft); font-size: 14px; }
+.crumb:hover { color: var(--indigo-600); }
+.crumb svg { width: 15px; height: 15px; }
+
+.mock-grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+@media (min-width: 820px) { .mock-grid { grid-template-columns: repeat(2, 1fr); } }
+
+/* Same height per row so the grid reads as a grid, with the primary action
+   pinned to the bottom of each card rather than floating mid-air. */
+.mock-card { display: flex; flex-direction: column; }
+.mock-card .spacer { flex: 1 1 auto; min-height: 10px; }
+.mock-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.mock-card h3 { font-size: 17px; }
+.mock-sub { color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
+.mock-parts { color: var(--ink-faint); font-size: 13px; margin-top: 3px; }
+.mock-meta { font-size: 13px; color: var(--ink-soft); margin-top: 12px; font-variant-numeric: tabular-nums; }
+.mock-best { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--indigo-50); }
+.mock-best .stat-label { color: var(--indigo-700); }
+.mock-best .value { font-size: 18px; font-weight: 800; color: var(--indigo-600); margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+.practise-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.practise-row .label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+.chip-btn { padding: 5px 12px; border-radius: var(--radius-pill); border: 1px solid var(--indigo-200); background: #fff; color: var(--indigo-600); font-size: 13px; font-weight: 600; transition: background .15s ease, border-color .15s ease; }
+.chip-btn:hover { background: var(--indigo-50); border-color: var(--indigo-500); }
+
+.featured { border-left: 3px solid var(--indigo-600); background: linear-gradient(135deg, var(--indigo-50), var(--surface) 60%); }
+@media (min-width: 820px) { .featured-wrap { grid-column: 1 / -1; } }
+
+/* ---------- shared hover ---------- */
+
+.card-hover { transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+.card-hover:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: var(--indigo-200); }
+
+@media (prefers-reduced-motion: reduce) {
+  .card-hover, .card-hover:hover, .skill-fill, .attempt { transition: none; transform: none; }
+}

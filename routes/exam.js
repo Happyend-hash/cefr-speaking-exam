@@ -90,13 +90,17 @@ router.get('/results', async (req, res, next) => {
   try {
     const results = await ExamResult.find({ student: req.user.id })
       .sort({ createdAt: -1 })
-      .populate('exam', 'title level')
+      .populate('exam', 'title level module')
       .lean();
 
     res.json({
       success: true,
       data: results.map(r => ({
         id: r._id,
+        // The mocks page needs this to show which mocks a student has already
+        // done, and their best score on each. Title alone cannot match reliably.
+        examId: String(r.exam?._id || r.exam || ''),
+        examModule: r.exam?.module || 'speaking',
         examTitle: r.exam?.title || 'Exam',
         examLevel: r.examLevel,
         status: r.status,

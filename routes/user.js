@@ -1,6 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
-import ExamResult from '../models/ExamResult.js';
+import ExamResult, { CEFR_BANDS, MAX_SCORE } from '../models/ExamResult.js';
 import AuthService from '../services/AuthService.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -11,6 +11,38 @@ const router = express.Router();
  * @desc    Signed-in user's profile plus a summary of their exam history
  * @access  Private
  */
+
+/**
+ * Average each marking criterion across a set of completed attempts.
+ *
+ * Returns scores on the same 0-75 scale as everything else; the dashboard
+ * rescales for display. Criteria keys differ between speaking and writing, so
+ * whatever keys are present are averaged and the caller renders what it gets.
+ */
+function averageSkills(results) {
+  const totals = {};
+  const counts = {};
+
+  for (const result of results) {
+    for (const task of result.taskResults || []) {
+      const criteria = task.aiEvaluation?.criteria;
+      if (!criteria || task.status !== 'evaluated') continue;
+      for (const [name, value] of Object.entries(criteria)) {
+        const score = Number(value?.score);
+        if (!Number.isFinite(score)) continue;
+        totals[name] = (totals[name] || 0) + score;
+        counts[name] = (counts[name] || 0) + 1;
+      }
+    }
+  }
+
+  const skills = {};
+  for (const name of Object.keys(totals)) {
+    skills[name] = Math.round((totals[name] / counts[name]) * 10) / 10;
+  }
+  return Object.keys(skills).length ? skills : null;
+}
+
 router.get('/profile', async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
@@ -37,7 +69,31 @@ router.get('/profile', async (req, res, next) => {
           averageScore,
           currentLevel: results[0]?.overallLevel || null,
           highestLevel: highestCEFR(results.map(r => r.overallLevel)),
-          lastCompletedAt: results[0]?.completedAt || null
+          lastCompletedAt: results[0]?.completedAt || null,
+          bestScore: scores.length ? Math.max(...scores) : null,
+          // The score before the current best, so the dashboard can say whether
+          // the student is improving rather than only where they stand.
+          previousBest: (() => {
+            const sorted = [...scores].sort((a, b) => b - a);
+            return sorted.length > 1 ? sorted[1] : null;
+          })(),
+          completedThisMonth: results.filter(r => {
+            if (!r.completedAt) return false;
+            const d = new Date(r.completedAt);
+            const now = new Date();
+            return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+          }).length,
+          // Per-criterion averages across the most recent completed attempts.
+          // The results LIST does not carry criteria — they live inside each
+          // attempt's taskResults — so the dashboard could not show a skill
+          // breakdown without this. Averaged over the last few attempts rather
+          // than only the latest, so one bad answer does not define a skill.
+          skills: averageSkills(results.slice(0, 5)),
+          // The dashboard draws the CEFR progress bar from these rather than
+          // keeping its own copy of the thresholds. One source of truth for the
+          // bands was the whole point of putting them in models/ExamResult.js.
+          maxScore: MAX_SCORE,
+          bands: CEFR_BANDS
         }
       }
     });

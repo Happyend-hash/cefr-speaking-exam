@@ -36,6 +36,10 @@
     qIndex: 0,
     answered: {},      // taskNumber -> { transcription, hasAudio }
     result: null,      // completed result detail
+    folder: null,      // which module's mocks are being browsed
+    mockSearch: '',    // mocks screen: search box
+    mockStatus: 'all', // mocks screen: status filter
+    mockSort: 'recommended',
     loading: false,
     error: '',
     notice: ''
@@ -790,14 +794,29 @@
         </div>
       </nav>`;
     }
+    // Mid-exam every link comes off: leaving a running question loses the
+    // answer, so canLeave() gates the whole set rather than some of it.
+    // Teachers and students see different places, and "Questions" has to stay
+    // invisible to a student — a link they cannot use reads as a fault.
+    const link = (screen, label) =>
+      `<button class="nav-link ${state.screen === screen ? 'is-current' : ''}" data-go="${screen}">${label}</button>`;
+
+    const links = !canLeave()
+      ? ''
+      : state.user.role === 'admin'
+      ? `${link('dashboard', 'Dashboard')}
+         <a class="nav-link" href="/admin.html">Questions</a>`
+      : `${link('dashboard', 'Dashboard')}${link('results', 'My results')}`;
+
+    const initials = String(state.user.firstName || state.user.email || '?')
+      .trim().charAt(0).toUpperCase();
+
     return `<nav class="nav">
       ${brandMarkup()}
+      <div class="nav-links">${links}</div>
       <div class="nav-right">
+        <span class="avatar" aria-hidden="true">${esc(initials)}</span>
         <span class="nav-user">${esc(state.user.firstName || state.user.email)}</span>
-        ${state.user.role === 'admin' && canLeave()
-          ? '<a class="btn btn-ghost btn-sm" href="/admin.html">Manage questions</a>'
-          : ''}
-        ${canLeave() ? '<button class="btn btn-ghost btn-sm" data-go="dashboard">Dashboard</button>' : ''}
         <button class="btn btn-ghost btn-sm" data-action="signout">Sign out</button>
       </div>
     </nav>`;
@@ -816,6 +835,8 @@
       signup: () => authScreen('signup'),
       login: () => authScreen('login'),
       dashboard: dashboardScreen,
+      mocks: mocksScreen,
+      results: resultsScreen,
       exam: examScreen,
       evaluating: evaluatingScreen,
       result: resultScreen
@@ -873,88 +894,428 @@
       </div>`;
   }
 
+  // ---------------------------------------------------------------- icons
+
+  /**
+   * One icon family (Lucide), inlined as SVG paths.
+   *
+   * Inlined rather than loaded: an icon font or sprite is another request that
+   * can fail, and these are small. `currentColor` means an icon takes the colour
+   * of whatever contains it, so tiles and buttons need no icon-specific colours.
+   */
+  const ICONS = {
+    mic: '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
+    pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+    trophy: '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
+    target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    check: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+    chart: '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    right: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+    chevron: '<path d="m9 18 6-6-6-6"/>',
+    left: '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+    message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'
+  };
+
+  const icon = name =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+
+  const PART_ICON = { '1.1': 'mic', '1.2': 'image', '2': 'message', '3': 'users' };
+
+  // ------------------------------------------------------- derived figures
+
+  /** Completed attempts, newest first. */
+  const completedAttempts = () =>
+    (state.history || []).filter(h => h.status === 'completed' && typeof h.overallScore === 'number');
+
+  /**
+   * Where a score sits between CEFR boundaries, and how far to the next one.
+   * The bands come from the server so this can never disagree with the marking.
+   */
+  function cefrPosition(score) {
+    const stats = state.stats || {};
+    const bands = (stats.bands || []).slice().sort((a, b) => a.min - b.min);
+    const max = stats.maxScore || MAX_SCORE;
+    if (!bands.length || typeof score !== 'number') return null;
+
+    const current = [...bands].reverse().find(b => score >= b.min) || bands[0];
+    const next = bands.find(b => b.min > score) || null;
+
+    return {
+      bands, max, current, next,
+      pointsToNext: next ? next.min - score : 0,
+      percent: Math.max(0, Math.min(100, (score / max) * 100))
+    };
+  }
+
+  /** What a student has done on each exam, for the mocks listing. */
+  function attemptsByExam() {
+    const map = {};
+    for (const h of state.history || []) {
+      if (!h.examId) continue;
+      const entry = map[h.examId] || (map[h.examId] = { best: null, bestLevel: null, bestId: null, inProgress: false, count: 0 });
+      if (h.status === 'in_progress') entry.inProgress = true;
+      if (h.status === 'completed' && typeof h.overallScore === 'number') {
+        entry.count += 1;
+        if (entry.best === null || h.overallScore > entry.best) {
+          entry.best = h.overallScore;
+          entry.bestLevel = h.overallLevel;
+          entry.bestId = h.id;
+        }
+      }
+    }
+    return map;
+  }
+
+  // ------------------------------------------------------------- dashboard
+
+  function statCard(iconName, label, figure, note, noteClass = '') {
+    return `<div class="card stat-card">
+      <div class="icon-tile">${icon(iconName)}</div>
+      <div>
+        <div class="stat-label">${esc(label)}</div>
+        <div class="stat-figure">${figure}</div>
+        ${note ? `<div class="stat-note ${noteClass}">${esc(note)}</div>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function cefrCard(score) {
+    const pos = cefrPosition(score);
+    if (!pos) return '';
+
+    return `<div class="card">
+      <div class="section-head"><h2>Your CEFR progress</h2>
+        <p>Where this score sits on the Multilevel scale.</p></div>
+      <div class="cefr">
+        <div class="cefr-track">
+          <div class="cefr-fill" style="width:${pos.percent}%"></div>
+          ${pos.bands.filter(b => b.min > 0).map(b =>
+            `<div class="cefr-tick" style="left:${(b.min / pos.max) * 100}%"></div>`).join('')}
+          <div class="cefr-marker" style="left:${pos.percent}%"></div>
+          <div class="cefr-marker-label" style="left:${pos.percent}%">${score}</div>
+        </div>
+        <div class="cefr-scale">
+          ${pos.bands.map(b =>
+            `<span class="cefr-band" style="left:${Math.max(2, Math.min(98, (b.min / pos.max) * 100))}%">${esc(b.level)}</span>`).join('')}
+        </div>
+        <div class="cefr-summary">
+          <span class="cefr-level">${esc(pos.current.level)}</span>
+          <span class="cefr-score">${score} / ${pos.max}</span>
+        </div>
+        <p class="cefr-next">${pos.next
+          ? `<strong>${pos.pointsToNext} point${pos.pointsToNext === 1 ? '' : 's'}</strong> to reach ${esc(pos.next.level)}.`
+          : `You are in the highest band on this scale.`}</p>
+      </div>
+    </div>`;
+  }
+
+  function skillsCard() {
+    const skills = state.stats?.skills;
+    if (!skills || !Object.keys(skills).length) return '';
+
+    const max = state.stats?.maxScore || MAX_SCORE;
+    // Out of ten reads better on a bar than out of seventy-five, and the spec
+    // asks for it — but the underlying mark is the same 0-75 as everywhere else.
+    const toTen = v => Math.round((v / max) * 10 * 10) / 10;
+
+    const ORDER = ['fluency', 'vocabulary', 'grammar', 'pronunciation', 'coherence', 'taskAchievement'];
+    const entries = Object.entries(skills)
+      .sort((a, b) => (ORDER.indexOf(a[0]) + 99) % 99 - (ORDER.indexOf(b[0]) + 99) % 99);
+
+    const sorted = [...entries].sort((a, b) => b[1] - a[1]);
+    const strongest = sorted[0];
+    const weakest = sorted[sorted.length - 1];
+
+    return `<div class="card">
+      <div class="section-head"><h2>Speaking skills</h2>
+        <p>Averaged across your recent attempts.</p></div>
+      ${entries.map(([name, value]) => `
+        <div class="skill">
+          <div class="skill-head">
+            <span class="skill-name">${esc(criterionLabel(name))}</span>
+            <span class="skill-score">${toTen(value).toFixed(1)} / 10</span>
+          </div>
+          <div class="skill-track"><div class="skill-fill" style="width:${Math.max(0, Math.min(100, (value / max) * 100))}%"></div></div>
+        </div>`).join('')}
+      ${strongest && weakest && strongest[0] !== weakest[0]
+        ? `<div class="skill-insights">
+             <span>Strongest: <b>${esc(criterionLabel(strongest[0]))}</b></span>
+             <span>Needs work: <b>${esc(criterionLabel(weakest[0]))}</b></span>
+           </div>`
+        : ''}
+    </div>`;
+  }
+
+  function recentCard() {
+    const recent = completedAttempts().slice(0, 5);
+    if (!recent.length) return '';
+
+    return `<div class="card">
+      <div class="section-head"><h2>Recent attempts</h2>
+        <p>Tap any attempt to read its feedback.</p></div>
+      ${recent.map(item => `
+        <button class="attempt" data-result="${esc(item.id)}">
+          <span class="attempt-name">${esc(item.examTitle)}</span>
+          <span class="attempt-score">${item.overallScore}/${state.stats?.maxScore || MAX_SCORE}</span>
+          <span class="chip chip-speaking">${esc(item.overallLevel || '—')}</span>
+          <span class="attempt-date">${esc(fmtDate(item.completedAt))}</span>
+        </button>`).join('')}
+      <button class="link-more" data-go="results">View all results ${icon('chevron')}</button>
+    </div>`;
+  }
+
+  function firstMockEmptyState() {
+    return `<div class="card empty-state">
+      <div class="icon-tile">${icon('mic')}</div>
+      <h3>Take your first speaking mock</h3>
+      <p>Complete one full test to find your estimated CEFR level and get detailed
+         feedback on fluency, vocabulary, grammar and pronunciation.</p>
+      <button class="btn btn-lg" data-folder="speaking">Start my first mock ${icon('right')}</button>
+    </div>`;
+  }
+
   function dashboardScreen() {
-    if (state.loading) return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">Loading…</p></div>`;
+    if (state.loading && !state.exams.length) {
+      return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">Loading…</p></div>`;
+    }
 
-    const s = state.stats || {};
-    const stats = `
-      <div class="grid grid-3">
-        <div class="card stat"><div class="stat-label">Exams completed</div><div class="stat-value">${s.examsCompleted ?? 0}</div></div>
-        <div class="card stat"><div class="stat-label">Average score</div><div class="stat-value">${s.averageScore ?? '—'}</div></div>
-        <div class="card stat"><div class="stat-label">Current level</div><div class="stat-value">${esc(s.currentLevel || '—')}</div></div>
-      </div>`;
+    const stats = state.stats || {};
+    const done = completedAttempts();
+    const hasResults = done.length > 0;
+    const max = stats.maxScore || MAX_SCORE;
+    const best = typeof stats.bestScore === 'number' ? stats.bestScore : null;
+    const pos = best !== null ? cefrPosition(best) : null;
 
-    // Speaking and writing are separate exams, so they get separate folders.
-    // Twenty speaking mocks and one writing paper in a single list buried the
-    // writing paper; opening a folder shows only that module.
-    const MODULES = [
-      { key: 'speaking', label: 'Speaking mock', blurb: 'Parts 1.1, 1.2, 2 and 3 — recorded and marked.' },
-      { key: 'writing', label: 'Writing mock', blurb: 'Task 1 and Task 2 — written and marked.' }
-    ];
+    const speaking = (state.exams || []).filter(e => (e.module || 'speaking') === 'speaking');
+    const writing = (state.exams || []).filter(e => e.module === 'writing');
 
-    // Sort naturally, not alphabetically: the database orders by title, which
-    // puts "Speaking Mock 10" directly after "Speaking Mock 1" and leaves a
-    // student hunting for number 2 at the bottom of the list.
-    const byNumber = (a, b) =>
-      a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+    const name = state.user?.firstName || '';
 
-    const inFolder = state.folder
-      ? state.exams.filter(e => (e.module || 'speaking') === state.folder).sort(byNumber)
-      : [];
+    const welcome = `<div class="welcome">
+      <div>
+        <h1>Welcome back${name ? `, ${esc(name)}` : ''} 👋</h1>
+        <p>Ready to test your English speaking skills?</p>
+      </div>
+      <button class="btn btn-lg" data-folder="speaking">${icon('mic')} Start a speaking mock</button>
+    </div>`;
 
-    const folders = !state.folder
-      ? `<div class="grid grid-2">${MODULES.map(m => {
-          const items = state.exams.filter(e => (e.module || 'speaking') === m.key);
-          return `<button class="card folder-card" data-folder="${m.key}" ${items.length ? '' : 'disabled'}>
-            <div class="folder-icon" aria-hidden="true">${m.key === 'writing' ? '✎' : '🎙'}</div>
-            <div>
-              <h3>${m.label}</h3>
-              <p class="muted">${m.blurb}</p>
-              <div class="folder-count">${items.length
-                ? `${items.length} mock${items.length === 1 ? '' : 's'}`
-                : 'Nothing published yet'}</div>
-            </div>
-          </button>`;
-        }).join('')}</div>`
-      : '';
+    const statsRow = `<div class="stat-grid">
+      ${statCard('mic', 'Mocks completed', done.length,
+        stats.completedThisMonth ? `↑ ${stats.completedThisMonth} this month` : (hasResults ? '' : 'Take your first mock'),
+        stats.completedThisMonth ? 'up' : '')}
+      ${statCard('trophy', 'Best score',
+        best !== null ? `${best}<span class="of"> / ${max}</span>` : '—',
+        best !== null && typeof stats.previousBest === 'number'
+          ? `+${best - stats.previousBest} from previous best`
+          : (hasResults ? '' : 'No score yet'),
+        best !== null && typeof stats.previousBest === 'number' && best > stats.previousBest ? 'up' : '')}
+      ${statCard('target', 'Current level',
+        stats.currentLevel ? esc(stats.currentLevel) : '—',
+        pos ? (pos.next ? `${pos.pointsToNext} points to ${pos.next.level}` : 'Highest band reached') : 'Complete a mock to find out')}
+    </div>`;
 
-    const folderHeader = state.folder
-      ? `<div class="row" style="gap:10px;margin-bottom:12px">
-           <button class="btn btn-ghost btn-sm" data-folder-back="1">← All mocks</button>
-           <strong>${esc(MODULES.find(m => m.key === state.folder)?.label || '')}</strong>
-           <span class="muted">${inFolder.length} mock${inFolder.length === 1 ? '' : 's'}</span>
+    const speakingCard = `<div class="card feature-card card-hover">
+      <div class="feature-icon">${icon('mic')}</div>
+      <div class="grow">
+        <div class="row" style="gap:10px"><h3>Speaking mock</h3><span class="chip chip-speaking">Speaking</span></div>
+        <p class="mock-sub">Practise Parts 1.1, 1.2, 2 and 3.</p>
+        <div class="meta-row">
+          <span>${icon('clock')} ~12 min</span>
+          <span>${icon('mic')} Recorded</span>
+          <span>${icon('check')} Evaluated</span>
+        </div>
+      </div>
+      <div>
+        <button class="btn btn-lg" data-folder="speaking">Start mock ${icon('right')}</button>
+        <p class="muted" style="margin-top:8px;text-align:center">${speaking.length} mock${speaking.length === 1 ? '' : 's'} available</p>
+      </div>
+    </div>`;
+
+    const writingCard = writing.length ? `<div class="card secondary-card card-hover">
+      <div class="secondary-icon">${icon('pen')}</div>
+      <div class="grow">
+        <div class="row" style="gap:10px"><h3>Writing mock</h3><span class="chip chip-writing">Writing</span></div>
+        <p class="mock-sub">Task 1 and Task 2 — written and evaluated.</p>
+        <div class="meta-row">
+          <span>${icon('pen')} Written</span>
+          <span>${icon('check')} Evaluated</span>
+        </div>
+      </div>
+      <div>
+        <button class="btn btn-ghost" data-folder="writing">Start writing ${icon('right')}</button>
+        <p class="muted" style="margin-top:8px;text-align:center">${writing.length} mock${writing.length === 1 ? '' : 's'} available</p>
+      </div>
+    </div>` : '';
+
+    const analytics = hasResults
+      ? `${cefrCard(best)}
+         <div class="split">${skillsCard()}${recentCard()}</div>`
+      : firstMockEmptyState();
+
+    return `
+      ${welcome}
+      ${statsRow}
+      <div class="section-head" style="margin-top:8px"><h2>Ready for your next test?</h2>
+        <p>Practise the real CEFR format and see how you perform.</p></div>
+      <div class="stack" style="margin-bottom:36px">
+        ${speakingCard}
+        ${writingCard}
+      </div>
+      <div class="stack">${analytics}</div>`;
+  }
+
+  // --------------------------------------------------------- mocks listing
+
+  const MOCK_SORTS = {
+    recommended: 'Recommended',
+    newest: 'Newest',
+    oldest: 'Oldest',
+    unattempted: 'Not attempted',
+    best: 'Highest score'
+  };
+
+  function mockStatus(exam, attempts) {
+    const a = attempts[exam.id];
+    if (a?.best !== null && a?.best !== undefined) return 'completed';
+    if (a?.inProgress) return 'in_progress';
+    return 'not_started';
+  }
+
+  function mocksScreen() {
+    const folder = state.folder || 'speaking';
+    const isWriting = folder === 'writing';
+    const attempts = attemptsByExam();
+    const max = state.stats?.maxScore || MAX_SCORE;
+
+    let list = (state.exams || []).filter(e => (e.module || 'speaking') === folder);
+
+    const query = (state.mockSearch || '').trim().toLowerCase();
+    if (query) {
+      list = list.filter(e =>
+        e.title.toLowerCase().includes(query) ||
+        (e.description || '').toLowerCase().includes(query) ||
+        (e.module || 'speaking').includes(query));
+    }
+
+    const statusFilter = state.mockStatus || 'all';
+    if (statusFilter !== 'all') list = list.filter(e => mockStatus(e, attempts) === statusFilter);
+
+    const byNumber = (a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+    const sort = state.mockSort || 'recommended';
+    list = [...list].sort((a, b) => {
+      if (sort === 'newest') return byNumber(b, a);
+      if (sort === 'oldest') return byNumber(a, b);
+      if (sort === 'best') return (attempts[b.id]?.best ?? -1) - (attempts[a.id]?.best ?? -1);
+      if (sort === 'unattempted') {
+        const rank = e => (mockStatus(e, attempts) === 'not_started' ? 0 : 1);
+        return rank(a) - rank(b) || byNumber(a, b);
+      }
+      // Recommended: anything untouched first, then in progress, then done.
+      const rank = e => ({ not_started: 0, in_progress: 1, completed: 2 }[mockStatus(e, attempts)]);
+      return rank(a) - rank(b) || byNumber(a, b);
+    });
+
+    const featured = sort === 'recommended' && !query && statusFilter === 'all' ? list[0] : null;
+    const rest = featured ? list.slice(1) : list;
+
+    const toolbar = `<div class="toolbar">
+      <div class="search">${icon('search')}
+        <input type="search" id="mock-search" placeholder="Search mocks…" value="${esc(state.mockSearch || '')}" />
+      </div>
+      <select id="mock-status" aria-label="Filter by status">
+        ${Object.entries({
+          all: 'All statuses', not_started: 'Not started',
+          in_progress: 'In progress', completed: 'Completed'
+        }).map(([k, v]) =>
+          `<option value="${k}" ${statusFilter === k ? 'selected' : ''}>${v}</option>`).join('')}
+      </select>
+      <select id="mock-sort" aria-label="Sort">
+        ${Object.entries(MOCK_SORTS).map(([k, v]) =>
+          `<option value="${k}" ${sort === k ? 'selected' : ''}>Sort: ${v}</option>`).join('')}
+      </select>
+    </div>`;
+
+    const statusChip = status => ({
+      completed: `<span class="chip chip-done">${icon('check')} Completed</span>`,
+      in_progress: `<span class="chip chip-progress">In progress</span>`,
+      not_started: `<span class="chip chip-new">Not started</span>`
+    }[status]);
+
+    const partChips = exam => (exam.parts || []).length
+      ? `<div class="practise-row">
+           <span class="label">Practise:</span>
+           ${exam.parts.map(p =>
+             `<button class="chip-btn" data-start="${esc(exam.id)}" data-mode="practice" data-part="${esc(p)}">${esc(p)}</button>`).join('')}
          </div>`
       : '';
 
-    const exams = !state.folder
-      ? folders
-      : inFolder.length
-      ? `${folderHeader}<div class="grid grid-2">${inFolder.map(exam => `
-          <div class="card exam-card">
-            <div class="row" style="justify-content:space-between">
-              <h3>${esc(exam.title)}</h3>
-              <span class="badge">${esc(exam.module === 'writing' ? 'Writing' : 'Speaking')}</span>
-            </div>
-            <p class="muted">${esc(exam.description || '')}</p>
-            <div class="exam-meta">
-              <span>${exam.totalTasks} ${exam.module === 'writing' ? 'tasks' : 'questions'}</span>
-              <span>~${Math.round((exam.duration || 0) / 60)} min</span>
-            </div>
-            <div class="row">
-              <button class="btn btn-sm" data-start="${esc(exam.id)}" data-mode="mock">Full mock exam</button>
-              ${(exam.parts || []).map(p =>
-                `<button class="btn btn-ghost btn-sm" data-start="${esc(exam.id)}" data-mode="practice" data-part="${esc(p)}">Practise Part ${esc(p)}</button>`
-              ).join('')}
-            </div>
-          </div>`).join('')}</div>`
-      : `${folderHeader}<div class="card"><p class="muted">Nothing published in this folder yet.</p></div>`;
+    const mockCard = (exam, isFeatured = false) => {
+      const status = mockStatus(exam, attempts);
+      const a = attempts[exam.id];
+      const minutes = Math.round((exam.duration || 0) / 60);
 
+      return `<div class="card mock-card card-hover ${isFeatured ? 'featured' : ''}">
+        ${isFeatured ? `<div class="chip chip-speaking" style="align-self:flex-start;margin-bottom:12px">${icon('star')} Recommended</div>` : ''}
+        <div class="mock-top">
+          <h3>${esc(exam.title)}</h3>
+          ${statusChip(status)}
+        </div>
+        <p class="mock-sub">${isWriting ? 'Full writing test' : 'Full speaking test'}</p>
+        ${(exam.parts || []).length ? `<p class="mock-parts">Parts ${exam.parts.map(esc).join(' · ')}</p>` : ''}
+        <p class="mock-meta">${exam.totalTasks || exam.totalQuestions || 0} questions${minutes ? ` · ~${minutes} min` : ''}</p>
+        ${status === 'completed' ? `<div class="mock-best">
+          <div class="stat-label">Best score</div>
+          <div class="value">${a.best} / ${max} · ${esc(a.bestLevel || '')}</div>
+        </div>` : ''}
+        <div class="spacer"></div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn ${isFeatured ? 'btn-lg' : ''}" data-start="${esc(exam.id)}" data-mode="mock">
+            ${status === 'completed' ? 'Retake mock' : 'Start full mock'} ${icon('right')}
+          </button>
+          ${status === 'completed' ? `<button class="btn btn-ghost" data-result="${esc(a.bestId)}">View result</button>` : ''}
+        </div>
+        ${partChips(exam)}
+      </div>`;
+    };
+
+    const empty = `<div class="card empty-state">
+      <div class="icon-tile">${icon('search')}</div>
+      <h3>No mock tests found</h3>
+      <p>Try another search, or clear the filters.</p>
+      <button class="btn btn-ghost" data-clear-filters="1">Clear filters</button>
+    </div>`;
+
+    const total = (state.exams || []).filter(e => (e.module || 'speaking') === folder).length;
+
+    return `
+      <div style="margin-bottom:18px">
+        <button class="crumb" data-go="dashboard">${icon('left')} All mock exams</button>
+        <h1 style="font-size:26px;margin:10px 0 4px">Mock exams</h1>
+        <p class="muted">Choose a full test or practise a specific part.
+          &nbsp;·&nbsp; ${isWriting ? 'Writing' : 'Speaking'} · ${total} mock test${total === 1 ? '' : 's'}</p>
+      </div>
+      ${toolbar}
+      ${list.length
+        ? `<div class="mock-grid">
+             ${featured ? `<div class="featured-wrap">${mockCard(featured, true)}</div>` : ''}
+             ${rest.map(e => mockCard(e)).join('')}
+           </div>`
+        : empty}`;
+  }
+
+  // ------------------------------------------------------- results archive
+
+  function resultsScreen() {
     const selected = state.selected || {};
-    const selectedIds = state.history.filter(h => selected[h.id]).map(h => h.id);
+    const selectedIds = (state.history || []).filter(h => selected[h.id]).map(h => h.id);
     const allSelected = state.history.length > 0 && selectedIds.length === state.history.length;
+    const max = state.stats?.maxScore || MAX_SCORE;
 
-    // The selection bar only appears once something is selected, so the normal
-    // view of "my results" stays uncluttered for a student who just wants to read them.
     const selectionBar = selectedIds.length
       ? `<div class="select-bar">
            <strong>${selectedIds.length} selected</strong>
@@ -972,47 +1333,49 @@
          </div>`
       : '';
 
-    const history = state.history.length
-      ? `${selectionBar}<div class="stack">${state.history.map(item => `
-          <div class="card row ${selected[item.id] ? 'row-selected' : ''}" style="justify-content:space-between">
-            <div class="row">
-              <input type="checkbox" class="pick" id="pick-${esc(item.id)}"
-                     data-pick="${esc(item.id)}" ${selected[item.id] ? 'checked' : ''}
-                     aria-label="Select this attempt" />
-              <label for="pick-${esc(item.id)}">
-                <strong>${esc(item.examTitle)}</strong>
-                <div class="muted">${esc(item.status === 'completed' ? fmtDate(item.completedAt) : item.status.replace('_', ' '))}</div>
-              </label>
-            </div>
-            <div class="row">
-              ${item.status === 'completed'
-                ? `<span class="badge ${item.isPassed ? 'badge-pass' : 'badge-fail'}">${item.overallScore} · ${esc(item.overallLevel)}</span>
-                   <button class="btn btn-ghost btn-sm" data-result="${esc(item.id)}">View</button>`
-                : `<span class="badge">${esc(item.status.replace('_', ' '))}</span>`}
-              ${state.confirmDelete === item.id
-                // Deleting also destroys the recordings, so it takes a second,
-                // deliberate click rather than a dialog that can be dismissed by reflex.
-                ? `<span class="confirm-delete">
-                     <span class="muted">Delete this attempt and its recordings?</span>
-                     <button class="btn btn-danger btn-sm" data-delete-confirm="${esc(item.id)}">Yes, delete</button>
-                     <button class="btn btn-ghost btn-sm" data-delete-cancel="1">Keep</button>
-                   </span>`
-                : `<button class="btn btn-ghost btn-sm btn-quiet" data-delete="${esc(item.id)}" title="Delete this attempt">Delete</button>`}
-            </div>
-          </div>`).join('')}</div>`
-      : '';
+    if (!state.history.length) {
+      return `
+        <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
+        <h1 style="font-size:26px;margin:10px 0 18px">My results</h1>
+        <div class="card empty-state">
+          <div class="icon-tile">${icon('chart')}</div>
+          <h3>No results yet</h3>
+          <p>Your completed mocks and their feedback will appear here.</p>
+          <button class="btn" data-folder="speaking">Start a mock ${icon('right')}</button>
+        </div>`;
+    }
 
     return `
-      ${stats}
-      <div><h2 style="margin:22px 0 4px">Mock exams</h2><p class="muted" style="margin-bottom:14px">${
-        state.folder
-          ? 'Sit the full mock, or practise one part on its own.'
-          // The old copy said "pick the level you want to be assessed at" — a
-          // Multilevel sitting determines the level, it is not chosen upfront.
-          : 'Choose speaking or writing. Your level is worked out from how you perform.'
-      }</p></div>
-      ${exams}
-      ${history ? `<div><h2 style="margin:26px 0 14px">Your history</h2></div>${history}` : ''}`;
+      <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
+      <h1 style="font-size:26px;margin:10px 0 4px">My results</h1>
+      <p class="muted" style="margin-bottom:18px">Every attempt, with its recordings and feedback.</p>
+      ${selectionBar}
+      <div class="stack">${state.history.map(item => `
+        <div class="card row ${selected[item.id] ? 'row-selected' : ''}" style="justify-content:space-between">
+          <div class="row">
+            <input type="checkbox" class="pick" id="pick-${esc(item.id)}"
+                   data-pick="${esc(item.id)}" ${selected[item.id] ? 'checked' : ''}
+                   aria-label="Select this attempt" />
+            <label for="pick-${esc(item.id)}">
+              <strong>${esc(item.examTitle)}</strong>
+              <div class="muted">${esc(item.status === 'completed' ? fmtDate(item.completedAt) : item.status.replace('_', ' '))}</div>
+            </label>
+          </div>
+          <div class="row">
+            ${item.status === 'completed'
+              ? `<span class="attempt-score">${item.overallScore}/${max}</span>
+                 <span class="chip chip-speaking">${esc(item.overallLevel || '—')}</span>
+                 <button class="btn btn-ghost btn-sm" data-result="${esc(item.id)}">View</button>`
+              : `<span class="chip chip-progress">${esc(item.status.replace('_', ' '))}</span>`}
+            ${state.confirmDelete === item.id
+              ? `<span class="confirm-delete">
+                   <span class="muted">Delete this attempt and its recordings?</span>
+                   <button class="btn btn-danger btn-sm" data-delete-confirm="${esc(item.id)}">Yes, delete</button>
+                   <button class="btn btn-ghost btn-sm" data-delete-cancel="1">Keep</button>
+                 </span>`
+              : `<button class="btn btn-ghost btn-sm btn-quiet" data-delete="${esc(item.id)}" title="Delete this attempt">Delete</button>`}
+          </div>
+        </div>`).join('')}</div>`;
   }
 
   function examScreen() {
@@ -1289,7 +1652,7 @@
         <div class="card">
           <div class="row" style="justify-content:space-between">
             <h3>Task ${task.taskNumber}</h3>
-            <span class="badge">${task.finalScore ?? 0}/100</span>
+            <span class="badge">${task.finalScore ?? 0}/${MAX_SCORE}</span>
           </div>
           ${task.audioUrl ? `<audio controls data-authsrc="${esc(task.audioUrl)}"></audio>` : ''}
           ${task.transcription ? `<div style="margin-top:12px"><div class="section-title">What you said</div><div class="transcript" style="margin-top:6px">${esc(task.transcription)}</div></div>` : ''}
@@ -1381,11 +1744,41 @@
     root.querySelectorAll('[data-result]').forEach(el =>
       el.addEventListener('click', () => openResult(el.dataset.result)));
 
+    // Opening a folder is a screen change now, not a filter on the dashboard.
+    // The search and filters reset with it, so a student who comes back to the
+    // speaking mocks is never met by an empty list left over from last time.
     root.querySelectorAll('[data-folder]').forEach(el =>
-      el.addEventListener('click', () => setState({ folder: el.dataset.folder })));
+      el.addEventListener('click', () => {
+        go('mocks', {
+          folder: el.dataset.folder,
+          mockSearch: '', mockStatus: 'all', mockSort: 'recommended'
+        });
+      }));
 
-    root.querySelectorAll('[data-folder-back]').forEach(el =>
-      el.addEventListener('click', () => setState({ folder: null })));
+    root.querySelectorAll('[data-clear-filters]').forEach(el =>
+      el.addEventListener('click', () =>
+        setState({ mockSearch: '', mockStatus: 'all', mockSort: 'recommended' })));
+
+    /*
+     * Typing re-renders the whole screen, which throws away the input the
+     * student is typing into — so the caret is put back where it was straight
+     * afterwards. Without this the box loses focus after every single letter.
+     */
+    const search = document.getElementById('mock-search');
+    search?.addEventListener('input', () => {
+      const caret = search.selectionStart;
+      setState({ mockSearch: search.value });
+      const fresh = document.getElementById('mock-search');
+      if (!fresh) return;
+      fresh.focus();
+      try { fresh.setSelectionRange(caret, caret); } catch { /* unsupported */ }
+    });
+
+    document.getElementById('mock-status')?.addEventListener('change', event =>
+      setState({ mockStatus: event.target.value }));
+
+    document.getElementById('mock-sort')?.addEventListener('change', event =>
+      setState({ mockSort: event.target.value }));
 
     root.querySelectorAll('[data-delete]').forEach(el =>
       el.addEventListener('click', () => setState({ confirmDelete: el.dataset.delete, error: '' })));
