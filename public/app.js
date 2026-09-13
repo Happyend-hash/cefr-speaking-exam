@@ -111,6 +111,79 @@
     improvements: 'Ustida ishlash kerak'
   };
 
+  /**
+   * The briefing, in Uzbek.
+   *
+   * Everything a student reads before the first question is gathered here
+   * rather than left inline, because this is the one screen where a
+   * misunderstanding costs marks — a teacher must be able to find a sentence
+   * and reword it without reading the code around it. Latin script, matching
+   * the AI feedback (FEEDBACK_LANGUAGE on the server).
+   *
+   * Two things stay in English on purpose: the part labels (1.1, 1.2, 2, 3),
+   * which are what the real exam calls them, and the sample sentence for the
+   * microphone check, which the student is meant to say in English.
+   */
+  const BRIEF_UZ = {
+    back: 'Mocklarga qaytish',
+    fullMock: "To'liq mock",
+    practice: 'Mashq',
+    summary: (questions, minutes) =>
+      `${questions} ta savol · taxminan ${minutes} daqiqa o'ylash va gapirish vaqti.`,
+
+    whatHeading: 'Nima qilasiz',
+    partBlurb: {
+      '1.1': "O'zingiz haqingizda qisqa savollar. Darhol javob bering.",
+      '1.2': 'Ikki rasmni solishtiring va farqlarini ayting.',
+      '2': 'Bitta vaziyat, uchta savol. Uchalasiga ham bitta javobda javob bering.',
+      '3': "Mavzu bo'yicha tarafdor va qarshi fikrlar. O'z fikringizni bildiring."
+    },
+    minutes: n => `~${n} daq`,
+
+    howHeading: "Qanday o'tadi",
+    steps: [
+      "Har bir savolda avval <strong>o'ylash vaqti</strong> beriladi. Undan foydalaning — bu paytda hech narsa yozib olinmaydi.",
+      "So'ng ovoz yozish <strong>o'zi boshlanadi</strong> va vaqt tugagach o'zi to'xtaydi.",
+      "Javobingiz o'zi saqlanadi va keyingi savol chiqadi."
+    ],
+    stepMock: "Mock boshlangandan keyin oxirigacha to'xtamaydi. To'xtatib turolmaysiz, savolni o'tkazib yubora olmaysiz va javobni qayta yoza olmaysiz.",
+    stepPractice: "Mashqda savolni o'tkazib yuborishingiz yoki javobni qayta yozishingiz mumkin.",
+    stepStay: "Oxirigacha shu sahifada qoling. Sahifadan chiqsangiz, yozilayotgan javob yo'qoladi.",
+    quiet: "Avval tinch joy toping — atrofdagi ovozlar ham yozuvga tushadi va javobingizning bir qismi sifatida baholanadi.",
+
+    micHeading: 'Mikrofonni tekshirish',
+    micNote: "Bu yerda hech narsa baholanmaydi — bu yozuv o'chirib tashlanadi.",
+    micIdle: seconds =>
+      `${seconds} soniya yozib, eshitib ko'ring. Baho mikrofonga bog'liq bo'lishidan oldin uning ishlayotganiga ishonch hosil qiling.`,
+    micTest: 'Mikrofonni tekshirish',
+    micAsking: 'Brauzeringiz ruxsat so\'ramoqda — <strong>Allow</strong> (Ruxsat berish) ni tanlang.',
+    micSay: 'Biror narsa ayting — <em>"My name is …, and I am taking a speaking test."</em>',
+    micPassed: 'Mikrofoningiz ishlayapti.',
+    micPlayback: "Eshitib ko'ring: ovoz sizniki eshitilyaptimi yoki faqat xona shovqinimi?",
+    micRetest: 'Qayta tekshirish',
+    micQuiet: 'Mikrofon yoniq, lekin sizni deyarli eshitmadi.',
+    micQuietHow: peak =>
+      `Eng baland ovoz — ${peak}%. Yaqinroq keling, mikrofonni yoqing yoki quloqchinni yeching, so'ng qayta tekshiring. Avval yozuvni eshiting:`,
+    micFailed: 'Mikrofondan foydalanib bo\'lmadi.',
+    micTryAgain: 'Qayta urinish',
+
+    errNoApi: "Bu brauzer sahifaga mikrofondan foydalanishga ruxsat bermaydi. Saytni Chrome'da oching va qayta urinib ko'ring.",
+    errDenied: 'Mikrofon bloklangan. Brauzeringizda shu sayt uchun mikrofonga ruxsat bering va qaytadan tekshiring.',
+    errOpen: name => `Mikrofonni ochib bo'lmadi (${name}). Uni boshqa dastur band qilmaganiga ishonch hosil qiling.`,
+    errRecorder: name => `Bu brauzer ovoz yoza olmaydi (${name}).`,
+    errEmpty: "Umuman hech narsa yozilmadi. Boshqa brauzerdan foydalanib ko'ring.",
+
+    startMock: 'Mock imtihonni boshlash',
+    startPractice: 'Mashqni boshlash',
+    startNote: 'Bosishingiz bilan birinchi savol boshlanadi.',
+    startBlocked: "Boshlash uchun mikrofon tekshiruvidan o'ting.",
+    startAnyway: 'Tekshirmasdan boshlash',
+
+    serverWillTranscribe: 'Bu brauzerda nutqni tanish yo\'q, shuning uchun ovozingiz serverda matnga o\'giriladi.',
+    noTranscriptionTitle: 'Bu brauzer nutqni matnga o\'gira olmaydi',
+    noTranscriptionBody: "Yozuvingiz saqlanadi, lekin imtihon oluvchi o'qiydigan matn bo'lmaydi, shuning uchun javob baholanmaydi. Bu Telegram kabi ilovalar ichidagi brauzerlarda odatiy hol. Boshlashdan oldin saytni Chrome'da oching."
+  };
+
   const criterionLabel = key => CRITERION_LABELS[key] || key;
 
   const esc = value =>
@@ -1441,10 +1514,7 @@
 
     if (!navigator.mediaDevices?.getUserMedia) {
       return setState({
-        micCheck: {
-          phase: 'failed',
-          message: 'This browser will not give a page access to the microphone. Open the site in Chrome and try again.'
-        }
+        micCheck: { phase: 'failed', message: BRIEF_UZ.errNoApi }
       });
     }
 
@@ -1458,8 +1528,8 @@
         micCheck: {
           phase: 'failed',
           message: denied
-            ? 'The microphone was blocked. Allow it for this site in your browser, then run the check again.'
-            : `The microphone could not be opened (${error.name || 'unknown error'}). Check that nothing else is using it.`
+            ? BRIEF_UZ.errDenied
+            : BRIEF_UZ.errOpen(error.name || 'unknown error')
         }
       });
     }
@@ -1484,7 +1554,7 @@
     } catch (error) {
       stopMicCheck();
       return setState({
-        micCheck: { phase: 'failed', message: `This browser cannot record audio (${error.name || 'unknown error'}).` }
+        micCheck: { phase: 'failed', message: BRIEF_UZ.errRecorder(error.name || 'unknown error') }
       });
     }
 
@@ -1505,9 +1575,7 @@
           phase: heard && mic.blobUrl ? 'passed' : 'quiet',
           peak: Math.round(mic.peak * 100),
           playback: mic.blobUrl,
-          message: mic.blobUrl
-            ? ''
-            : 'Nothing was recorded at all. Try a different browser.'
+          message: mic.blobUrl ? '' : BRIEF_UZ.errEmpty
         }
       });
     };
@@ -1559,38 +1627,36 @@
     const canTranscribe = state.serverTranscription || Boolean(SpeechRecognition);
 
     const body = {
-      idle: `<p class="muted">Record ${MIC_CHECK_SECONDS} seconds and play them back, so you know the
-               microphone works before a mark depends on it.</p>
-             <button class="btn" data-action="mic-check">${icon('mic')} Test my microphone</button>`,
+      idle: `<p class="muted">${BRIEF_UZ.micIdle(MIC_CHECK_SECONDS)}</p>
+             <button class="btn" data-action="mic-check">${icon('mic')} ${BRIEF_UZ.micTest}</button>`,
 
-      asking: `<p class="muted">Your browser is asking for permission — choose <strong>Allow</strong>.</p>
+      asking: `<p class="muted">${BRIEF_UZ.micAsking}</p>
                <span class="spinner"></span>`,
 
       listening: `<div class="mic-live">
                     <div class="mic-meter"><div class="mic-level" id="mic-level"></div></div>
                     <span class="mic-countdown"><span id="mic-countdown">${MIC_CHECK_SECONDS}</span>s</span>
                   </div>
-                  <p class="muted">Say something — <em>"My name is …, and I am taking a speaking test."</em></p>`,
+                  <p class="muted">${BRIEF_UZ.micSay}</p>`,
 
-      passed: `<div class="mic-verdict ok">${icon('check')} <strong>Your microphone works.</strong></div>
-               <p class="muted">Play it back to be sure it is you and not the room.</p>
+      passed: `<div class="mic-verdict ok">${icon('check')} <strong>${BRIEF_UZ.micPassed}</strong></div>
+               <p class="muted">${BRIEF_UZ.micPlayback}</p>
                <audio controls src="${esc(check.playback || '')}"></audio>
-               <button class="btn btn-ghost btn-sm" data-action="mic-check">Test again</button>`,
+               <button class="btn btn-ghost btn-sm" data-action="mic-check">${BRIEF_UZ.micRetest}</button>`,
 
-      quiet: `<div class="mic-verdict warn"><strong>The microphone is on, but barely heard you.</strong></div>
-              <p class="muted">Peak volume was ${check.peak ?? 0}%. Move closer, unmute the microphone, or take
-                 the headset off — then test again. Listen back first:</p>
+      quiet: `<div class="mic-verdict warn"><strong>${BRIEF_UZ.micQuiet}</strong></div>
+              <p class="muted">${BRIEF_UZ.micQuietHow(check.peak ?? 0)}</p>
               ${check.playback ? `<audio controls src="${esc(check.playback)}"></audio>` : ''}
-              <button class="btn" data-action="mic-check">Test again</button>`,
+              <button class="btn" data-action="mic-check">${BRIEF_UZ.micRetest}</button>`,
 
-      failed: `<div class="mic-verdict bad"><strong>The microphone could not be used.</strong></div>
+      failed: `<div class="mic-verdict bad"><strong>${BRIEF_UZ.micFailed}</strong></div>
                <p class="muted">${esc(check.message || '')}</p>
-               <button class="btn" data-action="mic-check">Try again</button>`
+               <button class="btn" data-action="mic-check">${BRIEF_UZ.micTryAgain}</button>`
     }[check.phase] || '';
 
     return `<div class="card mic-card">
-      <div class="section-head"><h2>${icon('mic')} Microphone check</h2>
-        <p>Nothing is marked here — this recording is thrown away.</p></div>
+      <div class="section-head"><h2>${icon('mic')} ${BRIEF_UZ.micHeading}</h2>
+        <p>${BRIEF_UZ.micNote}</p></div>
       ${body}
       ${canTranscribe ? '' : transcriptionWarning()}
     </div>`;
@@ -1629,65 +1695,56 @@
     }
     const totalSeconds = parts.reduce((sum, p) => sum + p.seconds, 0);
 
-    const PART_BLURB = {
-      '1.1': 'Short questions about you. Answer straight away.',
-      '1.2': 'Two pictures to compare and contrast.',
-      '2': 'One situation, three questions. Answer all three in one turn.',
-      '3': 'A topic with arguments for and against. Give your own view.'
-    };
-
     return `
-      <button class="crumb" data-action="leave-briefing">${icon('left')} Back to mocks</button>
+      <button class="crumb" data-action="leave-briefing">${icon('left')} ${BRIEF_UZ.back}</button>
 
       <div class="card" style="margin-top:12px">
         <div class="row" style="justify-content:space-between;gap:10px">
           <h1 style="font-size:24px">${esc(exam.title)}</h1>
-          <span class="chip ${isMock ? 'chip-speaking' : 'chip-new'}">${isMock ? 'Full mock' : `Practice · Part ${esc(state.part || '')}`}</span>
+          <span class="chip ${isMock ? 'chip-speaking' : 'chip-new'}">${
+            isMock ? BRIEF_UZ.fullMock : `${BRIEF_UZ.practice} · Part ${esc(state.part || '')}`
+          }</span>
         </div>
-        <p class="muted" style="margin-top:6px">${state.questions.length} question${state.questions.length === 1 ? '' : 's'}
-          · about ${Math.ceil(totalSeconds / 60)} minutes of speaking and thinking time.</p>
+        <p class="muted" style="margin-top:6px">${
+          BRIEF_UZ.summary(state.questions.length, Math.ceil(totalSeconds / 60))
+        }</p>
       </div>
 
       <div class="card">
-        <div class="section-head"><h2>What you will do</h2></div>
+        <div class="section-head"><h2>${BRIEF_UZ.whatHeading}</h2></div>
         <div class="brief-parts">
           ${parts.map(p => `
             <div class="brief-part">
               <div class="icon-tile">${icon(PART_ICON[p.part] || 'mic')}</div>
               <div class="grow">
                 <strong>Part ${esc(p.part)}</strong>
-                <p class="muted">${esc(PART_BLURB[p.part] || `${p.count} question${p.count === 1 ? '' : 's'}.`)}</p>
+                <p class="muted">${esc(BRIEF_UZ.partBlurb[p.part] || `${p.count} ta savol.`)}</p>
               </div>
-              <span class="brief-time">${icon('clock')} ~${Math.ceil(p.seconds / 60)} min</span>
+              <span class="brief-time">${icon('clock')} ${BRIEF_UZ.minutes(Math.ceil(p.seconds / 60))}</span>
             </div>`).join('')}
         </div>
       </div>
 
       <div class="card">
-        <div class="section-head"><h2>How it runs</h2></div>
+        <div class="section-head"><h2>${BRIEF_UZ.howHeading}</h2></div>
         <ol class="brief-steps">
-          <li>Each question shows thinking time first. Use it — nothing is recorded yet.</li>
-          <li>Recording then starts <strong>by itself</strong> and stops when the time is up.</li>
-          <li>Your answer saves on its own and the next question follows.</li>
-          ${isMock
-            ? '<li>A mock runs straight to the end. You cannot pause, skip, or record an answer again.</li>'
-            : '<li>In practice you may skip a question or record it again.</li>'}
-          <li>Stay on this page until the end. Leaving loses the answer being recorded.</li>
+          ${BRIEF_UZ.steps.map(step => `<li>${step}</li>`).join('')}
+          <li>${isMock ? BRIEF_UZ.stepMock : BRIEF_UZ.stepPractice}</li>
+          <li>${BRIEF_UZ.stepStay}</li>
         </ol>
-        <p class="muted" style="margin-top:12px">Find somewhere quiet first — background voices end up in the
-          recording and are marked as part of your answer.</p>
+        <p class="muted" style="margin-top:12px">${BRIEF_UZ.quiet}</p>
       </div>
 
       ${micCheckCard()}
 
       <div class="brief-start">
         <button class="btn btn-lg" data-action="start-questions" ${ready ? '' : 'disabled'}>
-          ${isMock ? 'Start the mock exam' : 'Start practising'} ${icon('right')}
+          ${isMock ? BRIEF_UZ.startMock : BRIEF_UZ.startPractice} ${icon('right')}
         </button>
         ${ready
-          ? `<p class="muted">${isMock ? 'The first question begins as soon as you press this.' : ''}</p>`
-          : `<p class="muted">Pass the microphone check to start.
-               <button class="link-inline" data-action="start-questions-anyway">Start without testing</button></p>`}
+          ? `<p class="muted">${isMock ? BRIEF_UZ.startNote : ''}</p>`
+          : `<p class="muted">${BRIEF_UZ.startBlocked}
+               <button class="link-inline" data-action="start-questions-anyway">${BRIEF_UZ.startAnyway}</button></p>`}
       </div>`;
   }
 
@@ -1882,15 +1939,11 @@
    */
   function transcriptionWarning() {
     if (state.serverTranscription) {
-      return `<p class="muted" style="margin-top:12px">
-        This browser has no speech recognition, so your audio will be transcribed on the server.
-      </p>`;
+      return `<p class="muted" style="margin-top:12px">${BRIEF_UZ.serverWillTranscribe}</p>`;
     }
     return `<div class="alert alert-warn" style="margin-top:12px">
-      <strong>This browser cannot turn speech into text</strong>
-      <p style="margin-top:6px">Your recording will be saved, but there will be nothing for the
-      examiner to read, so the answer cannot be marked. This is normal in the browser built into
-      messaging apps. Open the site directly in Chrome before you start.</p>
+      <strong>${BRIEF_UZ.noTranscriptionTitle}</strong>
+      <p style="margin-top:6px">${BRIEF_UZ.noTranscriptionBody}</p>
     </div>`;
   }
 
