@@ -312,10 +312,16 @@ router.post('/:id/start', async (req, res, next) => {
       throw new APIError(`This test has no Part ${part}`, 400);
     }
 
+    // Resume only an attempt of the SAME kind. Matching on the exam alone meant
+    // a student who abandoned a mock was handed it back when they asked for part
+    // practice, and could never start practising at all. In MongoDB `part: null`
+    // also matches documents where the field is absent, which is how mocks store it.
     const existing = await ExamResult.findOne({
       student: req.user.id,
       exam: exam._id,
-      status: 'in_progress'
+      status: 'in_progress',
+      mode,
+      part: part ?? null
     });
 
     if (existing) {
