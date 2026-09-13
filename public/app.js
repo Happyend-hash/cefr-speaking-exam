@@ -296,7 +296,11 @@
       });
       state.answered[q.taskNumber] = { transcription: data.transcription, hasAudio: data.hasAudio };
     } catch (error) {
-      state.error = error.message;
+      // A failed save used to scroll past unnoticed, so a student could record
+      // a whole test and only find out at submit that nothing had been kept.
+      // Count the failures and keep saying so for the rest of the attempt.
+      state.saveFailures = (state.saveFailures || 0) + 1;
+      state.error = `Question ${q.taskNumber} could not be saved — ${error.message}`;
     }
 
     resetRecorder();
@@ -308,6 +312,15 @@
 
     if (isLast) {
       run.phase = 'finished';
+      // Submitting with nothing saved returns a confusing "answer at least one
+      // task" from the server. Say what actually went wrong instead.
+      if (Object.keys(state.answered).length === 0) {
+        state.error =
+          'None of your answers reached the server, so there is nothing to mark. ' +
+          'Your recordings were not saved. Please report this rather than retaking the test.';
+        render();
+        return;
+      }
       render();
       if (state.mode === 'mock') submitExam();
       return;

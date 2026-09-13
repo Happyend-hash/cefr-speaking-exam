@@ -392,8 +392,23 @@ router.post(
       }
 
       const exam = await Exam.findById(result.exam).lean();
-      const task = exam?.tasks.find(t => t.taskNumber === taskNumber);
-      if (!task) throw new APIError(`Task ${taskNumber} does not exist on this exam`, 404);
+      if (!exam) throw new APIError('The exam for this attempt no longer exists', 404);
+
+      // A speaking test stores its questions in sections, so exam.tasks is
+      // empty for it. Look in both: tasks for writing, the flattened sections
+      // for speaking. Checking only tasks rejected every speaking answer with
+      // a 404, so nothing was ever saved and submitting found no answers.
+      const flat = flattenExam(exam);
+      const question = flat.find(q => q.taskNumber === taskNumber);
+      const task = exam.tasks.find(t => t.taskNumber === taskNumber);
+      if (!task && !question) {
+        throw new APIError(`Task ${taskNumber} does not exist on this exam`, 404);
+      }
+
+      // taskResults.type drives which rubric the evaluator uses; anything not
+      // starting with "writing_" is marked as speaking.
+      const answerType = task ? task.type : `speaking_part_${question.part}`;
+      const totalTasks = exam.tasks.length || flat.length;
 
       // Store the recording first so the transcript always has audio backing it.
       let audioKey = null;
@@ -424,7 +439,7 @@ router.post(
         if (existing.audioKey && audioKey) {
           await AudioStorageService.delete(existing.audioKey);
         }
-        existing.type = task.type;
+        existing.type = answerType;
         if (audioKey) existing.audioKey = audioKey;
         existing.transcription = text;
         existing.duration = Number(req.body.duration) || existing.duration || 0;
@@ -432,7 +447,7 @@ router.post(
       } else {
         result.taskResults.push({
           taskNumber,
-          type: task.type,
+          type: answerType,
           audioKey,
           transcription: text,
           duration: Number(req.body.duration) || 0,
@@ -451,7 +466,7 @@ router.post(
           transcriptionProvider: provider,
           hasAudio: Boolean(audioKey),
           answered: result.taskResults.length,
-          totalTasks: exam.tasks.length,
+          totalTasks,
           warning
         }
       });
