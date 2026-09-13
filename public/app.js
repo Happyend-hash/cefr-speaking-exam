@@ -28,6 +28,7 @@
     stats: null,
     exam: null,        // exam being taken
     questions: null,   // flattened, ordered question list (speaking)
+    serverTranscription: false, // set from the server when an attempt starts
     mode: 'mock',      // 'mock' (no skipping) or 'practice' (one part, retryable)
     part: null,        // practice only: which part
     resultId: null,
@@ -190,6 +191,7 @@
         screen: 'exam',
         exam,
         questions,
+        serverTranscription: Boolean(started.serverTranscription),
         mode: started.mode || mode,
         part: started.part || part,
         resultId: started.resultId,
@@ -1012,6 +1014,17 @@
 
         default: // 'ready'
           return `<div class="phase">
+            ${state.qIndex === 0 && !SpeechRecognition && !state.serverTranscription
+              // Warn at the START, not after eight answers. A mock runs straight
+              // through once begun, so a student in a browser that cannot make
+              // words would otherwise record the whole test before finding out.
+              ? `<div class="alert alert-error" style="text-align:left;margin-bottom:14px">
+                   <strong>Stop — this browser cannot turn speech into text</strong>
+                   <p style="margin-top:6px">Your recordings would be saved but could not be marked.
+                   This happens in the browser built into messaging apps like Telegram.
+                   Open <code>${esc(location.host)}</code> directly in Chrome, then start the test.</p>
+                 </div>`
+              : ''}
             <p class="muted">${q.prepTime}s to think, then ${q.answerTime}s to answer.</p>
             <button class="btn" data-action="begin">
               ${state.qIndex === 0 ? (isMock ? 'Begin mock exam' : 'Start') : 'Next question'}
@@ -1082,7 +1095,7 @@
          ${(rec.isRecording || rec.transcript || rec.interim)
             ? `<div style="margin-top:14px"><div class="section-title">Live transcript</div>
                <div id="transcript" class="transcript" style="margin-top:6px">${esc((rec.transcript + rec.interim).trim() || 'Listening…')}</div></div>`
-            : SpeechRecognition ? '' : `<p class="muted" style="margin-top:12px">This browser has no speech recognition, so your audio will be transcribed on the server.</p>`}
+            : SpeechRecognition ? '' : transcriptionWarning()}
          ${rec.blob && !rec.isRecording
             ? `<div class="row" style="margin-top:16px">
                  <button class="btn" data-action="save" ${rec.uploading ? 'disabled' : ''}>
@@ -1120,6 +1133,28 @@
       </div>`;
   }
 
+  /**
+   * Warn about transcription BEFORE the student records.
+   *
+   * The old copy promised "your audio will be transcribed on the server"
+   * unconditionally. When no server transcription is configured that promise is
+   * false, and a student trusted it, recorded a whole test, and was handed
+   * zeros. Say only what is actually true of this deployment.
+   */
+  function transcriptionWarning() {
+    if (state.serverTranscription) {
+      return `<p class="muted" style="margin-top:12px">
+        This browser has no speech recognition, so your audio will be transcribed on the server.
+      </p>`;
+    }
+    return `<div class="alert alert-warn" style="margin-top:12px">
+      <strong>This browser cannot turn speech into text</strong>
+      <p style="margin-top:6px">Your recording will be saved, but there will be nothing for the
+      examiner to read, so the answer cannot be marked. This is normal in the browser built into
+      messaging apps. Open the site directly in Chrome before you start.</p>
+    </div>`;
+  }
+
   function evaluatingScreen() {
     const seconds = Math.round((Date.now() - (state.evalStartedAt || Date.now())) / 1000);
     return `<div class="center-note">
@@ -1145,8 +1180,26 @@
 
     const r = state.result;
     const tasks = r.taskResults.filter(t => t.evaluation);
+    const unread = r.taskResults.filter(t => t.status === 'not_transcribed');
+
+    // An answer nobody could read is not a bad answer. Say so plainly, next to
+    // the recording, rather than letting it vanish from the list or drag the
+    // mark down as if the student had said nothing.
+    const unreadNotice = unread.length
+      ? `<div class="alert alert-warn" style="margin-bottom:16px">
+           <strong>${unread.length} answer${unread.length === 1 ? '' : 's'} could not be turned into text</strong>
+           <p style="margin-top:6px">Question${unread.length === 1 ? '' : 's'}
+             ${unread.map(t => t.taskNumber).join(', ')} — the recording${unread.length === 1 ? ' is' : 's are'}
+             saved and you can play ${unread.length === 1 ? 'it' : 'them'} below, but no words were captured,
+             so ${unread.length === 1 ? 'it was' : 'they were'} left unmarked rather than scored zero.
+             ${r.overallScore != null ? 'Your score below covers only the answers that could be read.' : ''}</p>
+           <p style="margin-top:6px">This is usually the browser: speech recognition does not work inside
+             the browser built into messaging apps. Open the site directly in Chrome and try again.</p>
+         </div>`
+      : '';
 
     return `
+      ${unreadNotice}
       <div class="card score-hero">
         <div class="muted">${esc(r.exam?.title || 'Exam')}</div>
         <div class="score-value">${r.overallScore ?? '—'}</div>
@@ -1155,6 +1208,16 @@
           <span class="badge ${r.isPassed ? 'badge-pass' : 'badge-fail'}">${r.isPassed ? 'Passed' : 'Not yet passed'}</span>
         </div>
       </div>
+
+      ${unread.map(t => `
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <strong>Question ${t.taskNumber}</strong>
+            <span class="badge">Not marked</span>
+          </div>
+          ${t.audioUrl ? `<audio controls data-authsrc="${esc(t.audioUrl)}"></audio>` : ''}
+          <p class="muted" style="margin-top:8px">Your recording was saved, but no words were captured from it.</p>
+        </div>`).join('')}
 
       ${tasks.map(task => {
         const e = task.evaluation;

@@ -107,7 +107,11 @@ const examResultSchema = new mongoose.Schema(
         finalScore: Number, // Average of AI and manual if both exist, otherwise AI
         status: {
           type: String,
-          enum: ['pending', 'evaluating', 'evaluated', 'reviewed'],
+          // 'not_transcribed' means the student spoke and the recording is
+          // saved, but no words were captured — so there is nothing to mark.
+          // It must never be scored 0: a 0 reads as "you said nothing useful",
+          // which is a false judgement about a student who answered fine.
+          enum: ['pending', 'evaluating', 'evaluated', 'reviewed', 'not_transcribed'],
           default: 'pending'
         }
       }

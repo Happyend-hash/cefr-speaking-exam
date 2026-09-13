@@ -433,6 +433,7 @@ router.post('/:id/start', async (req, res, next) => {
         data: {
           resultId: existing._id,
           resumed: true,
+          serverTranscription: TranscriptionService.isServerTranscriptionAvailable(),
           mode: existing.mode,
           part: existing.part || null,
           questions: flattenExam(exam.toObject(), existing.part || null)
@@ -459,6 +460,11 @@ router.post('/:id/start', async (req, res, next) => {
       success: true,
       message: mode === 'mock' ? 'Mock exam started' : `Practice started`,
       data: {
+        // Whether the server can turn a recording into text on its own. Without
+        // it the app depends entirely on the browser's speech recognition, which
+        // messaging-app browsers do not have — so the student must be warned
+        // BEFORE recording, not handed a zero afterwards.
+        serverTranscription: TranscriptionService.isServerTranscriptionAvailable(),
         resultId: result._id,
         resumed: false,
         mode,
@@ -627,10 +633,26 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
     const flat = flattenExam(exam);
     const questionByNumber = new Map(flat.map(q => [q.taskNumber, q]));
 
+    const untranscribed = [];
+
     for (const taskResult of result.taskResults) {
       const task = exam.tasks.find(t => t.taskNumber === taskResult.taskNumber);
       const question = questionByNumber.get(taskResult.taskNumber);
       if (!task && !question) continue;
+
+      // A recording with no words captured is NOT a wrong answer. The student
+      // spoke; the browser simply produced no transcript (common in the in-app
+      // browsers inside messaging apps, which have no speech recognition).
+      // Scoring it 0 hands back a false A1 for an answer nobody ever read, so
+      // set it aside instead: unscored, excluded from the overall mark, and
+      // reported honestly.
+      const hasWords = String(taskResult.transcription || '').trim().length > 0;
+      if (!hasWords && taskResult.audioKey) {
+        taskResult.status = 'not_transcribed';
+        taskResult.finalScore = undefined;
+        untranscribed.push(taskResult.taskNumber);
+        continue;
+      }
 
       try {
         const evaluation = await AIEvaluationService.evaluateTask({
@@ -671,6 +693,19 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
     if (evaluatedCount === 0) {
       result.status = 'submitted';
       await result.save();
+
+      // Distinguish "we could not read your answers" from "marking is broken".
+      // Reporting a transcription problem as an evaluation failure sent us
+      // hunting the grader when the recordings had simply never become words.
+      if (untranscribed.length && !failures.length) {
+        throw new APIError(
+          'None of your answers could be turned into text, so nothing could be marked. ' +
+            'Your recordings are saved. This usually means the browser you used cannot ' +
+            'do speech recognition — opening the site directly in Chrome normally fixes it.',
+          422
+        );
+      }
+
       throw new APIError(
         `Evaluation failed for every task. ${failures[0]?.error || ''} Your answers are saved — fix the configuration and submit again.`.trim(),
         502
