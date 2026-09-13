@@ -6,16 +6,31 @@ Everything needed to run, deploy and not re-break this project.
 
 ## Deploying
 
-Railway builds from the `Dockerfile` on the `main` branch.
+Railway builds from the `Dockerfile` on the `main` branch, and a push to `main`
+starts the build on its own. Nothing else is required.
 
-> **Auto-deploy is currently broken.** Railway's Source settings show a red
-> *GitHub Repo not found*, so pushing does **not** start a build. Until that is
-> repaired, deploy manually after each push:
->
-> **Service → Settings → Source → Check for updates → Update → Yes**
->
-> To repair it properly: Settings → Source → Disconnect, then reconnect the repo
-> and re-authorise the Railway GitHub app. Once fixed, pushes deploy on their own.
+### When a push does not start a build
+
+This has happened, and it took two separate faults to cause it — so check both,
+in this order, at **Service → Settings → Source**:
+
+1. **A red *GitHub Repo not found*** under "Branch connected to production" means
+   Railway's GitHub App has lost sight of the repository. Repair it on GitHub, not
+   on Railway: <https://github.com/settings/installations> → **Railway App** →
+   **Configure** → *Repository access* → make sure `cefr-speaking-exam` is
+   selected → **Save**. Railway then shows the branch name (`main`) in place of
+   the error.
+2. **"Auto deploy is disabled"** beside the branch. Click **Enable**. The line
+   should end up reading *Auto deploys when pushed to GitHub*.
+
+Fixing the first does not fix the second. With the repository reconnected but
+auto-deploy still switched off, pushes stay silent and the settings page otherwise
+looks entirely healthy — which is what made this take so long to find.
+
+To ship a commit without waiting on any of that — the manual route, which works
+even while the connection is broken:
+
+**Service → Settings → Source → Check for updates → Update → Yes**
 
 After every deploy:
 
