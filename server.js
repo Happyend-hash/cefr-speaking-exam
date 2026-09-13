@@ -64,8 +64,31 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/cefr-e
 // MIDDLEWARE SETUP
 // ===========================
 
-// Security middleware
-app.use(helmet());
+/**
+ * Security headers.
+ *
+ * helmet's default policy is `img-src 'self' data:`, which blocks blob: URLs.
+ * The client needs them: exam pictures and recordings sit behind the API's
+ * authentication, so they are fetched with the token and handed to the element
+ * as a blob — a plain <img src> cannot send an Authorization header. The
+ * recorder also plays a student's answer back from a blob before upload.
+ * Without blob: the picture downloads fine and the browser then refuses to
+ * display it, which looks exactly like a broken image and explains nothing.
+ *
+ * Everything else stays at helmet's defaults — this widens two directives, it
+ * does not relax the policy generally.
+ */
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        'img-src': ["'self'", 'data:', 'blob:'],
+        'media-src': ["'self'", 'blob:']
+      }
+    }
+  })
+);
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true
