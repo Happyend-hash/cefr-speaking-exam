@@ -668,7 +668,8 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
 
     result.calculateOverallScore();
     result.overallLevel = result.determineCEFRLevel();
-    result.isPassed = result.overallScore >= (Number(process.env.PASS_SCORE) || 50);
+    // Passing means reaching B1, the lowest certified band on the 75-point scale.
+    result.isPassed = result.overallScore >= (Number(process.env.PASS_SCORE) || 31);
     result.status = 'completed';
     result.evaluatedAt = new Date();
     result.completedAt = new Date();

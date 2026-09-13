@@ -76,6 +76,13 @@
 
   // ----------------------------------------------------------- utilities
 
+  // Marks are out of 75 (the Multilevel scale), but a progress bar is drawn as a
+  // percentage — so a bar must be scaled, never fed the raw mark. Left unscaled,
+  // a top C1 of 75/75 would render as a three-quarters-full bar.
+  const MAX_SCORE = 75;
+  const pctOfMax = score =>
+    Math.max(0, Math.min(100, Math.round(((Number(score) || 0) / MAX_SCORE) * 100)));
+
   const esc = value =>
     String(value ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1043,9 +1050,9 @@
               <div class="criterion">
                 <div class="criterion-head">
                   <span class="criterion-name">${esc(name)}</span>
-                  <span class="criterion-score">${value?.score ?? 0}</span>
+                  <span class="criterion-score">${value?.score ?? 0} / ${MAX_SCORE}</span>
                 </div>
-                <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(100, value?.score ?? 0))}%"></div></div>
+                <div class="bar-track"><div class="bar-fill" style="width:${pctOfMax(value?.score)}%"></div></div>
                 ${value?.feedback ? `<p>${esc(value.feedback)}</p>` : ''}
               </div>`).join('')}
           </div>

@@ -187,19 +187,37 @@ examResultSchema.methods.calculateOverallScore = function () {
 };
 
 /**
- * Determine CEFR level based on score
+ * The CEFR bands, on the 75-point O'zbekiston Multilevel scale.
+ *
+ * These three bands are the ones that matter and were set deliberately:
+ *   65-75  C1
+ *   51-64  B2
+ *   31-50  B1
+ * A2 and A1 sit below them so a student who barely spoke is not handed a B1 —
+ * the bands are a floor as well as a ceiling.
+ *
+ * Exported because the number must mean the same thing everywhere it is shown.
+ * Anything that reports a level reads it from here rather than repeating the
+ * thresholds, so the table can never drift out of step with itself.
  */
+export const MAX_SCORE = 75;
+
+export const CEFR_BANDS = [
+  { min: 65, level: 'C1' },
+  { min: 51, level: 'B2' },
+  { min: 31, level: 'B1' },
+  { min: 16, level: 'A2' },
+  { min: 0, level: 'A1' }
+];
+
+export function levelForScore(score) {
+  const value = Number(score);
+  if (!Number.isFinite(value)) return 'A1';
+  return (CEFR_BANDS.find(band => value >= band.min) || { level: 'A1' }).level;
+}
+
 examResultSchema.methods.determineCEFRLevel = function () {
-  const score = this.overallScore;
-
-  if (score >= 85) return 'C2';
-  if (score >= 75) return 'C1';
-  if (score >= 65) return 'B2';
-  if (score >= 50) return 'B1';
-  if (score >= 35) return 'A2';
-  if (score >= 0) return 'A1';
-
-  return 'A1';
+  return levelForScore(this.overallScore);
 };
 
 /**

@@ -1,5 +1,8 @@
 import axios from 'axios';
 
+// The bands live in one place so the score always means the same thing.
+import { CEFR_BANDS, levelForScore, MAX_SCORE } from '../models/ExamResult.js';
+
 /**
  * AI Evaluation Service - Integrates with Claude Opus for CEFR assessment
  * This service evaluates spoken English and provides CEFR level assessment
@@ -109,7 +112,7 @@ CANDIDATE'S ANSWER:
 ${answer}
 """
 
-Assess it on these four criteria, each scored 0-100:
+Assess it on these four criteria, each scored 0-75:
 - taskAchievement: ${isTask1
       ? 'Does it report the key features accurately, make relevant comparisons, and avoid opinion and invented data?'
       : 'Does it address every part of the prompt, take a clear position, and develop ideas with relevant support?'}
@@ -120,12 +123,12 @@ Assess it on these four criteria, each scored 0-100:
 Respond with ONLY valid JSON in exactly this structure, and nothing else:
 
 {
-  "score": (0-100, the overall band for this answer),
+  "score": (0-75, the overall mark for this answer on the Multilevel scale),
   "criteria": {
-    "taskAchievement": { "score": (0-100), "feedback": "Specific comment, quoting the answer where useful" },
-    "coherence": { "score": (0-100), "feedback": "Specific comment" },
-    "vocabulary": { "score": (0-100), "feedback": "Specific comment" },
-    "grammar": { "score": (0-100), "feedback": "Name the actual error patterns you found" }
+    "taskAchievement": { "score": (0-75), "feedback": "Specific comment, quoting the answer where useful" },
+    "coherence": { "score": (0-75), "feedback": "Specific comment" },
+    "vocabulary": { "score": (0-75), "feedback": "Specific comment" },
+    "grammar": { "score": (0-75), "feedback": "Name the actual error patterns you found" }
   },
   "overallFeedback": "A short paragraph summarising the level of this answer and why",
   "strengths": ["Strength 1", "Strength 2", "Strength 3"],
@@ -133,8 +136,10 @@ Respond with ONLY valid JSON in exactly this structure, and nothing else:
   "suggestedLevel": "CEFR level (A1/A2/B1/B2/C1/C2)"
 }
 
-BAND GUIDANCE:
-- 0-35: A1   - 35-50: A2   - 50-65: B1   - 65-75: B2   - 75-85: C1   - 85-100: C2
+SCORING SCALE — out of 75, the O'zbekiston Multilevel scale:
+- 65-75  C1    - 51-64  B2    - 31-50  B1    - 16-30  A2    - 0-15  A1
+
+Never award more than 75, and make "suggestedLevel" agree with the band the score falls in.
 
 Be rigorous and specific. Quote the candidate's own words when pointing out an error, and make every improvement point something they could act on in their next attempt. Do not be generically encouraging.`;
   }
@@ -192,26 +197,26 @@ STUDENT'S RESPONSE (Transcribed):
 Please evaluate this response and provide a detailed assessment in the following JSON format:
 
 {
-  "score": (0-100 numeric score),
+  "score": (numeric score from 0 to 75 — the Multilevel scale),
   "criteria": {
     "grammar": {
-      "score": (0-100),
+      "score": (0-75),
       "feedback": "Specific feedback on grammatical accuracy, sentence structure, and complexity"
     },
     "vocabulary": {
-      "score": (0-100),
+      "score": (0-75),
       "feedback": "Feedback on vocabulary range, appropriateness, and use of idiomatic expressions"
     },
     "fluency": {
-      "score": (0-100),
+      "score": (0-75),
       "feedback": "Feedback on speech fluency, pace, hesitations, and natural delivery"
     },
     "pronunciation": {
-      "score": (0-100),
+      "score": (0-75),
       "feedback": "Assessment of pronunciation clarity (note: estimated from transcription accuracy)"
     },
     "coherence": {
-      "score": (0-100),
+      "score": (0-75),
       "feedback": "Feedback on logical organization, coherence, and task completion"
     }
   },
@@ -221,15 +226,19 @@ Please evaluate this response and provide a detailed assessment in the following
   "suggestedLevel": "CEFR level (A1/A2/B1/B2/C1/C2)"
 }
 
-EVALUATION GUIDELINES:
-- Score 0-35: A1 (Beginner)
-- Score 35-50: A2 (Elementary)
-- Score 50-65: B1 (Intermediate)
-- Score 65-75: B2 (Upper Intermediate)
-- Score 75-85: C1 (Advanced)
-- Score 85-100: C2 (Mastery)
+SCORING SCALE — score out of 75, exactly as the O'zbekiston Multilevel exam does:
+- 65-75  C1
+- 51-64  B2
+- 31-50  B1
+- 16-30  A2
+- 0-15   A1
 
-Be fair but rigorous in assessment. Consider accuracy, fluency, coherence, and appropriateness to the CEFR level.`;
+Never award more than 75. Set "suggestedLevel" to the band the score falls in,
+using the table above — the two must agree.
+
+Be fair but rigorous. Judge accuracy, fluency, coherence, and how well the answer
+does what this part of the exam asks. Do not mark a short answer down for being
+short when the part calls for a short answer.`;
   }
 
   /**
@@ -377,32 +386,20 @@ Be fair but rigorous in assessment. Consider accuracy, fluency, coherence, and a
   }
 
   /**
-   * Get CEFR level from score
+   * Get CEFR level from score.
+   *
+   * Delegates to the single band table in models/ExamResult.js — this used to
+   * be a second copy of the thresholds, which is exactly how a scale change
+   * ends up applied in one place and not the other.
    */
   static scoreToCEFRLevel(score) {
-    if (score >= 85) return 'C2';
-    if (score >= 75) return 'C1';
-    if (score >= 65) return 'B2';
-    if (score >= 50) return 'B1';
-    if (score >= 35) return 'A2';
-    return 'A1';
+    return levelForScore(score);
   }
 
-  /**
-   * Check if score passes the target level
-   */
+  /** Does this score reach the band the student was aiming for? */
   static checkPassed(score, targetLevel) {
-    const levelScores = {
-      'A1': 0,
-      'A2': 35,
-      'B1': 50,
-      'B2': 65,
-      'C1': 75,
-      'C2': 85
-    };
-
-    const requiredScore = levelScores[targetLevel] || 0;
-    return score >= requiredScore;
+    const band = CEFR_BANDS.find(b => b.level === targetLevel);
+    return Number(score) >= (band ? band.min : 0);
   }
 }
 

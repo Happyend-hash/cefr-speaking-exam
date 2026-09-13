@@ -144,7 +144,8 @@ const examSchema = new mongoose.Schema(
 
     maxScore: {
       type: Number,
-      default: 100
+      // The Multilevel scale is out of 75, not 100.
+      default: 75
     },
 
     // Status
