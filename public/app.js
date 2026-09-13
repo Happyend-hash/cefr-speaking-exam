@@ -755,8 +755,52 @@
         <div class="card stat"><div class="stat-label">Current level</div><div class="stat-value">${esc(s.currentLevel || '—')}</div></div>
       </div>`;
 
-    const exams = state.exams.length
-      ? `<div class="grid grid-2">${state.exams.map(exam => `
+    // Speaking and writing are separate exams, so they get separate folders.
+    // Twenty speaking mocks and one writing paper in a single list buried the
+    // writing paper; opening a folder shows only that module.
+    const MODULES = [
+      { key: 'speaking', label: 'Speaking mock', blurb: 'Parts 1.1, 1.2, 2 and 3 — recorded and marked.' },
+      { key: 'writing', label: 'Writing mock', blurb: 'Task 1 and Task 2 — written and marked.' }
+    ];
+
+    // Sort naturally, not alphabetically: the database orders by title, which
+    // puts "Speaking Mock 10" directly after "Speaking Mock 1" and leaves a
+    // student hunting for number 2 at the bottom of the list.
+    const byNumber = (a, b) =>
+      a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+
+    const inFolder = state.folder
+      ? state.exams.filter(e => (e.module || 'speaking') === state.folder).sort(byNumber)
+      : [];
+
+    const folders = !state.folder
+      ? `<div class="grid grid-2">${MODULES.map(m => {
+          const items = state.exams.filter(e => (e.module || 'speaking') === m.key);
+          return `<button class="card folder-card" data-folder="${m.key}" ${items.length ? '' : 'disabled'}>
+            <div class="folder-icon" aria-hidden="true">${m.key === 'writing' ? '✎' : '🎙'}</div>
+            <div>
+              <h3>${m.label}</h3>
+              <p class="muted">${m.blurb}</p>
+              <div class="folder-count">${items.length
+                ? `${items.length} mock${items.length === 1 ? '' : 's'}`
+                : 'Nothing published yet'}</div>
+            </div>
+          </button>`;
+        }).join('')}</div>`
+      : '';
+
+    const folderHeader = state.folder
+      ? `<div class="row" style="gap:10px;margin-bottom:12px">
+           <button class="btn btn-ghost btn-sm" data-folder-back="1">← All mocks</button>
+           <strong>${esc(MODULES.find(m => m.key === state.folder)?.label || '')}</strong>
+           <span class="muted">${inFolder.length} mock${inFolder.length === 1 ? '' : 's'}</span>
+         </div>`
+      : '';
+
+    const exams = !state.folder
+      ? folders
+      : inFolder.length
+      ? `${folderHeader}<div class="grid grid-2">${inFolder.map(exam => `
           <div class="card exam-card">
             <div class="row" style="justify-content:space-between">
               <h3>${esc(exam.title)}</h3>
@@ -774,7 +818,7 @@
               ).join('')}
             </div>
           </div>`).join('')}</div>`
-      : `<div class="card"><p class="muted">No exams are published yet. An administrator can add them by running <code>npm run seed</code>.</p></div>`;
+      : `${folderHeader}<div class="card"><p class="muted">Nothing published in this folder yet.</p></div>`;
 
     const selected = state.selected || {};
     const selectedIds = state.history.filter(h => selected[h.id]).map(h => h.id);
@@ -831,7 +875,13 @@
 
     return `
       ${stats}
-      <div><h2 style="margin:22px 0 4px">Available exams</h2><p class="muted" style="margin-bottom:14px">Pick the level you want to be assessed at.</p></div>
+      <div><h2 style="margin:22px 0 4px">Mock exams</h2><p class="muted" style="margin-bottom:14px">${
+        state.folder
+          ? 'Sit the full mock, or practise one part on its own.'
+          // The old copy said "pick the level you want to be assessed at" — a
+          // Multilevel sitting determines the level, it is not chosen upfront.
+          : 'Choose speaking or writing. Your level is worked out from how you perform.'
+      }</p></div>
       ${exams}
       ${history ? `<div><h2 style="margin:26px 0 14px">Your history</h2></div>${history}` : ''}`;
   }
@@ -1130,6 +1180,12 @@
 
     root.querySelectorAll('[data-result]').forEach(el =>
       el.addEventListener('click', () => openResult(el.dataset.result)));
+
+    root.querySelectorAll('[data-folder]').forEach(el =>
+      el.addEventListener('click', () => setState({ folder: el.dataset.folder })));
+
+    root.querySelectorAll('[data-folder-back]').forEach(el =>
+      el.addEventListener('click', () => setState({ folder: null })));
 
     root.querySelectorAll('[data-delete]').forEach(el =>
       el.addEventListener('click', () => setState({ confirmDelete: el.dataset.delete, error: '' })));
