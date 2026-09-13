@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { v4 as uuidv4 } from 'uuid';
+import { APIError } from '../middleware/errorHandler.js';
 
 /**
  * Authentication Service - Handles user registration, login, and token management
@@ -16,7 +17,7 @@ class AuthService {
       // Check if user already exists
       const existingUser = await User.findOne({ email });
       if (existingUser) {
-        throw new Error('User already exists with this email');
+        throw new APIError('An account with this email already exists', 409);
       }
 
       // Create new user
@@ -54,18 +55,18 @@ class AuthService {
       // Find user by email
       const user = await User.findOne({ email }).select('+password');
       if (!user) {
-        throw new Error('Invalid email or password');
+        throw new APIError('Invalid email or password', 401);
       }
 
       // Check if account is active
       if (user.status === 'suspended') {
-        throw new Error('Account has been suspended');
+        throw new APIError('This account has been suspended', 403);
       }
 
       // Compare password
       const isPasswordValid = await user.comparePassword(password);
       if (!isPasswordValid) {
-        throw new Error('Invalid email or password');
+        throw new APIError('Invalid email or password', 401);
       }
 
       // Generate tokens
@@ -101,7 +102,7 @@ class AuthService {
       const user = await User.findById(decoded.id);
 
       if (!user) {
-        throw new Error('User not found');
+        throw new APIError('User not found', 404);
       }
 
       const newAccessToken = this.generateAccessToken(user);
@@ -112,7 +113,7 @@ class AuthService {
       };
     } catch (error) {
       console.error('Error refreshing token:', error);
-      throw new Error('Token refresh failed');
+      throw new APIError('Your session has expired — please sign in again', 401);
     }
   }
 
@@ -127,7 +128,7 @@ class AuthService {
       });
 
       if (!user) {
-        throw new Error('Invalid or expired verification token');
+        throw new APIError('This verification link is invalid or has expired', 400);
       }
 
       user.isEmailVerified = true;
@@ -186,7 +187,7 @@ class AuthService {
       });
 
       if (!user) {
-        throw new Error('Invalid or expired reset token');
+        throw new APIError('This reset link is invalid or has expired', 400);
       }
 
       user.password = newPassword;
@@ -209,12 +210,12 @@ class AuthService {
     try {
       const user = await User.findById(userId).select('+password');
       if (!user) {
-        throw new Error('User not found');
+        throw new APIError('User not found', 404);
       }
 
       const isPasswordValid = await user.comparePassword(oldPassword);
       if (!isPasswordValid) {
-        throw new Error('Current password is incorrect');
+        throw new APIError('Your current password is incorrect', 401);
       }
 
       user.password = newPassword;

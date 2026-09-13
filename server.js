@@ -141,6 +141,10 @@ const apiLimiter = rateLimit({
   keyGenerator: limitKey,
   standardHeaders: true,
   legacyHeaders: false,
+  // /api/auth has its own stricter limiter below. Without this skip both would
+  // run on a sign-in: it would spend two budgets and report the looser one's
+  // headers, so the strict limit would be invisible to anyone checking.
+  skip: req => req.path.startsWith('/auth'),
   message: { success: false, message: 'Too many requests — please wait a moment and try again.' }
 });
 
