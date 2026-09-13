@@ -493,19 +493,33 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
 
     const failures = [];
 
+    // Speaking tests are stored as sections, not tasks, so exam.tasks is empty
+    // for them. Flatten first and look the answer up there, otherwise every
+    // question in a Multilevel speaking mock is silently skipped at grading.
+    const flat = flattenExam(exam);
+    const questionByNumber = new Map(flat.map(q => [q.taskNumber, q]));
+
     for (const taskResult of result.taskResults) {
       const task = exam.tasks.find(t => t.taskNumber === taskResult.taskNumber);
-      if (!task) continue;
+      const question = questionByNumber.get(taskResult.taskNumber);
+      if (!task && !question) continue;
 
       try {
         const evaluation = await AIEvaluationService.evaluateTask({
           transcription: taskResult.transcription,
           taskType: taskResult.type,
-          question: task.question,
+          question: task ? task.question : question.text,
           cefrLevel: exam.level,
-          referenceImages: task.images,
-          followUpQuestions: task.followUpQuestions,
-          minWords: task.minWords
+          referenceImages: task ? task.images : question.images,
+          followUpQuestions: task?.followUpQuestions,
+          minWords: task?.minWords,
+          // Context the examiner would have in front of them: which part this
+          // is, and the stimulus the student was answering about.
+          part: question?.part,
+          instructions: question?.instructions,
+          topic: question?.topic,
+          pros: question?.pros,
+          cons: question?.cons
         });
 
         taskResult.aiEvaluation = {

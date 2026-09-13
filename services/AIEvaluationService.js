@@ -25,7 +25,12 @@ class AIEvaluationService {
         question,
         cefrLevel,
         referenceImages,
-        followUpQuestions
+        followUpQuestions,
+        part,
+        instructions,
+        topic,
+        pros,
+        cons
       } = taskData;
 
       if (!transcription || transcription.trim().length === 0) {
@@ -57,7 +62,8 @@ class AIEvaluationService {
             question,
             cefrLevel,
             referenceImages,
-            followUpQuestions
+            followUpQuestions,
+            { part, instructions, topic, pros, cons }
           );
 
       const response = await this.callClaudeAPI(prompt);
@@ -139,16 +145,43 @@ Be rigorous and specific. Quote the candidate's own words when pointing out an e
     question,
     cefrLevel,
     referenceImages,
-    followUpQuestions
+    followUpQuestions,
+    context = {}
   ) {
-    return `You are an expert CEFR English language assessment specialist. Evaluate the following English speaking response according to the CEFR framework.
+    const { part, instructions, topic, pros, cons } = context;
+
+    // What each part is actually testing. Without this the model grades a
+    // 30-second Part 1.1 answer by the same yardstick as a 2-minute Part 3
+    // argument, and marks the short one down for being short.
+    const PART_BRIEF = {
+      '1.1': 'Part 1.1 — three short personal questions, 30 seconds each. Expect a direct, ' +
+             'relevant answer with a little detail. Brevity is correct here and must not be penalised.',
+      '1.2': 'Part 1.2 — the student sees two pictures and describes them, then answers two ' +
+             'short follow-ups. Reward accurate description, comparison and the language of ' +
+             'speculation. The transcript is all you have, so judge the description on its own ' +
+             'internal coherence and detail, not on whether it matches an image you cannot see.',
+      '2': 'Part 2 — one long turn of up to 2 minutes answering three linked questions together. ' +
+           'Expect all three to be covered, with extended, connected discourse.',
+      '3': 'Part 3 — a 2-minute argued opinion on a statement, with arguments for and against ' +
+           'supplied. Expect a clear position, reasons, and engagement with the other side. ' +
+           'A student who only reads the supplied points aloud without developing them has not ' +
+           'done the task.'
+    };
+
+    return `You are an expert examiner for the O'zbekiston Multilevel English speaking exam, assessing against the CEFR framework.
 
 TASK INFORMATION:
-- Task Type: ${taskType}
-- Target Level: ${cefrLevel}
+- Task Type: ${taskType}${part ? `\n- Exam Part: ${part}` : ''}${
+      PART_BRIEF[part] ? `\n- What this part tests: ${PART_BRIEF[part]}` : ''
+    }
+- Target Level: ${cefrLevel || 'not fixed — this is a Multilevel sitting, so determine the level from the performance'}${
+      instructions ? `\n- Instructions the student was given: ${instructions}` : ''
+    }${topic ? `\n- Topic / statement on screen: ${topic}` : ''}
 - Question/Prompt: ${question}
-${followUpQuestions ? `- Follow-up Questions: ${followUpQuestions.join(', ')}` : ''}
-${referenceImages ? `- Reference Context: Image-based description task` : ''}
+${pros?.length ? `- Arguments FOR shown to the student: ${pros.join('; ')}` : ''}
+${cons?.length ? `- Arguments AGAINST shown to the student: ${cons.join('; ')}` : ''}
+${followUpQuestions?.length ? `- Follow-up Questions: ${followUpQuestions.join(', ')}` : ''}
+${referenceImages?.length ? `- Reference Context: the student was shown ${referenceImages.length} picture(s). You cannot see them.` : ''}
 
 STUDENT'S RESPONSE (Transcribed):
 "${transcription}"

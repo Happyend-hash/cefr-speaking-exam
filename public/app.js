@@ -728,7 +728,11 @@
 
     const stimulus = `
       ${q.images?.length ? `<div class="stimulus-images">
-        ${q.images.map((url, i) => `<figure><img src="${esc(url)}" alt="Picture ${i + 1}" loading="eager" /><figcaption>Picture ${i + 1}</figcaption></figure>`).join('')}
+        ${q.images.map((url, i) => `<figure><img src="${esc(url)}" alt="${q.images.length > 1 ? `Picture ${i + 1}` : 'Pictures for this question'}" loading="eager" />${
+          // Only number them when they arrive as separate files. A single file
+          // that already holds both pictures must not be labelled "Picture 1".
+          q.images.length > 1 ? `<figcaption>Picture ${i + 1}</figcaption>` : ''
+        }</figure>`).join('')}
       </div>` : ''}
       ${q.topic ? `<div class="stimulus-topic">${esc(q.topic)}</div>` : ''}
       ${(q.pros?.length || q.cons?.length) ? `<div class="proscons">

@@ -12,7 +12,8 @@
     "make-admin": "node scripts/makeAdmin.js",
     "smoke": "node scripts/smoke-test.js",
     "check:api": "node scripts/check-api.js",
-    "check": "node scripts/check-api.js"
+    "check": "node scripts/check-api.js",
+    "import-mocks": "node scripts/importMocks.js"
   },
   "keywords": [
     "CEFR",
