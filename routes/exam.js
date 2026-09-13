@@ -11,6 +11,7 @@ import AudioStorageService, {
   MAX_AUDIO_BYTES
 } from '../services/AudioStorageService.js';
 import ImageStorageService from '../services/ImageStorageService.js';
+import MarkingQueue from '../services/MarkingQueue.js';
 import { APIError } from '../middleware/errorHandler.js';
 
 const router = express.Router();
@@ -625,118 +626,144 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
     result.status = 'evaluating';
     await result.save();
 
-    const failures = [];
+    // Queued rather than awaited: a fixed number of attempts are marked at a
+    // time, so a class finishing together forms an orderly queue instead of a
+    // burst of API calls that comes back as 429s and blank marks.
+    MarkingQueue.run(() => markAttempt(result._id)).catch(async error => {
+      console.error(`Marking crashed for ${result._id}:`, error.message);
+      await ExamResult.findByIdAndUpdate(result._id, { status: 'submitted' }).catch(() => {});
+    });
 
-    // Speaking tests are stored as sections, not tasks, so exam.tasks is empty
-    // for them. Flatten first and look the answer up there, otherwise every
-    // question in a Multilevel speaking mock is silently skipped at grading.
-    const flat = flattenExam(exam);
-    const questionByNumber = new Map(flat.map(q => [q.taskNumber, q]));
-
-    const untranscribed = [];
-
-    for (const taskResult of result.taskResults) {
-      const task = exam.tasks.find(t => t.taskNumber === taskResult.taskNumber);
-      const question = questionByNumber.get(taskResult.taskNumber);
-      if (!task && !question) continue;
-
-      // A recording with no words captured is NOT a wrong answer. The student
-      // spoke; the browser simply produced no transcript (common in the in-app
-      // browsers inside messaging apps, which have no speech recognition).
-      // Scoring it 0 hands back a false A1 for an answer nobody ever read, so
-      // set it aside instead: unscored, excluded from the overall mark, and
-      // reported honestly.
-      const hasWords = String(taskResult.transcription || '').trim().length > 0;
-      if (!hasWords && taskResult.audioKey) {
-        taskResult.status = 'not_transcribed';
-        taskResult.finalScore = undefined;
-        untranscribed.push(taskResult.taskNumber);
-        continue;
-      }
-
-      try {
-        const evaluation = await AIEvaluationService.evaluateTask({
-          transcription: taskResult.transcription,
-          taskType: taskResult.type,
-          question: task ? task.question : question.text,
-          cefrLevel: exam.level,
-          referenceImages: task ? task.images : question.images,
-          followUpQuestions: task?.followUpQuestions,
-          minWords: task?.minWords,
-          // Context the examiner would have in front of them: which part this
-          // is, and the stimulus the student was answering about.
-          part: question?.part,
-          instructions: question?.instructions,
-          topic: question?.topic,
-          pros: question?.pros,
-          cons: question?.cons
-        });
-
-        taskResult.aiEvaluation = {
-          ...evaluation,
-          aiModel: process.env.CLAUDE_MODEL || 'claude-opus-5-20250805',
-          evaluatedAt: new Date()
-        };
-        taskResult.finalScore = evaluation.score;
-        taskResult.status = 'evaluated';
-      } catch (error) {
-        // One failed task must not discard the whole attempt — recordings and
-        // transcripts are kept so it can be re-evaluated later.
-        console.error(`Evaluation failed for task ${taskResult.taskNumber}:`, error.message);
-        failures.push({ taskNumber: taskResult.taskNumber, error: error.message });
-        taskResult.status = 'pending';
-      }
-    }
-
-    const evaluatedCount = result.taskResults.filter(t => t.status === 'evaluated').length;
-
-    if (evaluatedCount === 0) {
-      result.status = 'submitted';
-      await result.save();
-
-      // Distinguish "we could not read your answers" from "marking is broken".
-      // Reporting a transcription problem as an evaluation failure sent us
-      // hunting the grader when the recordings had simply never become words.
-      if (untranscribed.length && !failures.length) {
-        throw new APIError(
-          'None of your answers could be turned into text, so nothing could be marked. ' +
-            'Your recordings are saved. This usually means the browser you used cannot ' +
-            'do speech recognition — opening the site directly in Chrome normally fixes it.',
-          422
-        );
-      }
-
-      throw new APIError(
-        `Evaluation failed for every task. ${failures[0]?.error || ''} Your answers are saved — fix the configuration and submit again.`.trim(),
-        502
-      );
-    }
-
-    result.calculateOverallScore();
-    result.overallLevel = result.determineCEFRLevel();
-    // Passing means reaching B1, the lowest certified band on the 75-point scale.
-    result.isPassed = result.overallScore >= (Number(process.env.PASS_SCORE) || 31);
-    result.status = 'completed';
-    result.evaluatedAt = new Date();
-    result.completedAt = new Date();
-
-    if (result.isPassed) result.generateCertificate();
-    await result.save();
-
-    await Exam.findByIdAndUpdate(exam._id, { $inc: { 'statistics.timesUsed': 1 } });
-
-    res.json({
+    res.status(202).json({
       success: true,
-      message: 'Evaluation complete',
+      message: 'Your answers are being marked',
       data: {
-        ...result.getEvaluationSummary(),
         resultId: result._id,
-        partialFailures: failures.length ? failures : undefined
+        status: 'evaluating',
+        queue: MarkingQueue.stats
       }
     });
   } catch (error) {
     next(error);
   }
 });
+
+/**
+ * Mark one attempt, away from the request that asked for it.
+ *
+ * Marking is slow — one AI call per answer — so it does not belong inside an
+ * HTTP request. Holding the connection open for a minute or more is what left a
+ * student's phone stuck on "Assessing your answers" when the browser suspended
+ * the request, and with fifty students it would mean fifty connections held
+ * open while they queue. The client polls the attempt for its result instead,
+ * so this can take as long as it needs.
+ *
+ * Everything is reported by updating the attempt itself: 'completed' with a
+ * score, or back to 'submitted' if nothing could be marked.
+ */
+async function markAttempt(resultId) {
+  const result = await ExamResult.findById(resultId);
+  if (!result) return;
+
+  const exam = await Exam.findById(result.exam).lean();
+  if (!exam) {
+    result.status = 'submitted';
+    await result.save();
+    return;
+  }
+
+  const failures = [];
+
+  // Speaking tests are stored as sections, not tasks, so exam.tasks is empty
+  // for them. Flatten first and look the answer up there, otherwise every
+  // question in a Multilevel speaking mock is silently skipped at grading.
+  const flat = flattenExam(exam);
+  const questionByNumber = new Map(flat.map(q => [q.taskNumber, q]));
+
+  const untranscribed = [];
+
+  for (const taskResult of result.taskResults) {
+    const task = exam.tasks.find(t => t.taskNumber === taskResult.taskNumber);
+    const question = questionByNumber.get(taskResult.taskNumber);
+    if (!task && !question) continue;
+
+    // A recording with no words captured is NOT a wrong answer. The student
+    // spoke; the browser simply produced no transcript (common in the in-app
+    // browsers inside messaging apps, which have no speech recognition).
+    // Scoring it 0 hands back a false A1 for an answer nobody ever read, so
+    // set it aside instead: unscored, excluded from the overall mark, and
+    // reported honestly.
+    const hasWords = String(taskResult.transcription || '').trim().length > 0;
+    if (!hasWords && taskResult.audioKey) {
+      taskResult.status = 'not_transcribed';
+      taskResult.finalScore = undefined;
+      untranscribed.push(taskResult.taskNumber);
+      continue;
+    }
+
+    try {
+      const evaluation = await AIEvaluationService.evaluateTask({
+        transcription: taskResult.transcription,
+        taskType: taskResult.type,
+        question: task ? task.question : question.text,
+        cefrLevel: exam.level,
+        referenceImages: task ? task.images : question.images,
+        followUpQuestions: task?.followUpQuestions,
+        minWords: task?.minWords,
+        // Context the examiner would have in front of them: which part this
+        // is, and the stimulus the student was answering about.
+        part: question?.part,
+        instructions: question?.instructions,
+        topic: question?.topic,
+        pros: question?.pros,
+        cons: question?.cons
+      });
+
+      taskResult.aiEvaluation = {
+        ...evaluation,
+        aiModel: process.env.CLAUDE_MODEL || 'claude-opus-5-20250805',
+        evaluatedAt: new Date()
+      };
+      taskResult.finalScore = evaluation.score;
+      taskResult.status = 'evaluated';
+    } catch (error) {
+      // One failed task must not discard the whole attempt — recordings and
+      // transcripts are kept so it can be re-evaluated later.
+      console.error(`Evaluation failed for task ${taskResult.taskNumber}:`, error.message);
+      failures.push({ taskNumber: taskResult.taskNumber, error: error.message });
+      taskResult.status = 'pending';
+    }
+  }
+
+  const evaluatedCount = result.taskResults.filter(t => t.status === 'evaluated').length;
+
+  if (evaluatedCount === 0) {
+    // Nothing could be marked. Drop back to 'submitted' so the attempt is not
+    // stuck in 'evaluating', and leave the task statuses as the explanation —
+    // the client reads them and tells the student whether this was a
+    // transcription problem or a marking one.
+    result.status = 'submitted';
+    await result.save();
+    console.warn(
+      `Nothing marked for ${result._id}: ` +
+      `${untranscribed.length} untranscribed, ${failures.length} failed`
+    );
+    return;
+  }
+
+  result.calculateOverallScore();
+  result.overallLevel = result.determineCEFRLevel();
+  // Passing means reaching B1, the lowest certified band on the 75-point scale.
+  result.isPassed = result.overallScore >= (Number(process.env.PASS_SCORE) || 31);
+  result.status = 'completed';
+  result.evaluatedAt = new Date();
+  result.completedAt = new Date();
+
+  if (result.isPassed) result.generateCertificate();
+  await result.save();
+
+  await Exam.findByIdAndUpdate(result.exam, { $inc: { 'statistics.timesUsed': 1 } });
+}
+
 
 export default router;

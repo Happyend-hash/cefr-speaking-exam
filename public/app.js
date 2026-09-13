@@ -599,13 +599,20 @@
           return;
         }
 
-        // Back to 'submitted' means marking ran and failed for every task.
+        // Back to 'submitted' means marking ran and nothing could be marked.
+        // Two very different reasons, and the student needs the right one.
         if (result.status === 'submitted') {
+          const tasks = result.taskResults || [];
+          const allUnread = tasks.length > 0 && tasks.every(t => t.status === 'not_transcribed');
           setState({
             screen: 'exam',
             loading: false,
-            error: submitError?.message ||
-              'Marking did not finish. Your answers are saved — you can submit again.'
+            error: allUnread
+              ? 'None of your answers could be turned into text, so nothing could be marked. ' +
+                'Your recordings are saved. This is usually the browser — open the site ' +
+                'directly in Chrome rather than inside a messaging app, then try again.'
+              : submitError?.message ||
+                'Marking did not finish. Your answers are saved — you can submit again.'
           });
           return;
         }

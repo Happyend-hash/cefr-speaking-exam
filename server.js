@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -94,13 +95,67 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+/**
+ * Rate limiting.
+ *
+ * Railway terminates TLS in front of this process, so without trusting that hop
+ * `req.ip` is the proxy's address, not the student's — every student in the
+ * country counts as one person. The old limit of 100 per 15 minutes was
+ * therefore shared by everyone, and since one mock costs about 30 requests
+ * (sign in, start, save each answer, fetch the picture, submit, poll while it
+ * is marked), the fourth student of any lesson was locked out mid-exam.
+ *
+ * `1` rather than `true`: one proxy hop is trusted, so the client address is the
+ * last entry in X-Forwarded-For and cannot be spoofed by a header the client
+ * sets itself. express-rate-limit also refuses to run behind a blanket `true`,
+ * for exactly that reason.
+ */
+app.set('trust proxy', 1);
+
+/**
+ * Count per signed-in student, not per address.
+ *
+ * A class shares one school or mobile network, so per-IP limiting punishes
+ * exactly the situation this app is built for: thirty students on the same
+ * wifi. The token is verified rather than merely decoded — an unverified read
+ * would let anyone mint keys and slip the limit entirely.
+ */
+function limitKey(req) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      if (decoded?.id) return `user:${decoded.id}`;
+    } catch {
+      // Not a valid token — fall through and limit by address.
+    }
+  }
+  return `ip:${req.ip}`;
+}
+
+// Generous enough for a full mock several times over, low enough to stop a
+// runaway loop. A mock costs ~30 requests; this is 600 per student per 15 min.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_MAX) || 600,
+  keyGenerator: limitKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests — please wait a moment and try again.' }
 });
-app.use('/api/', limiter);
+
+// Sign-in and sign-up stay strict and per-address: this is the endpoint worth
+// brute-forcing, and there is no user to count against until it succeeds.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.AUTH_RATE_LIMIT_MAX) || 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many sign-in attempts — please wait a few minutes.' }
+});
+
+app.use('/api/auth', authLimiter);
+app.use('/api/', apiLimiter);
 
 // Body parsing
 app.use(express.json({ limit: '50mb' }));

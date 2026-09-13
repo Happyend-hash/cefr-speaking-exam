@@ -244,7 +244,43 @@ short when the part calls for a short answer.`;
   /**
    * Call Claude API
    */
-  async callClaudeAPI(prompt) {
+  /**
+   * Call the API, retrying the failures that are worth retrying.
+   *
+   * A 429 or a 5xx is the API saying "not now", not "this answer is bad" — but
+   * without a retry it surfaced as a failed task, which is a wrong mark for a
+   * student whose only mistake was submitting at the same moment as thirty
+   * classmates. Wait and try again, backing off so a burst does not become a
+   * stampede, with jitter so the retries do not all return together.
+   *
+   * A 400 or 401 is a configuration mistake that will fail identically forever,
+   * so those are not retried.
+   */
+  async callClaudeAPI(prompt, attempt = 1) {
+    const MAX_ATTEMPTS = Number(process.env.CLAUDE_MAX_RETRIES) || 4;
+
+    try {
+      return await this.callClaudeAPIOnce(prompt);
+    } catch (error) {
+      const status = error.status || error.response?.status;
+      const retryable =
+        status === 429 || status === 529 || (status >= 500 && status < 600) ||
+        // No status at all means the connection itself failed.
+        (!status && /timeout|ETIMEDOUT|ECONNRESET|socket hang up|network/i.test(error.message || ''));
+
+      if (!retryable || attempt >= MAX_ATTEMPTS) throw error;
+
+      const backoffMs = Math.min(30000, 1000 * 2 ** (attempt - 1)) + Math.random() * 500;
+      console.warn(
+        `Claude API attempt ${attempt}/${MAX_ATTEMPTS} failed (${status || 'connection'}); ` +
+          `retrying in ${Math.round(backoffMs)}ms`
+      );
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
+      return this.callClaudeAPI(prompt, attempt + 1);
+    }
+  }
+
+  async callClaudeAPIOnce(prompt) {
     const payload = {
       model: this.model,
       max_tokens: this.maxTokens,
@@ -314,7 +350,11 @@ short when the part calls for a short answer.`;
         : status === 429 ? ' — rate limited or out of credit'
         : '';
 
-      throw new Error(`Claude API ${status || 'request'} failed: ${detail}${hint}`);
+      // Carry the status on the error: the retry logic needs to tell a 429
+      // ("try again shortly") from a 401 ("this will never work").
+      const wrapped = new Error(`Claude API ${status || 'request'} failed: ${detail}${hint}`);
+      wrapped.status = status;
+      throw wrapped;
     }
   }
 
