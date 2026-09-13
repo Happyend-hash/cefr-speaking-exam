@@ -224,3 +224,59 @@ audio { width: 100%; margin-top: 10px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .center-note { text-align: center; padding: 40px 20px; color: var(--ink-faint); }
+
+/* ---------- exam stimulus (Part 1.2 pictures, Part 2/3 topics) ---------- */
+
+.stimulus-images {
+  display: grid; gap: 14px; margin: 16px 0;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 560px) { .stimulus-images { grid-template-columns: 1fr 1fr; } }
+.stimulus-images figure { margin: 0; }
+.stimulus-images img {
+  width: 100%; max-width: 100%; height: auto;
+  aspect-ratio: 4 / 3; object-fit: cover;
+  border-radius: 10px; border: 1px solid var(--line); background: var(--ground);
+}
+.stimulus-images figcaption { font-size: 13px; color: var(--ink-faint); margin-top: 6px; text-align: center; }
+
+.stimulus-topic {
+  margin: 16px 0; padding: 14px 16px;
+  background: var(--indigo-50); border-left: 3px solid var(--indigo-600);
+  border-radius: 8px; font-size: 16px; line-height: 1.6;
+}
+
+.proscons { display: grid; gap: 14px; margin: 16px 0; }
+@media (min-width: 560px) { .proscons { grid-template-columns: 1fr 1fr; } }
+.proscons h4 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+.proscons .pros h4 { color: var(--green); }
+.proscons .cons h4 { color: var(--red); }
+.proscons ul { margin: 0; padding-left: 20px; font-size: 15px; color: var(--ink-soft); }
+.proscons li { margin-bottom: 5px; }
+.proscons .pros, .proscons .cons {
+  padding: 14px; border-radius: 10px; border: 1px solid var(--line); background: #fff;
+}
+
+/* ---------- timed phases ---------- */
+
+.phase { text-align: center; padding: 24px 0 8px; }
+.phase-label { font-size: 15px; font-weight: 650; color: var(--ink-soft); margin-bottom: 10px; }
+.phase-timer {
+  font-size: 46px; font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums; letter-spacing: .01em;
+  color: var(--indigo-600); margin-bottom: 14px;
+}
+.phase-answer .phase-timer { color: #dc2626; }
+.phase-track { height: 6px; background: var(--indigo-100); border-radius: 999px; overflow: hidden; max-width: 420px; margin: 0 auto; }
+.phase-fill { height: 100%; background: var(--indigo-600); border-radius: 999px; transition: width 1s linear; }
+.phase-fill.recording { background: #dc2626; }
+
+.rec-live {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  background: #dc2626; margin-right: 7px; vertical-align: middle;
+  animation: blink 1.2s ease-in-out infinite;
+}
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .rec-live { animation: none; } }
+
+.badge-mock { background: #fef3c7; color: #92400e; margin-left: 6px; }

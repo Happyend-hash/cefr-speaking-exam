@@ -10,6 +10,7 @@ import AudioStorageService, {
   ALLOWED_AUDIO_TYPES,
   MAX_AUDIO_BYTES
 } from '../services/AudioStorageService.js';
+import ImageStorageService from '../services/ImageStorageService.js';
 import { APIError } from '../middleware/errorHandler.js';
 
 const router = express.Router();
@@ -25,6 +26,44 @@ const upload = multer({
 });
 
 const isValidId = id => mongoose.Types.ObjectId.isValid(id);
+
+/**
+ * Flatten a stored exam into the ordered question list the runner plays.
+ *
+ * Works on a lean (plain-object) exam as well as a document, because most reads
+ * here use .lean() and would not have the schema method available.
+ */
+function flattenExam(exam, onlyPart = null) {
+  const flat = [];
+  let number = 0;
+
+  for (const [sectionIndex, section] of (exam.sections || []).entries()) {
+    const questions = section.questions || [];
+    questions.forEach((question, questionIndex) => {
+      number += 1;
+      if (onlyPart && section.part !== onlyPart) return;
+      flat.push({
+        taskNumber: number,
+        sectionIndex,
+        part: section.part,
+        sectionTitle: section.title,
+        instructions: section.instructions,
+        images: section.images || [],
+        topic: section.topic,
+        pros: section.pros || [],
+        cons: section.cons || [],
+        text: question.text,
+        prepTime: question.prepTime ?? 5,
+        answerTime: question.answerTime ?? 30,
+        isSectionStart: questionIndex === 0,
+        questionInSection: questionIndex + 1,
+        questionsInSection: questions.length
+      });
+    });
+  }
+
+  return flat;
+}
 
 /** Load a result and confirm the caller owns it (admins may view any). */
 async function loadOwnedResult(req, resultId) {
@@ -142,6 +181,29 @@ router.get('/audio/:audioKey', async (req, res, next) => {
 });
 
 /**
+ * @route   GET /api/exam/images/:key
+ * @desc    Serve an exam image (Part 1.2 pictures)
+ * @access  Private — any signed-in student
+ */
+router.get('/images/:key', async (req, res, next) => {
+  try {
+    const file = await ImageStorageService.getMetadata(req.params.key);
+    if (!file) throw new APIError('Image not found', 404);
+
+    res.set('Content-Type', file.contentType || 'image/jpeg');
+    res.set('Content-Length', String(file.length));
+    // Exam images never change once uploaded, so they cache hard.
+    res.set('Cache-Control', 'private, max-age=86400');
+
+    const stream = ImageStorageService.openDownloadStream(req.params.key);
+    stream.on('error', err => next(new APIError(`Could not read image: ${err.message}`, 500)));
+    stream.pipe(res);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * @route   GET /api/exam
  * @desc    List published exams
  * @access  Private
@@ -154,7 +216,7 @@ router.get('/', async (req, res, next) => {
     if (req.query.module) filter.module = req.query.module;
 
     const exams = await Exam.find(filter)
-      .select('title module level description totalTasks duration maxScore tags')
+      .select('title module level description totalTasks duration maxScore tags sections')
       .sort({ module: 1, title: 1 })
       .lean();
 
@@ -167,6 +229,8 @@ router.get('/', async (req, res, next) => {
         level: e.level || null,
         description: e.description,
         totalTasks: e.totalTasks,
+        parts: [...new Set((e.sections || []).map(s => s.part))],
+        totalQuestions: (e.sections || []).reduce((n, s) => n + (s.questions?.length || 0), 0),
         duration: e.duration,
         maxScore: e.maxScore,
         tags: e.tags || []
@@ -200,7 +264,12 @@ router.get('/:id', async (req, res, next) => {
         level: exam.level || null,
         description: exam.description,
         duration: exam.duration,
+        // Which parts this test contains, so the client can offer part practice.
+        parts: [...new Set((exam.sections || []).map(s => s.part))],
         totalTasks: exam.totalTasks,
+        // Sections flattened into the ordered question list the runner plays.
+        questions: flattenExam(exam),
+        // Legacy flat tasks — still how the writing module is stored.
         tasks: exam.tasks.map(t => ({
           taskNumber: t.taskNumber,
           type: t.type,
@@ -234,6 +303,15 @@ router.post('/:id/start', async (req, res, next) => {
       throw new APIError('Exam not found', 404);
     }
 
+    // 'mock' runs the whole test under exam conditions — no skipping, timers
+    // enforced. 'practice' lets the student work through one part at a time.
+    const mode = req.body.mode === 'practice' ? 'practice' : 'mock';
+    const part = mode === 'practice' && req.body.part ? String(req.body.part) : null;
+
+    if (part && !(exam.sections || []).some(s => s.part === part)) {
+      throw new APIError(`This test has no Part ${part}`, 400);
+    }
+
     const existing = await ExamResult.findOne({
       student: req.user.id,
       exam: exam._id,
@@ -244,7 +322,13 @@ router.post('/:id/start', async (req, res, next) => {
       return res.json({
         success: true,
         message: 'Resuming your attempt in progress',
-        data: { resultId: existing._id, resumed: true }
+        data: {
+          resultId: existing._id,
+          resumed: true,
+          mode: existing.mode,
+          part: existing.part || null,
+          questions: flattenExam(exam.toObject(), existing.part || null)
+        }
       });
     }
 
@@ -253,6 +337,8 @@ router.post('/:id/start', async (req, res, next) => {
       exam: exam._id,
       examLevel: exam.level || undefined,
       module: exam.module || 'speaking',
+      mode,
+      part,
       // overallLevel is the outcome of the test, so it stays unset until evaluated.
       status: 'in_progress',
       startedAt: new Date(),
@@ -263,8 +349,14 @@ router.post('/:id/start', async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      message: 'Exam started',
-      data: { resultId: result._id, resumed: false }
+      message: mode === 'mock' ? 'Mock exam started' : `Practice started`,
+      data: {
+        resultId: result._id,
+        resumed: false,
+        mode,
+        part,
+        questions: flattenExam(exam.toObject(), part)
+      }
     });
   } catch (error) {
     next(error);

@@ -28,6 +28,17 @@ const examResultSchema = new mongoose.Schema(
       default: 'speaking'
     },
 
+    // 'mock' is the full test under exam conditions — no skipping.
+    // 'practice' is one part at a time, at the student's own pace.
+    mode: {
+      type: String,
+      enum: ['mock', 'practice'],
+      default: 'mock'
+    },
+
+    // Set only for practice attempts: which part was practised.
+    part: String,
+
     // Status
     status: {
       type: String,

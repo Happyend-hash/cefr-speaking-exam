@@ -38,8 +38,12 @@
     tests: [],
     overview: null,
     openTestId: null,
-    editingTask: null,   // taskNumber being edited
-    addingTo: null,      // test id the add-form is open for
+    editingTask: null,   // taskNumber being edited (writing)
+    addingTo: null,      // test id the add-form is open for (writing)
+    addingSectionTo: null,
+    editingSection: null,     // "testId:sectionIndex"
+    addingQuestionTo: null,   // "testId:sectionIndex"
+    editingQuestion: null,    // "testId:sectionIndex:qIndex"
     loading: false,
     error: '',
     notice: ''
@@ -193,16 +197,19 @@
 
   function testCard(test) {
     const open = state.openTestId === test.id;
+    const isWriting = test.module === 'writing';
+    const count = isWriting ? test.totalTasks : (test.totalQuestions || 0);
+
     return `
       <div class="card">
         <div class="test-row">
           <div>
             <div class="q-meta">
-              <span class="tag ${test.module === 'writing' ? 'tag-writing' : ''}">${esc(test.module)}</span>
+              <span class="tag ${isWriting ? 'tag-writing' : ''}">${esc(test.module)}</span>
               <span class="tag ${test.isPublished ? 'tag-live' : 'tag-draft'}">${test.isPublished ? 'published' : 'draft'}</span>
             </div>
             <h3>${esc(test.title)}</h3>
-            <p class="muted">${test.totalTasks} question${test.totalTasks === 1 ? '' : 's'}${test.description ? ' · ' + esc(test.description) : ''}</p>
+            <p class="muted">${count} question${count === 1 ? '' : 's'}${test.description ? ' · ' + esc(test.description) : ''}</p>
           </div>
           <div class="q-actions">
             <button class="btn btn-ghost btn-sm" data-toggle="${esc(test.id)}">${open ? 'Hide' : 'Questions'}</button>
@@ -213,16 +220,167 @@
           </div>
         </div>
 
-        ${open ? `
-          <div style="margin-top:18px">
-            ${test.tasks.length === 0
-              ? '<p class="muted">No questions yet.</p>'
-              : test.tasks.map(task => questionItem(test, task)).join('')}
+        ${open ? (isWriting ? legacyTaskList(test) : sectionList(test)) : ''}
+      </div>`;
+  }
 
-            ${state.addingTo === test.id
-              ? questionForm(test, null)
-              : `<button class="btn btn-sm" data-add="${esc(test.id)}" style="margin-top:8px">+ Add question</button>`}
-          </div>` : ''}
+  /** Writing tests still use the flat task list. */
+  function legacyTaskList(test) {
+    return `<div style="margin-top:18px">
+      ${test.tasks.length === 0 ? '<p class="muted">No tasks yet.</p>' : test.tasks.map(t => questionItem(test, t)).join('')}
+      ${state.addingTo === test.id
+        ? questionForm(test, null)
+        : `<button class="btn btn-sm" data-add="${esc(test.id)}" style="margin-top:8px">+ Add task</button>`}
+    </div>`;
+  }
+
+  // ---------------------------------------------------- speaking sections
+
+  const PARTS = [
+    ['1.1', 'Part 1.1 — three short personal questions (5s think / 30s answer)'],
+    ['1.2', 'Part 1.2 — two pictures, then three questions (10s/45s then 5s/30s)'],
+    ['2', 'Part 2 — topic with two follow-ups (60s think / 120s answer)'],
+    ['3', 'Part 3 — topic with advantages and disadvantages (60s / 120s)']
+  ];
+
+  function sectionList(test) {
+    return `<div style="margin-top:18px">
+      ${(test.sections || []).map(section => sectionCard(test, section)).join('')}
+      ${state.addingSectionTo === test.id
+        ? sectionForm(test, null)
+        : `<button class="btn btn-sm" data-add-section="${esc(test.id)}" style="margin-top:8px">+ Add a part</button>`}
+    </div>`;
+  }
+
+  function sectionCard(test, section) {
+    const editing = state.editingSection === `${test.id}:${section.index}`;
+    if (editing) return sectionForm(test, section);
+
+    return `
+      <div class="q-item" style="background:var(--ground)">
+        <div class="q-head">
+          <div style="flex:1">
+            <div class="q-meta">
+              <span class="tag">Part ${esc(section.part)}</span>
+              <span class="muted">${section.questions.length} question${section.questions.length === 1 ? '' : 's'}</span>
+            </div>
+            ${section.instructions ? `<p class="muted">${esc(section.instructions)}</p>` : ''}
+            ${section.topic ? `<div class="q-text" style="margin-top:6px"><strong>Topic:</strong> ${esc(section.topic)}</div>` : ''}
+            ${section.images.length ? `<div class="thumbs">${section.images.map(u => `<img src="${esc(u)}" alt="" />`).join('')}</div>` : ''}
+            ${(section.pros.length || section.cons.length) ? `
+              <div class="muted" style="margin-top:8px">
+                ${section.pros.length ? `<div>+ ${section.pros.map(esc).join(' · ')}</div>` : ''}
+                ${section.cons.length ? `<div>− ${section.cons.map(esc).join(' · ')}</div>` : ''}
+              </div>` : ''}
+          </div>
+          <div class="q-actions">
+            <button class="btn btn-ghost btn-sm" data-edit-section="${esc(test.id)}" data-index="${section.index}">Edit part</button>
+            <button class="btn btn-ghost btn-sm" data-delete-section="${esc(test.id)}" data-index="${section.index}">Delete</button>
+          </div>
+        </div>
+
+        <div style="margin-top:12px">
+          ${section.questions.map((q, i) => `
+            <div class="q-item" style="margin-bottom:8px">
+              <div class="q-head">
+                <div style="flex:1">
+                  <div class="q-meta">
+                    <span class="q-num">${i + 1}</span>
+                    <span class="muted">${q.prepTime}s think · ${q.answerTime}s answer</span>
+                  </div>
+                  <div class="q-text">${esc(q.text)}</div>
+                </div>
+                <div class="q-actions">
+                  <button class="btn btn-ghost btn-sm" data-edit-q="${esc(test.id)}" data-index="${section.index}" data-q="${i}">Edit</button>
+                  <button class="btn btn-ghost btn-sm" data-delete-q="${esc(test.id)}" data-index="${section.index}" data-q="${i}">Delete</button>
+                </div>
+              </div>
+              ${state.editingQuestion === `${test.id}:${section.index}:${i}` ? sectionQuestionForm(test, section, i, q) : ''}
+            </div>`).join('')}
+
+          ${state.addingQuestionTo === `${test.id}:${section.index}`
+            ? sectionQuestionForm(test, section, null, null)
+            : `<button class="btn btn-ghost btn-sm" data-add-q="${esc(test.id)}" data-index="${section.index}">+ Add question to Part ${esc(section.part)}</button>`}
+        </div>
+      </div>`;
+  }
+
+  function sectionForm(test, section) {
+    const isEdit = Boolean(section);
+    const sec = section || {};
+    return `
+      <div class="q-item" style="border-color:var(--indigo-500)">
+        <h4 style="margin-bottom:12px">${isEdit ? `Edit Part ${esc(sec.part)}` : 'Add a part'}</h4>
+        <form class="q-form" data-section-form="${isEdit ? 'edit' : 'add'}" data-test="${esc(test.id)}" data-index="${isEdit ? sec.index : ''}">
+          <div>
+            <label>Part</label>
+            <select name="part" ${isEdit ? 'disabled' : ''}>
+              ${PARTS.map(([v, label]) => `<option value="${v}" ${sec.part === v ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div>
+            <label>Instructions shown to the student (optional)</label>
+            <input name="instructions" value="${esc(sec.instructions || '')}" placeholder="e.g. Look at the two pictures and answer the questions." />
+          </div>
+
+          <div>
+            <label>Topic (Parts 2 and 3)</label>
+            <textarea name="topic" placeholder="The topic the questions are about">${esc(sec.topic || '')}</textarea>
+          </div>
+
+          <div class="two">
+            <div>
+              <label>Advantages — one per line (Part 3)</label>
+              <textarea name="pros">${esc((sec.pros || []).join('\n'))}</textarea>
+            </div>
+            <div>
+              <label>Disadvantages — one per line (Part 3)</label>
+              <textarea name="cons">${esc((sec.cons || []).join('\n'))}</textarea>
+            </div>
+          </div>
+
+          <div>
+            <label>Pictures (Part 1.2 — upload two)</label>
+            <div class="thumbs" id="sec-thumbs">${(sec.images || []).map(u => `<img src="${esc(u)}" alt="" />`).join('')}</div>
+            <input type="hidden" name="images" value="${esc((sec.images || []).join(','))}" />
+            <input type="file" accept="image/*" multiple data-upload-images />
+            <p class="hint">JPEG, PNG, WebP or GIF, up to 5MB each. Uploading replaces the list above.</p>
+          </div>
+
+          <div class="row">
+            <button class="btn btn-sm" type="submit">${isEdit ? 'Save part' : 'Add part'}</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="cancel-form">Cancel</button>
+          </div>
+        </form>
+      </div>`;
+  }
+
+  function sectionQuestionForm(test, section, qIndex, q) {
+    const isEdit = q !== null && q !== undefined;
+    const defaults = { '1.1': [5, 30], '1.2': [5, 30], '2': [60, 120], '3': [60, 120] }[section.part] || [5, 30];
+    return `
+      <div class="q-item" style="border-color:var(--indigo-500);margin-top:8px">
+        <form class="q-form" data-q-form="${isEdit ? 'edit' : 'add'}" data-test="${esc(test.id)}" data-index="${section.index}" data-q="${isEdit ? qIndex : ''}">
+          <div>
+            <label>Question</label>
+            <textarea name="text" required placeholder="What the student is asked">${esc(q?.text || '')}</textarea>
+          </div>
+          <div class="two">
+            <div>
+              <label>Think time (seconds)</label>
+              <input name="prepTime" type="number" min="0" value="${q?.prepTime ?? defaults[0]}" />
+            </div>
+            <div>
+              <label>Answer time (seconds)</label>
+              <input name="answerTime" type="number" min="5" value="${q?.answerTime ?? defaults[1]}" />
+            </div>
+          </div>
+          <div class="row">
+            <button class="btn btn-sm" type="submit">${isEdit ? 'Save' : 'Add question'}</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="cancel-form">Cancel</button>
+          </div>
+        </form>
       </div>`;
   }
 
@@ -349,13 +507,52 @@
 
     root.querySelectorAll('form[data-form]').forEach(form =>
       form.addEventListener('submit', event => handleQuestionSubmit(event, form)));
+
+    // ---- sections ----
+    root.querySelectorAll('[data-add-section]').forEach(el =>
+      el.addEventListener('click', () => setState({
+        addingSectionTo: el.dataset.addSection, editingSection: null, addingQuestionTo: null, editingQuestion: null
+      })));
+
+    root.querySelectorAll('[data-edit-section]').forEach(el =>
+      el.addEventListener('click', () => setState({
+        editingSection: `${el.dataset.editSection}:${el.dataset.index}`, addingSectionTo: null
+      })));
+
+    root.querySelectorAll('[data-delete-section]').forEach(el =>
+      el.addEventListener('click', () => deleteSection(el.dataset.deleteSection, el.dataset.index)));
+
+    root.querySelectorAll('[data-add-q]').forEach(el =>
+      el.addEventListener('click', () => setState({
+        addingQuestionTo: `${el.dataset.addQ}:${el.dataset.index}`, editingQuestion: null
+      })));
+
+    root.querySelectorAll('[data-edit-q]').forEach(el =>
+      el.addEventListener('click', () => setState({
+        editingQuestion: `${el.dataset.editQ}:${el.dataset.index}:${el.dataset.q}`, addingQuestionTo: null
+      })));
+
+    root.querySelectorAll('[data-delete-q]').forEach(el =>
+      el.addEventListener('click', () => deleteSectionQuestion(el.dataset.deleteQ, el.dataset.index, el.dataset.q)));
+
+    root.querySelectorAll('form[data-section-form]').forEach(form =>
+      form.addEventListener('submit', event => handleSectionSubmit(event, form)));
+
+    root.querySelectorAll('form[data-q-form]').forEach(form =>
+      form.addEventListener('submit', event => handleSectionQuestionSubmit(event, form)));
+
+    root.querySelectorAll('[data-upload-images]').forEach(el =>
+      el.addEventListener('change', event => uploadImages(event.target)));
   }
 
   function handleAction(action) {
     if (action === 'signout') return signOut();
     if (action === 'new-test') return setState({ screen: 'new-test' });
     if (action === 'cancel-new-test') return setState({ screen: 'tests' });
-    if (action === 'cancel-form') return setState({ editingTask: null, addingTo: null });
+    if (action === 'cancel-form') return setState({
+      editingTask: null, addingTo: null,
+      addingSectionTo: null, editingSection: null, addingQuestionTo: null, editingQuestion: null
+    });
   }
 
   async function handleLogin(event) {
@@ -427,6 +624,123 @@
       state.editingTask = null;
       state.addingTo = null;
       state.notice = isEdit ? 'Question updated.' : 'Question added.';
+      await loadTests();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  const lines = value => value.split('\n').map(x => x.trim()).filter(Boolean);
+
+  /**
+   * Upload picked images and attach them to the open section form.
+   *
+   * Uploaded straight away rather than on submit, so the teacher sees the
+   * pictures appear and can tell an upload failed before saving the part.
+   */
+  async function uploadImages(input) {
+    const form = input.closest('form');
+    const files = [...input.files];
+    if (!files.length) return;
+
+    const thumbs = document.getElementById('sec-thumbs');
+    if (thumbs) thumbs.innerHTML = '<span class="spinner"></span>';
+
+    try {
+      const urls = [];
+      for (const file of files) {
+        const body = new FormData();
+        body.append('image', file);
+        const res = await fetch(`${API}/admin/images`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${state.token}` },
+          body
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.message || `Upload failed (${res.status})`);
+        urls.push(payload.data.url);
+      }
+
+      form.images.value = urls.join(',');
+      if (thumbs) thumbs.innerHTML = urls.map(u => `<img src="${esc(u)}" alt="" />`).join('');
+    } catch (error) {
+      if (thumbs) thumbs.innerHTML = '';
+      setState({ error: error.message });
+    }
+  }
+
+  async function handleSectionSubmit(event, form) {
+    event.preventDefault();
+    const testId = form.dataset.test;
+    const isEdit = form.dataset.sectionForm === 'edit';
+
+    const body = {
+      instructions: form.instructions.value.trim(),
+      topic: form.topic.value.trim(),
+      pros: lines(form.pros.value),
+      cons: lines(form.cons.value),
+      images: form.images.value.split(',').map(x => x.trim()).filter(Boolean)
+    };
+    if (!isEdit) body.part = form.part.value;
+
+    try {
+      if (isEdit) {
+        await api(`/admin/tests/${testId}/sections/${form.dataset.index}`, { method: 'PATCH', body });
+      } else {
+        await api(`/admin/tests/${testId}/sections`, { method: 'POST', body });
+      }
+      state.addingSectionTo = null;
+      state.editingSection = null;
+      state.notice = isEdit ? 'Part updated.' : 'Part added. Now add its questions.';
+      await loadTests();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  async function handleSectionQuestionSubmit(event, form) {
+    event.preventDefault();
+    const testId = form.dataset.test;
+    const index = form.dataset.index;
+    const isEdit = form.dataset.qForm === 'edit';
+
+    const body = {
+      text: form.text.value.trim(),
+      prepTime: Number(form.prepTime.value),
+      answerTime: Number(form.answerTime.value)
+    };
+
+    try {
+      if (isEdit) {
+        await api(`/admin/tests/${testId}/sections/${index}/questions/${form.dataset.q}`, { method: 'PATCH', body });
+      } else {
+        await api(`/admin/tests/${testId}/sections/${index}/questions`, { method: 'POST', body });
+      }
+      state.addingQuestionTo = null;
+      state.editingQuestion = null;
+      state.notice = isEdit ? 'Question updated.' : 'Question added.';
+      await loadTests();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  async function deleteSection(testId, index) {
+    if (!window.confirm('Delete this part and all of its questions? This cannot be undone.')) return;
+    try {
+      await api(`/admin/tests/${testId}/sections/${index}`, { method: 'DELETE' });
+      state.notice = 'Part removed.';
+      await loadTests();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  async function deleteSectionQuestion(testId, index, qIndex) {
+    if (!window.confirm('Delete this question? This cannot be undone.')) return;
+    try {
+      await api(`/admin/tests/${testId}/sections/${index}/questions/${qIndex}`, { method: 'DELETE' });
+      state.notice = 'Question removed.';
       await loadTests();
     } catch (error) {
       setState({ error: error.message });

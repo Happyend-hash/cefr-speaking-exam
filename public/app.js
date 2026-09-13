@@ -27,8 +27,12 @@
     history: [],
     stats: null,
     exam: null,        // exam being taken
+    questions: null,   // flattened, ordered question list (speaking)
+    mode: 'mock',      // 'mock' (no skipping) or 'practice' (one part, retryable)
+    part: null,        // practice only: which part
     resultId: null,
     taskIndex: 0,
+    qIndex: 0,
     answered: {},      // taskNumber -> { transcription, hasAudio }
     result: null,      // completed result detail
     loading: false,
@@ -161,25 +165,160 @@
     }
   }
 
-  async function startExam(examId) {
+  async function startExam(examId, mode = 'mock', part = null) {
     setState({ loading: true, error: '' });
     try {
       const [exam, started] = await Promise.all([
         api(`/exam/${examId}`),
-        api(`/exam/${examId}/start`, { method: 'POST' })
+        api(`/exam/${examId}/start`, { method: 'POST', body: { mode, part } })
       ]);
       resetRecorder();
+      clearPhaseTimer();
+
+      // Sections-based speaking tests arrive already flattened and ordered.
+      // The writing module still uses the legacy flat task list.
+      const questions = started.questions?.length ? started.questions : null;
+
       setState({
         screen: 'exam',
         exam,
+        questions,
+        mode: started.mode || mode,
+        part: started.part || part,
         resultId: started.resultId,
         taskIndex: 0,
+        qIndex: 0,
         answered: {},
         loading: false,
-        notice: started.resumed ? 'Resumed the attempt you already had in progress.' : ''
+        notice: started.resumed ? 'Resuming the attempt you already had in progress.' : ''
       });
+
+      run.phase = 'ready';
+      render();
     } catch (error) {
       setState({ loading: false, error: error.message });
+    }
+  }
+
+  // =======================================================================
+  // Timed exam engine (speaking, sections-based)
+  //
+  // Each question runs think → speak → save, with the countdown driven here
+  // rather than by the student. In a mock the whole test plays through without
+  // interaction, exactly as the real exam does; in practice mode the student
+  // starts each question and may retry it.
+  // =======================================================================
+
+  const run = { phase: 'idle', remaining: 0, handle: null };
+
+  function clearPhaseTimer() {
+    if (run.handle) clearInterval(run.handle);
+    run.handle = null;
+  }
+
+  const currentQuestion = () => state.questions?.[state.qIndex] || null;
+
+  /** Count down `run.remaining`, updating the DOM directly so the page is not re-rendered every second. */
+  function countdown(onZero) {
+    clearPhaseTimer();
+    paintTimer();
+    run.handle = setInterval(() => {
+      run.remaining -= 1;
+      paintTimer();
+      if (run.remaining <= 0) {
+        clearPhaseTimer();
+        onZero();
+      }
+    }, 1000);
+  }
+
+  function paintTimer() {
+    const el = document.getElementById('phase-timer');
+    if (el) el.textContent = fmtTime(Math.max(0, run.remaining));
+    const bar = document.getElementById('phase-bar');
+    if (bar && run.total) bar.style.width = `${Math.max(0, (run.remaining / run.total) * 100)}%`;
+  }
+
+  function beginPrep() {
+    const q = currentQuestion();
+    if (!q) return;
+    resetRecorder();
+    run.phase = 'prep';
+    run.remaining = q.prepTime;
+    run.total = q.prepTime;
+    render();
+    countdown(beginAnswer);
+  }
+
+  async function beginAnswer() {
+    const q = currentQuestion();
+    if (!q) return;
+    run.phase = 'answer';
+    run.remaining = q.answerTime;
+    run.total = q.answerTime;
+    render();
+
+    await beginRecording();
+    if (!rec.isRecording) {
+      // Microphone blocked — stop here rather than silently recording nothing.
+      run.phase = 'blocked';
+      return render();
+    }
+    countdown(finishAnswer);
+  }
+
+  function finishAnswer() {
+    clearPhaseTimer();
+    if (!rec.isRecording) return;
+    endRecording();
+    run.phase = 'saving';
+    render();
+    // MediaRecorder delivers the blob asynchronously in onstop.
+    setTimeout(uploadCurrentAnswer, 600);
+  }
+
+  async function uploadCurrentAnswer() {
+    const q = currentQuestion();
+    if (!q) return;
+
+    try {
+      const form = new FormData();
+      if (rec.blob) {
+        const ext = rec.blob.type.includes('mp4') ? 'mp4' : rec.blob.type.includes('ogg') ? 'ogg' : 'webm';
+        form.append('audio', rec.blob, `q${q.taskNumber}.${ext}`);
+      }
+      form.append('transcription', (rec.transcript + ' ' + rec.interim).trim());
+      form.append('duration', String(Math.round(rec.elapsed)));
+
+      const data = await api(`/exam/results/${state.resultId}/tasks/${q.taskNumber}`, {
+        method: 'POST',
+        form
+      });
+      state.answered[q.taskNumber] = { transcription: data.transcription, hasAudio: data.hasAudio };
+    } catch (error) {
+      state.error = error.message;
+    }
+
+    resetRecorder();
+    advanceQuestion();
+  }
+
+  function advanceQuestion() {
+    const isLast = state.qIndex >= state.questions.length - 1;
+
+    if (isLast) {
+      run.phase = 'finished';
+      render();
+      if (state.mode === 'mock') submitExam();
+      return;
+    }
+
+    state.qIndex += 1;
+    if (state.mode === 'mock') {
+      beginPrep();           // a mock never pauses between questions
+    } else {
+      run.phase = 'ready';
+      render();
     }
   }
 
@@ -541,7 +680,12 @@
               <span>${exam.totalTasks} ${exam.module === 'writing' ? 'tasks' : 'questions'}</span>
               <span>~${Math.round((exam.duration || 0) / 60)} min</span>
             </div>
-            <div><button class="btn btn-sm" data-start="${esc(exam.id)}">Start test</button></div>
+            <div class="row">
+              <button class="btn btn-sm" data-start="${esc(exam.id)}" data-mode="mock">Full mock exam</button>
+              ${(exam.parts || []).map(p =>
+                `<button class="btn btn-ghost btn-sm" data-start="${esc(exam.id)}" data-mode="practice" data-part="${esc(p)}">Practise Part ${esc(p)}</button>`
+              ).join('')}
+            </div>
           </div>`).join('')}</div>`
       : `<div class="card"><p class="muted">No exams are published yet. An administrator can add them by running <code>npm run seed</code>.</p></div>`;
 
@@ -569,6 +713,99 @@
   }
 
   function examScreen() {
+    const exam = state.exam;
+    if (!exam) return `<div class="center-note">Loading…</div>`;
+
+    // The writing module still uses the legacy flat task list.
+    if (!state.questions) return legacyExamScreen();
+
+    const q = currentQuestion();
+    if (!q) return `<div class="center-note">Loading…</div>`;
+
+    const total = state.questions.length;
+    const answeredCount = Object.keys(state.answered).length;
+    const isMock = state.mode === 'mock';
+
+    const stimulus = `
+      ${q.images?.length ? `<div class="stimulus-images">
+        ${q.images.map((url, i) => `<figure><img src="${esc(url)}" alt="Picture ${i + 1}" loading="eager" /><figcaption>Picture ${i + 1}</figcaption></figure>`).join('')}
+      </div>` : ''}
+      ${q.topic ? `<div class="stimulus-topic">${esc(q.topic)}</div>` : ''}
+      ${(q.pros?.length || q.cons?.length) ? `<div class="proscons">
+        <div class="pros"><h4>Advantages</h4><ul>${q.pros.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+        <div class="cons"><h4>Disadvantages</h4><ul>${q.cons.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+      </div>` : ''}`;
+
+    const phaseBlock = (() => {
+      switch (run.phase) {
+        case 'prep':
+          return `<div class="phase phase-prep">
+            <div class="phase-label">Think about your answer</div>
+            <div class="phase-timer" id="phase-timer">${fmtTime(run.remaining)}</div>
+            <div class="phase-track"><div class="phase-fill" id="phase-bar" style="width:100%"></div></div>
+            <p class="muted">Recording starts automatically.</p>
+          </div>`;
+
+        case 'answer':
+          return `<div class="phase phase-answer">
+            <div class="phase-label"><span class="rec-live"></span> Speak now</div>
+            <div class="phase-timer" id="phase-timer">${fmtTime(run.remaining)}</div>
+            <div class="phase-track"><div class="phase-fill recording" id="phase-bar" style="width:100%"></div></div>
+            <div id="transcript" class="transcript" style="margin-top:14px">${esc((rec.transcript + rec.interim).trim() || 'Listening…')}</div>
+          </div>`;
+
+        case 'saving':
+          return `<div class="phase"><span class="spinner"></span><p class="muted" style="margin-top:10px">Saving your answer…</p></div>`;
+
+        case 'blocked':
+          return `<div class="alert alert-error">The microphone is blocked. Allow access in your browser, then reload and start again.</div>`;
+
+        case 'finished':
+          return `<div class="phase">
+            <div class="phase-label">All questions answered</div>
+            ${isMock
+              ? '<p class="muted">Submitting for assessment…</p><span class="spinner"></span>'
+              : '<button class="btn" data-action="finish">Submit for assessment</button>'}
+          </div>`;
+
+        default: // 'ready'
+          return `<div class="phase">
+            <p class="muted">${q.prepTime}s to think, then ${q.answerTime}s to answer.</p>
+            <button class="btn" data-action="begin">
+              ${state.qIndex === 0 ? (isMock ? 'Begin mock exam' : 'Start') : 'Next question'}
+            </button>
+            ${isMock && state.qIndex === 0
+              ? '<p class="muted" style="margin-top:10px">Once it starts it runs to the end — you cannot pause or skip.</p>'
+              : ''}
+          </div>`;
+      }
+    })();
+
+    return `
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:12px">
+          <div>
+            <span class="badge">Part ${esc(q.part)}</span>
+            ${isMock ? '<span class="badge badge-mock">Mock exam</span>' : '<span class="badge">Practice</span>'}
+          </div>
+          <span class="muted">Question ${state.qIndex + 1} of ${total} · ${answeredCount} answered</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:${(answeredCount / total) * 100}%"></div></div>
+
+        ${q.isSectionStart && q.instructions ? `<p class="muted" style="margin-top:14px">${esc(q.instructions)}</p>` : ''}
+        ${stimulus}
+
+        <div class="question">${esc(q.text)}</div>
+
+        ${phaseBlock}
+      </div>
+
+      ${!isMock && run.phase === 'ready' && state.qIndex < total - 1
+        ? '<div class="row" style="justify-content:flex-end"><button class="btn btn-ghost btn-sm" data-action="skip-question">Skip this question</button></div>'
+        : ''}`;
+  }
+
+  function legacyExamScreen() {
     const exam = state.exam;
     const task = currentTask();
     if (!exam || !task) return `<div class="center-note">Loading exam…</div>`;
@@ -713,7 +950,8 @@
     });
 
     root.querySelectorAll('[data-start]').forEach(el =>
-      el.addEventListener('click', () => startExam(el.dataset.start)));
+      el.addEventListener('click', () =>
+        startExam(el.dataset.start, el.dataset.mode || 'mock', el.dataset.part || null)));
 
     root.querySelectorAll('[data-result]').forEach(el =>
       el.addEventListener('click', () => openResult(el.dataset.result)));
@@ -732,6 +970,8 @@
       case 'signout': return signOut();
       case 'save': return submitTask();
       case 'save-writing': return submitWriting();
+      case 'begin': return beginPrep();
+      case 'skip-question': return advanceQuestion();
       case 'discard': resetRecorder(); return render();
       case 'redo':
         delete state.answered[currentTask().taskNumber];

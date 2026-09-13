@@ -35,135 +35,66 @@ const SPEAKING_TEST = {
   module: 'speaking',
   description:
     'Full speaking test in the Multilevel format: Parts 1.1, 1.2, 2 and 3. Your level is determined from your performance.',
-  tasks: [
-    // ---- Part 1.1 — short factual answers about yourself ----
+  sections: [
     {
       part: '1.1',
-      type: 'personal_question',
-      instructions: 'Answer briefly. You have 30 seconds for each question.',
-      question: 'Where are you from, and how long have you lived there?',
-      timeLimit: 30,
-      scoringCriteria: ['Clear factual answer', 'Basic accuracy', 'Audible delivery']
-    },
-    {
-      part: '1.1',
-      type: 'personal_question',
-      instructions: 'Answer briefly. You have 30 seconds.',
-      question: 'What do you do — do you work or study? Tell me a little about it.',
-      timeLimit: 30,
-      scoringCriteria: ['Relevant detail', 'Present simple accuracy', 'Everyday vocabulary']
-    },
-    {
-      part: '1.1',
-      type: 'personal_question',
-      instructions: 'Answer briefly. You have 30 seconds.',
-      question: 'How do you usually travel around your city, and why?',
-      timeLimit: 30,
-      scoringCriteria: ['Reason given', 'Connectors (because, so)', 'Fluency at short length']
-    },
-
-    // ---- Part 1.2 — longer turn on a familiar topic ----
-    {
-      part: '1.2',
-      type: 'extended_answer',
-      instructions:
-        'You have 1 minute to prepare and 2 minutes to speak. Cover all the points below.',
-      question:
-        'Describe a place in your country that you would recommend to a visitor. Say where it is, what people can do there, why you would recommend it, and when the best time to go is.',
-      timeLimit: 120,
-      scoringCriteria: [
-        'Covers every prompt point',
-        'Sustains a two-minute turn',
-        'Descriptive vocabulary',
-        'Organisation and linking'
+      instructions: 'Answer each question briefly. You have 5 seconds to think and 30 seconds to answer.',
+      questions: [
+        { text: 'Where are you from, and how long have you lived there?', prepTime: 5, answerTime: 30 },
+        { text: 'Do you work or study? Tell me a little about it.', prepTime: 5, answerTime: 30 },
+        { text: 'How do you usually travel around your city, and why?', prepTime: 5, answerTime: 30 }
       ]
     },
     {
       part: '1.2',
-      type: 'extended_answer',
-      instructions: 'You have 1 minute to prepare and 2 minutes to speak.',
-      question:
-        'Describe a skill you have learned outside school or university. Say what it is, how you learned it, how difficult it was, and how you use it now.',
-      timeLimit: 120,
-      scoringCriteria: [
-        'Past narrative control',
-        'Sequencing across the answer',
-        'Range of structures',
-        'Sustained fluency'
-      ]
-    },
-
-    // ---- Part 2 — compare and contrast two pictures ----
-    {
-      part: '2',
-      type: 'picture_comparison',
-      instructions:
-        'Compare the two situations. Say how they are similar, how they differ, and which you would prefer. You have 2 minutes.',
-      question:
-        'Compare these two ways of studying: studying alone at home, and studying in a group at a library or learning centre. What are the advantages of each, and which would suit you better?',
-      timeLimit: 120,
+      instructions: 'Look at the two pictures and answer the questions about them.',
+      // Upload the real picture pair in Manage Questions — the wording below works
+      // meanwhile, but Part 1.2 is designed around two images that differ.
       images: [],
-      scoringCriteria: [
-        'Comparison and contrast language',
-        'Balanced treatment of both options',
-        'Justified preference',
-        'Precision of vocabulary'
+      questions: [
+        {
+          text: 'Describe the two pictures. What can you see in each one, and how are they different?',
+          prepTime: 10,
+          answerTime: 45
+        },
+        { text: 'Which of these two situations is more common in your country? Why?', prepTime: 5, answerTime: 30 },
+        { text: 'Which one would you prefer for yourself, and why?', prepTime: 5, answerTime: 30 }
       ]
     },
     {
       part: '2',
-      type: 'picture_comparison',
-      instructions: 'Compare the two situations and give your view. You have 2 minutes.',
-      question:
-        'Compare shopping in a local bazaar with shopping in a large supermarket. Describe what each experience is like, and explain which you think most families in your country prefer, and why.',
-      timeLimit: 120,
-      images: [],
-      scoringCriteria: [
-        'Descriptive detail',
-        'Comparative structures',
-        'Speculation about others',
-        'Coherent organisation'
-      ]
-    },
-
-    // ---- Part 3 — opinion, with examiner follow-ups ----
-    {
-      part: '3',
-      type: 'opinion',
-      instructions:
-        'Give your opinion and support it with reasons and examples. Be ready for follow-up questions. You have 2 minutes.',
-      question:
-        'Some people think young people should be required to spend a year working or volunteering before starting university. Do you agree?',
-      followUpQuestions: [
-        'What might someone gain from that year that university cannot teach?',
-        'Who would find such a requirement most difficult?',
-        'Should it be compulsory, or a personal choice?'
-      ],
-      timeLimit: 120,
-      scoringCriteria: [
-        'Clear position with support',
-        'Responds to follow-ups',
-        'Abstract and hypothetical language',
-        'Fluency under pressure'
+      instructions: 'You have 1 minute to think and 2 minutes to answer each question.',
+      topic: 'Learning a new skill outside school or university.',
+      questions: [
+        {
+          text: 'Describe a skill you have learned outside school or university. Say what it is, how you learned it, how difficult it was, and how you use it now.',
+          prepTime: 60,
+          answerTime: 120
+        },
+        { text: 'Why do you think some people find it hard to keep learning after they finish their studies?', prepTime: 60, answerTime: 120 },
+        { text: 'How could schools better prepare students to go on learning by themselves?', prepTime: 60, answerTime: 120 }
       ]
     },
     {
       part: '3',
-      type: 'opinion',
-      instructions: 'Give your opinion with reasons and examples. You have 2 minutes.',
-      question:
-        'In many countries people are moving from villages to large cities. Is this change good or bad for a society overall?',
-      followUpQuestions: [
-        'What is lost when a village empties?',
-        'What could persuade young people to stay?',
-        'Will this trend continue in your country?'
+      instructions: 'You have 1 minute to think and 2 minutes to answer. Use the points below if they help.',
+      topic: 'Some people believe young people should spend a year working or volunteering before starting university. Do you agree?',
+      pros: [
+        'Students gain real work experience and practical skills',
+        'A year away helps them choose their subject more wisely',
+        'Earning money first reduces the financial pressure of study'
       ],
-      timeLimit: 120,
-      scoringCriteria: [
-        'Weighing competing effects',
-        'Cause and consequence language',
-        'Extended reasoning',
-        'Range and accuracy'
+      cons: [
+        'It delays graduation and entering a career',
+        'Some students lose academic habits and never return',
+        'Families who need income cannot afford an unpaid year'
+      ],
+      questions: [
+        {
+          text: 'Do you agree that young people should work or volunteer for a year before starting university? Give reasons for your opinion.',
+          prepTime: 60,
+          answerTime: 120
+        }
       ]
     }
   ]
@@ -259,15 +190,20 @@ async function seed() {
   let updated = 0;
 
   for (const spec of TESTS) {
-    const tasks = spec.tasks.map((task, index) => ({ taskNumber: index + 1, ...task }));
-
     const existing = await Exam.findOne({ title: spec.title });
     const target = existing || new Exam({ createdBy: author._id });
 
     target.title = spec.title;
     target.module = spec.module;
     target.description = spec.description;
-    target.tasks = tasks;
+
+    if (spec.sections) {
+      target.sections = spec.sections;
+      target.tasks = [];
+    } else {
+      target.tasks = spec.tasks.map((task, index) => ({ taskNumber: index + 1, ...task }));
+      target.sections = [];
+    }
     target.isActive = true;
     target.isPublished = true;
     target.publishedAt = target.publishedAt || new Date();
@@ -280,9 +216,17 @@ async function seed() {
     existing ? updated++ : created++;
 
     const minutes = Math.round(target.duration / 60);
-    console.log(`  ${existing ? 'updated' : 'created'}  ${spec.title}  (${tasks.length} questions, ~${minutes} min)`);
-    for (const task of tasks) {
-      console.log(`      Part ${task.part}  ${task.question.split('\n')[0].slice(0, 58)}…`);
+    const count = target.totalTasks;
+    console.log(`  ${existing ? 'updated' : 'created'}  ${spec.title}  (${count} questions, ~${minutes} min)`);
+
+    for (const section of spec.sections || []) {
+      console.log(`      Part ${section.part} — ${section.questions.length} question(s)`);
+      for (const q of section.questions) {
+        console.log(`          ${q.prepTime}s/${q.answerTime}s  ${q.text.slice(0, 52)}…`);
+      }
+    }
+    for (const task of target.tasks) {
+      console.log(`      ${task.part}  ${task.question.split('\n')[0].slice(0, 52)}…`);
     }
   }
 

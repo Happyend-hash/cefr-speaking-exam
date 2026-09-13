@@ -1,12 +1,27 @@
 import express from 'express';
+import multer from 'multer';
 import mongoose from 'mongoose';
 import Exam from '../models/Exam.js';
 import ExamResult from '../models/ExamResult.js';
 import User from '../models/User.js';
+import ImageStorageService, {
+  ALLOWED_IMAGE_TYPES,
+  MAX_IMAGE_BYTES
+} from '../services/ImageStorageService.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
 const router = express.Router();
+
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_IMAGE_BYTES },
+  fileFilter: (req, file, cb) => {
+    const type = (file.mimetype || '').split(';')[0].trim();
+    if (ALLOWED_IMAGE_TYPES.includes(type)) return cb(null, true);
+    cb(new APIError(`Unsupported image format: ${type}. Use JPEG, PNG, WebP or GIF.`, 400));
+  }
+});
 
 // Every route below is admin-only. The parent router already authenticates.
 router.use(authorize('admin'));
@@ -75,6 +90,23 @@ router.get('/tests', async (req, res, next) => {
         isPublished: exam.isPublished,
         isActive: exam.isActive,
         duration: exam.duration,
+        sections: (exam.sections || []).map((s, index) => ({
+          index,
+          part: s.part,
+          title: s.title,
+          instructions: s.instructions,
+          images: s.images || [],
+          topic: s.topic,
+          pros: s.pros || [],
+          cons: s.cons || [],
+          questions: (s.questions || []).map((q, qIndex) => ({
+            index: qIndex,
+            text: q.text,
+            prepTime: q.prepTime,
+            answerTime: q.answerTime
+          }))
+        })),
+        totalQuestions: (exam.sections || []).reduce((n, s) => n + (s.questions?.length || 0), 0),
         totalTasks: exam.tasks.length,
         tasks: exam.tasks.map(t => ({
           taskNumber: t.taskNumber,
@@ -258,6 +290,227 @@ router.delete('/tests/:id/tasks/:taskNumber', async (req, res, next) => {
       message: 'Question removed',
       data: { totalTasks: exam.tasks.length }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================================================
+// SECTIONS — the Multilevel speaking structure
+// ===========================================================================
+
+const SECTION_FIELDS = ['part', 'title', 'instructions', 'images', 'topic', 'pros', 'cons'];
+
+function pickSectionFields(body) {
+  const section = {};
+  for (const field of SECTION_FIELDS) {
+    if (body[field] !== undefined) section[field] = body[field];
+  }
+  return section;
+}
+
+/** Default timings per part, so a new question starts with the real exam's values. */
+const PART_DEFAULTS = {
+  '1.1': { prepTime: 5, answerTime: 30 },
+  '1.2': { prepTime: 5, answerTime: 30 },
+  '2': { prepTime: 60, answerTime: 120 },
+  '3': { prepTime: 60, answerTime: 120 }
+};
+
+/**
+ * @route   POST /api/admin/tests/:id/sections
+ * @desc    Add a section (a part with its shared stimulus)
+ */
+router.post('/tests/:id/sections', async (req, res, next) => {
+  try {
+    const exam = await loadExam(req.params.id);
+    const section = pickSectionFields(req.body);
+
+    if (!section.part) throw new APIError('A part label is required (1.1, 1.2, 2 or 3)', 400);
+
+    exam.sections.push({ ...section, questions: [] });
+    exam.calculateDuration();
+    exam.updatedBy = req.user.id;
+    await exam.save();
+
+    res.status(201).json({
+      success: true,
+      message: `Part ${section.part} added`,
+      data: { sectionIndex: exam.sections.length - 1 }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PATCH /api/admin/tests/:id/sections/:index
+ * @desc    Edit a section's stimulus — images, topic, pros and cons
+ */
+router.patch('/tests/:id/sections/:index', async (req, res, next) => {
+  try {
+    const exam = await loadExam(req.params.id);
+    const section = exam.sections[Number(req.params.index)];
+    if (!section) throw new APIError('Section not found', 404);
+
+    Object.assign(section, pickSectionFields(req.body));
+    exam.calculateDuration();
+    exam.updatedBy = req.user.id;
+    await exam.save();
+
+    res.json({ success: true, message: 'Part updated' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/admin/tests/:id/sections/:index
+ * @desc    Remove a section and all of its questions
+ */
+router.delete('/tests/:id/sections/:index', async (req, res, next) => {
+  try {
+    const exam = await loadExam(req.params.id);
+    const index = Number(req.params.index);
+    if (!exam.sections[index]) throw new APIError('Section not found', 404);
+
+    exam.sections.splice(index, 1);
+    exam.calculateDuration();
+    exam.updatedBy = req.user.id;
+    await exam.save();
+
+    res.json({ success: true, message: 'Part removed' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/tests/:id/sections/:index/questions
+ * @desc    Add a question to a section
+ */
+router.post('/tests/:id/sections/:index/questions', async (req, res, next) => {
+  try {
+    const exam = await loadExam(req.params.id);
+    const section = exam.sections[Number(req.params.index)];
+    if (!section) throw new APIError('Section not found', 404);
+
+    const { text } = req.body;
+    if (!text || !String(text).trim()) throw new APIError('Question text is required', 400);
+
+    const defaults = PART_DEFAULTS[section.part] || { prepTime: 5, answerTime: 30 };
+
+    section.questions.push({
+      text: String(text).trim(),
+      prepTime: Number(req.body.prepTime) || defaults.prepTime,
+      answerTime: Number(req.body.answerTime) || defaults.answerTime
+    });
+
+    exam.calculateDuration();
+    exam.updatedBy = req.user.id;
+    await exam.save();
+
+    res.status(201).json({ success: true, message: 'Question added' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PATCH /api/admin/tests/:id/sections/:index/questions/:qIndex
+ */
+router.patch('/tests/:id/sections/:index/questions/:qIndex', async (req, res, next) => {
+  try {
+    const exam = await loadExam(req.params.id);
+    const section = exam.sections[Number(req.params.index)];
+    if (!section) throw new APIError('Section not found', 404);
+
+    const question = section.questions[Number(req.params.qIndex)];
+    if (!question) throw new APIError('Question not found', 404);
+
+    if (req.body.text !== undefined) {
+      if (!String(req.body.text).trim()) throw new APIError('Question text cannot be empty', 400);
+      question.text = String(req.body.text).trim();
+    }
+    if (req.body.prepTime !== undefined) question.prepTime = Number(req.body.prepTime);
+    if (req.body.answerTime !== undefined) question.answerTime = Number(req.body.answerTime);
+
+    exam.calculateDuration();
+    exam.updatedBy = req.user.id;
+    await exam.save();
+
+    res.json({ success: true, message: 'Question updated' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/admin/tests/:id/sections/:index/questions/:qIndex
+ */
+router.delete('/tests/:id/sections/:index/questions/:qIndex', async (req, res, next) => {
+  try {
+    const exam = await loadExam(req.params.id);
+    const section = exam.sections[Number(req.params.index)];
+    if (!section) throw new APIError('Section not found', 404);
+
+    const qIndex = Number(req.params.qIndex);
+    if (!section.questions[qIndex]) throw new APIError('Question not found', 404);
+
+    section.questions.splice(qIndex, 1);
+    exam.calculateDuration();
+    exam.updatedBy = req.user.id;
+    await exam.save();
+
+    res.json({ success: true, message: 'Question removed' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================================================
+// IMAGES
+// ===========================================================================
+
+/**
+ * @route   POST /api/admin/images
+ * @desc    Upload an exam image. Returns the URL to put on a section.
+ */
+router.post('/images', imageUpload.single('image'), async (req, res, next) => {
+  try {
+    if (!req.file?.buffer?.length) throw new APIError('No image was uploaded', 400);
+
+    const stored = await ImageStorageService.store(req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: (req.file.mimetype || '').split(';')[0].trim(),
+      uploadedBy: req.user.id
+    });
+
+    res.status(201).json({ success: true, message: 'Image uploaded', data: stored });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/admin/images
+ * @desc    Previously uploaded images, newest first
+ */
+router.get('/images', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await ImageStorageService.list(100) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/admin/images/:key
+ */
+router.delete('/images/:key', async (req, res, next) => {
+  try {
+    await ImageStorageService.delete(req.params.key);
+    res.json({ success: true, message: 'Image deleted' });
   } catch (error) {
     next(error);
   }

@@ -60,3 +60,10 @@
 .hint { font-size: 12px; color: var(--ink-faint); margin-top: 4px; }
 
 .danger-text { color: var(--red); font-weight: 600; }
+
+.thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.thumbs img {
+  width: 108px; height: 81px; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--ground);
+}
+.q-form input[type=file] { padding: 8px; border-style: dashed; background: var(--ground); }
