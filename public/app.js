@@ -304,6 +304,21 @@
         form
       });
       state.answered[q.taskNumber] = { transcription: data.transcription, hasAudio: data.hasAudio };
+
+      // Checking whether the browser HAS speech recognition is not enough: the
+      // in-app browsers inside messaging apps often expose the API and then
+      // quietly capture nothing. A student was let through a whole test that
+      // way. So judge it on the actual result — the moment a saved answer comes
+      // back with no words, say so, while there is still a test left to save.
+      if (!String(data.transcription || '').trim()) {
+        state.emptyTranscripts = (state.emptyTranscripts || 0) + 1;
+        if (!state.serverTranscription) {
+          state.error =
+            `Question ${q.taskNumber} recorded no words. Nothing you say is being turned into ` +
+            `text, so these answers cannot be marked. Stop now and open ` +
+            `${location.host} directly in Chrome — not inside a messaging app.`;
+        }
+      }
     } catch (error) {
       // A failed save used to scroll past unnoticed, so a student could record
       // a whole test and only find out at submit that nothing had been kept.
@@ -317,6 +332,22 @@
   }
 
   function advanceQuestion() {
+    // Two answers in a row that captured no words, with no server transcription
+    // to fall back on, means this browser will not produce text for any of them.
+    // A mock runs to the end without pausing, so without this the student would
+    // record the remaining questions into nothing and find out at the end. Stop
+    // and say why while the sitting can still be redone properly.
+    if ((state.emptyTranscripts || 0) >= 2 && !state.serverTranscription) {
+      clearPhaseTimer();
+      run.phase = 'finished';
+      state.error =
+        'Stopped: none of your answers are being turned into text, so this test cannot be ' +
+        `marked. Your recordings are saved. Open ${location.host} directly in Chrome ` +
+        '— not inside Telegram or another app — and take the test again.';
+      render();
+      return;
+    }
+
     const isLast = state.qIndex >= state.questions.length - 1;
 
     if (isLast) {
