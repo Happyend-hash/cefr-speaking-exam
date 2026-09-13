@@ -11,7 +11,7 @@ import AudioStorageService, {
   MAX_AUDIO_BYTES
 } from '../services/AudioStorageService.js';
 import ImageStorageService from '../services/ImageStorageService.js';
-import MarkingQueue from '../services/MarkingQueue.js';
+import AICallLimiter from '../services/MarkingQueue.js';
 import { APIError } from '../middleware/errorHandler.js';
 
 const router = express.Router();
@@ -626,10 +626,10 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
     result.status = 'evaluating';
     await result.save();
 
-    // Queued rather than awaited: a fixed number of attempts are marked at a
-    // time, so a class finishing together forms an orderly queue instead of a
-    // burst of API calls that comes back as 429s and blank marks.
-    MarkingQueue.run(() => markAttempt(result._id)).catch(async error => {
+    // Started, not awaited: marking takes far longer than an HTTP request
+    // should. The per-call limiter inside markAttempt is what paces the load,
+    // so attempts themselves need not queue behind one another.
+    markAttempt(result._id).catch(async error => {
       console.error(`Marking crashed for ${result._id}:`, error.message);
       await ExamResult.findByIdAndUpdate(result._id, { status: 'submitted' }).catch(() => {});
     });
@@ -640,7 +640,7 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
       data: {
         resultId: result._id,
         status: 'evaluating',
-        queue: MarkingQueue.stats
+        queue: AICallLimiter.stats
       }
     });
   } catch (error) {
@@ -681,6 +681,7 @@ async function markAttempt(resultId) {
   const questionByNumber = new Map(flat.map(q => [q.taskNumber, q]));
 
   const untranscribed = [];
+  const jobs = [];
 
   for (const taskResult of result.taskResults) {
     const task = exam.tasks.find(t => t.taskNumber === taskResult.taskNumber);
@@ -692,7 +693,7 @@ async function markAttempt(resultId) {
     // browsers inside messaging apps, which have no speech recognition).
     // Scoring it 0 hands back a false A1 for an answer nobody ever read, so
     // set it aside instead: unscored, excluded from the overall mark, and
-    // reported honestly.
+    // reported honestly. Costs no AI call, so it is settled here and now.
     const hasWords = String(taskResult.transcription || '').trim().length > 0;
     if (!hasWords && taskResult.audioKey) {
       taskResult.status = 'not_transcribed';
@@ -701,38 +702,59 @@ async function markAttempt(resultId) {
       continue;
     }
 
-    try {
-      const evaluation = await AIEvaluationService.evaluateTask({
-        transcription: taskResult.transcription,
-        taskType: taskResult.type,
-        question: task ? task.question : question.text,
-        cefrLevel: exam.level,
-        referenceImages: task ? task.images : question.images,
-        followUpQuestions: task?.followUpQuestions,
-        minWords: task?.minWords,
-        // Context the examiner would have in front of them: which part this
-        // is, and the stimulus the student was answering about.
-        part: question?.part,
-        instructions: question?.instructions,
-        topic: question?.topic,
-        pros: question?.pros,
-        cons: question?.cons
-      });
+    jobs.push(async () => {
+      try {
+        const evaluation = await AIEvaluationService.evaluateTask({
+          transcription: taskResult.transcription,
+          taskType: taskResult.type,
+          question: task ? task.question : question.text,
+          cefrLevel: exam.level,
+          referenceImages: task ? task.images : question.images,
+          followUpQuestions: task?.followUpQuestions,
+          minWords: task?.minWords,
+          // Context the examiner would have in front of them: which part this
+          // is, and the stimulus the student was answering about.
+          part: question?.part,
+          instructions: question?.instructions,
+          topic: question?.topic,
+          pros: question?.pros,
+          cons: question?.cons
+        });
 
-      taskResult.aiEvaluation = {
-        ...evaluation,
-        aiModel: process.env.CLAUDE_MODEL || 'claude-opus-5-20250805',
-        evaluatedAt: new Date()
-      };
-      taskResult.finalScore = evaluation.score;
-      taskResult.status = 'evaluated';
-    } catch (error) {
-      // One failed task must not discard the whole attempt — recordings and
-      // transcripts are kept so it can be re-evaluated later.
-      console.error(`Evaluation failed for task ${taskResult.taskNumber}:`, error.message);
-      failures.push({ taskNumber: taskResult.taskNumber, error: error.message });
-      taskResult.status = 'pending';
-    }
+        taskResult.aiEvaluation = {
+          ...evaluation,
+          aiModel: process.env.CLAUDE_MODEL || 'claude-opus-5-20250805',
+          evaluatedAt: new Date()
+        };
+        taskResult.finalScore = evaluation.score;
+        taskResult.status = 'evaluated';
+      } catch (error) {
+        // One failed answer must not discard the whole attempt — recordings and
+        // transcripts are kept so it can be marked again later.
+        console.error(`Evaluation failed for task ${taskResult.taskNumber}:`, error.message);
+        failures.push({ taskNumber: taskResult.taskNumber, error: error.message });
+        taskResult.status = 'pending';
+      }
+    });
+  }
+
+  // The answers of one attempt are independent — nothing in answer 5 depends on
+  // answer 4 — so they are marked together rather than one after another. Run
+  // sequentially, eight answers at ~19s each took ~150s; in parallel an attempt
+  // takes about as long as its slowest single answer.
+  //
+  // Each call still passes through the shared limiter, which caps how many are
+  // in flight across the WHOLE server. That cap is what keeps the parallelism
+  // from turning into a burst of rate-limit errors when several attempts are
+  // being marked at once.
+  const startedAt = Date.now();
+  await Promise.all(jobs.map(job => AICallLimiter.run(job)));
+
+  if (jobs.length) {
+    console.log(
+      `Marked ${jobs.length} answer(s) for ${result._id} in ` +
+      `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+    );
   }
 
   const evaluatedCount = result.taskResults.filter(t => t.status === 'evaluated').length;
