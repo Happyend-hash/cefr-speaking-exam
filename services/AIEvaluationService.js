@@ -9,7 +9,10 @@ class AIEvaluationService {
     this.apiKey = process.env.CLAUDE_API_KEY;
     this.model = process.env.CLAUDE_MODEL || 'claude-opus-5-20250805';
     this.apiUrl = 'https://api.anthropic.com/v1/messages';
-    this.maxTokens = parseInt(process.env.CLAUDE_MAX_TOKENS) || 2000;
+    // Headroom matters here: if the model thinks before answering, that
+    // reasoning is billed against the same budget, and a budget spent before
+    // the JSON is written comes back as a truncated reply with nothing to parse.
+    this.maxTokens = parseInt(process.env.CLAUDE_MAX_TOKENS) || 4000;
   }
 
   /**
@@ -261,8 +264,32 @@ Be fair but rigorous in assessment. Consider accuracy, fluency, coherence, and a
         }
       });
 
-      return response.data.content[0].text;
+      // Never assume content[0] is the answer. A response can lead with a
+      // non-text block — a thinking block, for instance — and then
+      // content[0].text is undefined, which surfaced as a useless "cannot read
+      // properties of undefined (reading 'match')" in the parser below.
+      // Join every text block instead, and if there are none, say what came back.
+      const blocks = Array.isArray(response.data?.content) ? response.data.content : [];
+      const text = blocks
+        .filter(b => b?.type === 'text' && typeof b.text === 'string')
+        .map(b => b.text)
+        .join('\n')
+        .trim();
+
+      if (!text) {
+        const kinds = blocks.map(b => b?.type || 'unknown').join(', ') || 'none';
+        const stop = response.data?.stop_reason;
+        throw new Error(
+          `the API returned no text to read (blocks: ${kinds}; stop_reason: ${stop || 'unknown'})` +
+            (stop === 'max_tokens' ? ' — the answer was cut off; raise CLAUDE_MAX_TOKENS' : '')
+        );
+      }
+
+      return text;
     } catch (error) {
+      // A thrown Error here is ours, not axios's — pass it through unchanged
+      // rather than relabelling it as an HTTP failure.
+      if (!error.response && !error.request) throw error;
       // Axios reduces an API rejection to "Request failed with status code 400",
       // which hides the one thing that matters: which field was wrong. Surface
       // the API's own explanation, and name the likely cause per status code.
@@ -287,17 +314,30 @@ Be fair but rigorous in assessment. Consider accuracy, fluency, coherence, and a
    */
   parseEvaluation(responseText) {
     try {
-      // Extract JSON from the response
+      if (typeof responseText !== 'string' || !responseText.trim()) {
+        throw new Error('the model returned no text to parse');
+      }
+
+      // Extract JSON from the response. Models often wrap it in prose or a
+      // ```json fence, so take the outermost braces rather than the whole string.
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        throw new Error('No JSON found in response');
+        throw new Error(`no JSON object in the reply (starts: "${responseText.slice(0, 120)}…")`);
       }
 
       const evaluation = JSON.parse(jsonMatch[0]);
 
-      // Validate structure
-      if (!evaluation.score || !evaluation.criteria || !evaluation.overallFeedback) {
-        throw new Error('Invalid evaluation structure');
+      // Validate structure. Note `!evaluation.score` would reject a legitimate
+      // score of 0 — which is exactly what a silent or off-topic answer earns —
+      // so test for the field being present, not truthy.
+      const missing = ['score', 'criteria', 'overallFeedback'].filter(
+        key => evaluation[key] === undefined || evaluation[key] === null
+      );
+      if (missing.length) {
+        throw new Error(`the reply is missing ${missing.join(', ')}`);
+      }
+      if (typeof evaluation.score !== 'number' || Number.isNaN(evaluation.score)) {
+        throw new Error(`score came back as ${JSON.stringify(evaluation.score)}, not a number`);
       }
 
       return evaluation;
