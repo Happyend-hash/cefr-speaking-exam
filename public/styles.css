@@ -52,6 +52,20 @@ a { color: var(--indigo-600); }
   border-bottom: 1px solid var(--line);
 }
 .brand { font-size: 19px; font-weight: 800; color: var(--indigo-600); letter-spacing: -0.02em; }
+
+/* The brand doubles as the way home, so it is a real button when navigation is
+   allowed — keyboard reachable, with a visible focus ring — and a plain label
+   while a question is running. */
+.brand-btn {
+  appearance: none; background: none; border: 0; padding: 0;
+  font-family: inherit; line-height: inherit;
+  cursor: pointer; border-radius: 6px;
+}
+.brand-btn:hover { color: var(--indigo-700); }
+.brand-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--indigo-100);
+}
 .nav-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .nav-user { color: var(--ink-soft); font-size: 14px; }
 

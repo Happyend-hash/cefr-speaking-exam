@@ -578,23 +578,44 @@
     wire();
   }
 
+  /**
+   * May the student navigate away right now?
+   *
+   * Only a question that is actually running is protected — thinking time,
+   * speaking time, and the save that follows. Once the attempt has finished,
+   * errored, or is waiting to start, there is nothing left to protect and
+   * leaving must be possible. Blocking on the whole exam screen instead used to
+   * strand a student with no way back whenever an attempt ended badly.
+   */
+  function canLeave() {
+    if (state.screen !== 'exam') return true;
+    return !['prep', 'answer', 'saving'].includes(run.phase);
+  }
+
+  function brandMarkup() {
+    // A real button, so it is reachable by keyboard and announced as a control.
+    return canLeave() && state.user
+      ? `<button class="brand brand-btn" data-go="dashboard" title="Back to dashboard">CEFR Speaking</button>`
+      : `<div class="brand">CEFR Speaking</div>`;
+  }
+
   function navMarkup() {
     if (!state.user) {
       return `<nav class="nav">
-        <div class="brand">CEFR Speaking</div>
+        ${brandMarkup()}
         <div class="nav-right">
           <button class="btn btn-ghost btn-sm" data-go="login">Sign in</button>
         </div>
       </nav>`;
     }
     return `<nav class="nav">
-      <div class="brand" ${state.screen !== 'exam' ? 'data-go="dashboard" style="cursor:pointer"' : ''}>CEFR Speaking</div>
+      ${brandMarkup()}
       <div class="nav-right">
         <span class="nav-user">${esc(state.user.firstName || state.user.email)}</span>
-        ${state.user.role === 'admin' && state.screen !== 'exam'
+        ${state.user.role === 'admin' && canLeave()
           ? '<a class="btn btn-ghost btn-sm" href="/admin.html">Manage questions</a>'
           : ''}
-        ${state.screen !== 'exam' ? '<button class="btn btn-ghost btn-sm" data-go="dashboard">Dashboard</button>' : ''}
+        ${canLeave() ? '<button class="btn btn-ghost btn-sm" data-go="dashboard">Dashboard</button>' : ''}
         <button class="btn btn-ghost btn-sm" data-action="signout">Sign out</button>
       </div>
     </nav>`;
