@@ -12,6 +12,7 @@ import AudioStorageService, {
   MAX_AUDIO_BYTES
 } from '../services/AudioStorageService.js';
 import ImageStorageService from '../services/ImageStorageService.js';
+import User from '../models/User.js';
 import PronunciationService from '../services/PronunciationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
 import AICallLimiter from '../services/MarkingQueue.js';
@@ -126,6 +127,14 @@ router.get('/results', async (req, res, next) => {
 router.delete('/results/:resultId', async (req, res, next) => {
   try {
     const result = await loadOwnedResult(req, req.params.resultId);
+
+    // An attempt that was started and never spoken into cost nothing to run, so
+    // it should not have cost a mock either. Deleting it hands the credit back.
+    // Only the untouched ones: once there is a single answer, the transcription
+    // has been paid for and the attempt was used.
+    const refundable =
+      result.status === 'in_progress' && (result.taskResults || []).length === 0;
+
     const outcome = await removeResult(result);
 
     if (!outcome.ok) {
@@ -135,10 +144,21 @@ router.delete('/results/:resultId', async (req, res, next) => {
       );
     }
 
+    if (refundable) {
+      await User.updateOne(
+        { _id: result.student },
+        { $inc: { 'subscription.examsRemaining': 1, 'stats.totalExamsTaken': -1 } }
+      );
+    }
+
     res.json({
       success: true,
       message: 'Attempt deleted',
-      data: { id: String(result._id), recordingsDeleted: outcome.recordingsDeleted }
+      data: {
+        id: String(result._id),
+        recordingsDeleted: outcome.recordingsDeleted,
+        refunded: refundable
+      }
     });
   } catch (error) {
     next(error);
@@ -396,10 +416,30 @@ router.get('/:id', async (req, res, next) => {
  * @desc    Begin an attempt. Reuses an existing in-progress attempt rather than
  *          creating duplicates when a student reloads mid-exam.
  * @access  Private
+ *
+ * This is the only door into the paid work. Everything an attempt costs —
+ * transcription on every upload, marking and pronunciation on submit — follows
+ * from getting through here, so the access check lives here rather than at
+ * submit, where the money would already have been spent.
+ *
+ * A credit is spent when an attempt is CREATED, not when it is resumed. A
+ * student who reloads, loses their connection or comes back to finish is not
+ * charged twice for the same attempt.
  */
 router.post('/:id/start', async (req, res, next) => {
   try {
     if (!isValidId(req.params.id)) throw new APIError('Invalid exam id', 400);
+
+    const student = await User.findById(req.user.id);
+    if (!student) throw new APIError('User not found', 404);
+
+    // One decision, read once, used by both branches below.
+    const gate = student.examAccess();
+
+    // A block stops even a resume: it is a decision about the person, and
+    // letting a blocked student carry on with an attempt they already opened
+    // would keep the transcription bill running.
+    if (gate.code === 'blocked') throw new APIError(gate.message, 403, 'blocked');
 
     const exam = await Exam.findById(req.params.id);
     if (!exam || !exam.isPublished || !exam.isActive) {
@@ -434,6 +474,7 @@ router.post('/:id/start', async (req, res, next) => {
         data: {
           resultId: existing._id,
           resumed: true,
+          remaining: gate.code === 'staff' ? null : student.subscription.examsRemaining,
           serverTranscription: TranscriptionService.isServerTranscriptionAvailable(),
           mode: existing.mode,
           part: existing.part || null,
@@ -441,6 +482,9 @@ router.post('/:id/start', async (req, res, next) => {
         }
       });
     }
+
+    // Past this point a new attempt is being created, so it has to be paid for.
+    if (!gate.allowed) throw new APIError(gate.message, 402, gate.code);
 
     const result = await ExamResult.create({
       student: req.user.id,
@@ -457,6 +501,13 @@ router.post('/:id/start', async (req, res, next) => {
       userAgent: req.get('user-agent')
     });
 
+    // Charged only after the attempt exists. Charging first would take a mock
+    // off a student whose attempt then failed to save. Staff run free — the
+    // teacher checking a test is not a customer.
+    if (gate.code !== 'staff') student.useExamCredit();
+    student.stats.totalExamsTaken = (student.stats.totalExamsTaken || 0) + 1;
+    await student.save();
+
     res.status(201).json({
       success: true,
       message: mode === 'mock' ? 'Mock exam started' : `Practice started`,
@@ -468,6 +519,7 @@ router.post('/:id/start', async (req, res, next) => {
         serverTranscription: TranscriptionService.isServerTranscriptionAvailable(),
         resultId: result._id,
         resumed: false,
+        remaining: gate.code === 'staff' ? null : student.subscription.examsRemaining,
         mode,
         part,
         questions: flattenExam(exam.toObject(), part)

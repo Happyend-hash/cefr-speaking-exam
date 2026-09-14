@@ -39,6 +39,10 @@
     overview: null,
     openTestId: null,
     remark: null,
+    students: null,          // { students, total, shown, contact } once loaded
+    studentsOpen: false,
+    studentSearch: '',
+    studentOnly: '',         // '', 'blocked' or 'out'
     calibration: null,       // { coverage, samples } once loaded
     calibrationOpen: false,
     addingSample: false,
@@ -163,6 +167,8 @@
           <div class="card stat"><div class="stat-label">Attempts</div><div class="stat-value">${o.attempts}</div></div>
         </div>` : ''}
 
+        ${studentsCard()}
+
         <div class="row" style="justify-content:space-between;margin-top:8px">
           <h2>Tests</h2>
           <button class="btn btn-sm" data-action="new-test">+ New test</button>
@@ -180,6 +186,130 @@
         ${rescueCard()}
         ${purgeCard()}
       </main>`;
+  }
+
+  /**
+   * Students and their access.
+   *
+   * Every attempt spends the teacher's own money, so this table answers two
+   * questions and nothing else: who is spending it, and does this person still
+   * have permission to. Payment happens outside the app — the teacher decides
+   * someone has paid and adds mocks here, which is the only part software can
+   * honestly know.
+   *
+   * Blocking and the mock balance are shown as separate things because they are
+   * separate: blocking is about the person and survives any balance; the balance
+   * runs down on its own. A blocked student keeps the mocks they paid for.
+   */
+  function studentsCard() {
+    if (!state.studentsOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Students</h2>
+        <p class="muted" style="margin-top:6px">
+          Who can take mocks, how many they have left, and who is stopped.
+          Every attempt costs you money, so this is where you decide who spends it.
+        </p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="students-open">
+          Open students
+        </button>
+      </div>`;
+    }
+
+    const data = state.students;
+    const rows = (data?.students || []).map(studentRow).join('');
+
+    const filters = [
+      ['', 'Everyone'],
+      ['out', 'Out of mocks'],
+      ['blocked', 'Blocked']
+    ].map(([value, label]) => `
+      <button class="btn btn-sm ${state.studentOnly === value ? '' : 'btn-ghost'}"
+              data-student-filter="${value}">${label}</button>`).join('');
+
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Students</h2>
+        <button class="btn btn-ghost btn-sm" data-action="students-close">Close</button>
+      </div>
+
+      <p class="muted" style="margin-top:6px">
+        A new account gets one free mock. After that you add mocks here when someone pays.
+        ${data?.contact
+          ? `Students are told to contact <strong>${esc(data.contact)}</strong>.`
+          : `<strong>Students are not shown anywhere to pay yet.</strong> Set
+             <code>TELEGRAM_CONTACT</code> in Railway to your Telegram username (for
+             example <code>@username</code>) and they will see it on the top-up page.`}
+      </p>
+
+      <div class="row" style="gap:10px;margin-top:14px;flex-wrap:wrap">
+        <input id="student-search" type="search" placeholder="Search name or email"
+               value="${esc(state.studentSearch)}" style="flex:1;min-width:200px" />
+        ${filters}
+        <button class="btn btn-ghost btn-sm" data-action="students-reload" ${state.loading ? 'disabled' : ''}>
+          ${state.loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      <div style="margin-top:16px">
+        ${rows || '<p class="muted">No students match.</p>'}
+      </div>
+
+      ${data ? `<p class="muted" style="margin-top:12px;font-size:13px">
+        Showing ${data.shown} of ${data.total}.
+      </p>` : ''}
+
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line)">
+        <strong style="font-size:14px">Stop everyone at once</strong>
+        <p class="muted" style="margin-top:4px;font-size:13px">
+          For the day the link spreads further than you meant. It blocks every student
+          account — not you, and not other teachers — and nobody loses the mocks they have.
+          You then let people back in one at a time.
+          <br><br>
+          Worth knowing once: accounts that existed before access control was added still
+          carry the old free allowance of 2 mocks, because nothing was ever counting.
+          Blocking everyone is what stops those being spent; from then on a new account
+          gets one free mock and the rest comes from you.
+        </p>
+        <div class="row" style="gap:10px;margin-top:10px">
+          <button class="btn btn-sm" data-action="block-all" ${state.loading ? 'disabled' : ''}>Block every student</button>
+          <button class="btn btn-ghost btn-sm" data-action="unblock-all" ${state.loading ? 'disabled' : ''}>Unblock everyone</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function studentRow(s) {
+    const tags =
+      (s.blocked ? '<span class="tag tag-draft">blocked</span>' : '') +
+      (s.role !== 'student' ? `<span class="tag">${esc(s.role)}</span>` : '') +
+      (s.pendingMessage ? '<span class="tag tag-live">notice waiting</span>' : '');
+
+    const last = s.lastAttemptAt
+      ? new Date(s.lastAttemptAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+      : '—';
+
+    return `<div style="padding:12px 0;border-bottom:1px solid var(--line)">
+      <div class="row" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div style="min-width:220px">
+          <strong>${esc(s.name || s.email)}</strong> ${tags}
+          <div class="muted" style="font-size:13px">${esc(s.email)}</div>
+        </div>
+        <div class="muted" style="font-size:13px">
+          ${s.attempts} attempt${s.attempts === 1 ? '' : 's'} · last ${last}
+        </div>
+        <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
+          <span style="font-weight:600;${s.remaining > 0 ? '' : 'color:var(--red)'}">
+            ${s.remaining} left
+          </span>
+          <input id="amt-${esc(s.id)}" type="number" min="0" max="100" value="5"
+                 style="width:64px" aria-label="Number of mocks" />
+          <button class="btn btn-sm" data-access="grant" data-id="${esc(s.id)}">Add</button>
+          <button class="btn btn-ghost btn-sm" data-access="set" data-id="${esc(s.id)}">Set to</button>
+          <button class="btn btn-ghost btn-sm" data-access="${s.blocked ? 'unblock' : 'block'}"
+                  data-id="${esc(s.id)}">${s.blocked ? 'Unblock' : 'Block'}</button>
+        </div>
+      </div>
+    </div>`;
   }
 
   /**
@@ -920,6 +1050,25 @@
 
     root.querySelectorAll('[data-upload-images]').forEach(el =>
       el.addEventListener('change', event => uploadImages(event.target)));
+
+    // ---- students ----
+    root.querySelectorAll('[data-access]').forEach(el =>
+      el.addEventListener('click', () => changeAccess(el.dataset.id, el.dataset.access)));
+
+    root.querySelectorAll('[data-student-filter]').forEach(el =>
+      el.addEventListener('click', () => loadStudents({ only: el.dataset.studentFilter })));
+
+    const search = document.getElementById('student-search');
+    if (search) {
+      // Searching re-renders the whole card, so the box would lose focus and the
+      // caret on every keystroke if it queried as you type. It searches on Enter.
+      search.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          loadStudents({ search: search.value });
+        }
+      });
+    }
   }
 
   function handleAction(action) {
@@ -941,6 +1090,88 @@
     if (action === 'calibration-check') return runCalibrationCheck();
     if (action === 'sample-add') return setState({ addingSample: true, error: '' });
     if (action === 'sample-cancel') return setState({ addingSample: false });
+    if (action === 'students-open') return loadStudents({ open: true });
+    if (action === 'students-close') return setState({ studentsOpen: false });
+    if (action === 'students-reload') return loadStudents({});
+    if (action === 'block-all') return changeAccessForAll('block');
+    if (action === 'unblock-all') return changeAccessForAll('unblock');
+  }
+
+  // ------------------------------------------------------------- students
+
+  async function loadStudents({ open, search, only } = {}) {
+    const nextSearch = search === undefined ? state.studentSearch : search;
+    const nextOnly = only === undefined ? state.studentOnly : only;
+
+    setState({
+      studentsOpen: open || state.studentsOpen,
+      studentSearch: nextSearch,
+      studentOnly: nextOnly,
+      loading: true,
+      error: ''
+    });
+
+    try {
+      const query = new URLSearchParams();
+      if (nextSearch) query.set('search', nextSearch);
+      if (nextOnly) query.set('only', nextOnly);
+      // The "?" is always written, even with nothing after it. An empty query
+      // string is harmless, and it keeps the path readable as a path — both to
+      // a person and to scripts/check-api.js, which otherwise reads an appended
+      // variable as part of the route and reports a route that exists as missing.
+      const data = await api(`/admin/students?${query}`);
+      setState({ students: data, loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  async function changeAccess(id, action) {
+    const input = document.getElementById(`amt-${id}`);
+    const amount = Number(input?.value ?? 0);
+
+    if ((action === 'grant' || action === 'set') && !Number.isInteger(amount)) {
+      return setState({ error: 'Give a whole number of mocks.' });
+    }
+
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const data = await api(`/admin/students/${id}/access`, {
+        method: 'POST',
+        body: { action, amount }
+      });
+
+      // Reloads rather than patching the row in place: the attempt counts and
+      // the "notice waiting" tag come from the server, and a half-updated table
+      // is worse than a second of loading.
+      await loadStudents({});
+      setState({
+        notice: action === 'grant'
+          ? `${data.email} now has ${data.remaining} mock(s). They will see the confirmation on their dashboard.`
+          : `${data.email}: ${data.blocked ? 'blocked' : 'allowed'}, ${data.remaining} mock(s) left.`
+      });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  async function changeAccessForAll(action) {
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      // The count comes from the server rather than from this page, and the
+      // server refuses the change if the number has moved since. A tab left open
+      // overnight cannot act on a class it was never shown.
+      const fresh = await api('/admin/students');
+      const data = await api('/admin/students/access-all', {
+        method: 'POST',
+        body: { action, confirm: fresh.studentCount }
+      });
+
+      await loadStudents({});
+      setState({ notice: `${data.changed} student(s) ${action === 'block' ? 'blocked' : 'unblocked'}.` });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
   }
 
   async function openCalibration() {

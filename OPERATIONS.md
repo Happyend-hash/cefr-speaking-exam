@@ -152,12 +152,49 @@ See `.env.example` for the annotated list. The short version:
 | `CLAUDE_API_KEY` | Everything works except grading, which fails at submission |
 | `OPENAI_API_KEY` | Transcription falls back to Chrome/Edge only |
 | `STRIPE_SECRET_KEY` | Payment endpoints fail |
+| `TELEGRAM_CONTACT` | The top-up page tells students to ask their teacher, with nobody to click |
+
+---
+
+## Who may take a mock
+
+Every attempt costs real money — transcription on each upload, marking and
+pronunciation on submit — so attempts are rationed. Two separate controls, and
+keeping them separate is deliberate:
+
+- **`access.blocked`** — a decision about the person. It stops them outright,
+  stops a resume as well as a new attempt, and leaves the mocks they have alone
+  so nothing is lost when they come back.
+- **`subscription.examsRemaining`** — a balance. One free mock on a new account;
+  everything after that is granted by the teacher in **Admin → Students**.
+
+A credit is spent when an attempt is **created**, not when it is submitted:
+that is the moment the spending starts, and it means a student who reloads or
+loses their connection mid-test is not charged twice. Deleting an attempt that
+was never spoken into hands the credit back. Teachers and admins are never
+charged and never blocked, so blocking the whole class cannot lock the teacher
+out of their own product.
+
+Payment happens outside the app. The flow is: the student runs out → the
+top-up page shows them the Telegram contact from `TELEGRAM_CONTACT` and their
+own registered email to quote → they pay the teacher directly → the teacher
+adds mocks on that student's row → the student sees a confirmation on their
+dashboard the next time they open it.
+
+**When the link escapes.** Admin → Students → *Block every student* stops the
+whole class in one request; it touches `role: 'student'` only, and refuses to
+run unless the count it was shown still matches. Let people back in one at a
+time with *Set to* and *Unblock*. Accounts created before this existed still
+carry the old free allowance of 2, because nothing was counting then — blocking
+everyone is what stops those being spent.
 
 ---
 
 ## Known gaps
 
-- `routes/payment.js` and `routes/admin.js` are still stubs.
+- `routes/payment.js` is still a stub. Nothing in the app takes money: access is
+  granted by hand after a payment made outside it, which is the honest model
+  while the teacher is collecting payment in person.
 - No automated test suite; `npm test` expects a `test/` directory that does not exist.
 - Email verification and password reset are implemented in `AuthService` but need SMTP configured.
 - Appeals are recorded on the result but there is no reviewer interface.

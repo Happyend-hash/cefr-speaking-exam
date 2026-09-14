@@ -1131,4 +1131,241 @@ router.post('/results/purge', authorize('admin'), async (req, res, next) => {
   }
 });
 
+/**
+ * Students and their access.
+ *
+ * The teacher pays for every attempt, so the decision about who may spend that
+ * money has to be visible in one place and changeable in one click. Two knobs,
+ * kept separate on purpose (see models/User.js):
+ *
+ *   blocked          — a decision about the person. Stops them outright, keeps
+ *                      whatever mocks they had for when they come back.
+ *   examsRemaining    — a balance. Runs down as attempts are created.
+ *
+ * Payment happens outside the app, in cash or by transfer. Nothing here tries to
+ * take money; it records that the teacher decided someone has paid, which is the
+ * only part the software can honestly know.
+ */
+
+const MAX_GRANT = 100;
+
+/** One row of the students table, from a lean user document. */
+function studentRow(user, activity) {
+  const stats = activity.get(String(user._id)) || {};
+  return {
+    id: String(user._id),
+    email: user.email,
+    name: [user.firstName, user.lastName].filter(Boolean).join(' '),
+    role: user.role,
+    status: user.status,
+    blocked: Boolean(user.access?.blocked),
+    remaining: user.subscription?.examsRemaining ?? 0,
+    granted: user.access?.totalGranted || 0,
+    note: user.access?.note || '',
+    pendingMessage: user.access?.message || '',
+    attempts: stats.attempts || 0,
+    completed: stats.completed || 0,
+    lastAttemptAt: stats.lastAttemptAt || null,
+    joinedAt: user.createdAt
+  };
+}
+
+/**
+ * @route   GET /api/admin/students
+ * @desc    Everyone who can sign in, with what they have used and what is left
+ *
+ * Attempt counts come from one aggregate over the listed students rather than a
+ * query per row: a class of forty would otherwise be forty round trips to show
+ * one table.
+ */
+router.get('/students', async (req, res, next) => {
+  try {
+    const search = String(req.query.search || '').trim();
+    const limit = Math.min(Number(req.query.limit) || 100, 300);
+
+    const filter = {};
+    if (search) {
+      // Escaped, so a student searching for "a.b" cannot become a pattern.
+      const safe = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rx = new RegExp(safe, 'i');
+      filter.$or = [{ email: rx }, { firstName: rx }, { lastName: rx }];
+    }
+    if (req.query.only === 'blocked') filter['access.blocked'] = true;
+    if (req.query.only === 'out') filter['subscription.examsRemaining'] = { $lte: 0 };
+
+    const users = await User.find(filter)
+      .select('email firstName lastName role status access subscription createdAt')
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const ids = users.map(u => u._id);
+    const grouped = await ExamResult.aggregate([
+      { $match: { student: { $in: ids } } },
+      {
+        $group: {
+          _id: '$student',
+          attempts: { $sum: 1 },
+          completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+          lastAttemptAt: { $max: '$createdAt' }
+        }
+      }
+    ]);
+
+    const activity = new Map(grouped.map(g => [String(g._id), g]));
+
+    res.json({
+      success: true,
+      data: {
+        students: users.map(u => studentRow(u, activity)),
+        total: await User.countDocuments(filter),
+        shown: users.length,
+        // How many accounts a block-everyone would touch. Counted here, on the
+        // same rule the bulk route uses, so the confirmation the client sends
+        // back means the same thing on both sides even when the table is
+        // filtered or longer than one page.
+        studentCount: await User.countDocuments({ role: 'student' }),
+        // So the panel can tell the teacher whether students have anywhere to
+        // send a payment to, instead of quietly showing them a dead end.
+        contact: process.env.TELEGRAM_CONTACT || ''
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/students/:id/access
+ * @desc    Grant mocks, set a balance, block or unblock one student
+ *
+ * Granting also writes the student a one-line notice, because a payment made
+ * outside the app needs a confirmation inside it — otherwise the student has
+ * paid and has no way to see that it landed until they try to start a test.
+ */
+router.post('/students/:id/access', async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid student id', 400);
+
+    const { action, amount, note, message } = req.body || {};
+    const user = await User.findById(req.params.id);
+    if (!user) throw new APIError('Student not found', 404);
+
+    if (!user.access) user.access = {};
+    let outcome = '';
+
+    if (action === 'grant' || action === 'set') {
+      const value = Number(amount);
+      if (!Number.isInteger(value) || value < 0 || value > MAX_GRANT) {
+        throw new APIError(`Give a whole number of mocks between 0 and ${MAX_GRANT}.`, 400);
+      }
+
+      const before = user.subscription.examsRemaining || 0;
+      user.subscription.examsRemaining = action === 'grant' ? before + value : value;
+
+      if (action === 'grant' && value > 0) {
+        user.access.totalGranted = (user.access.totalGranted || 0) + value;
+        user.access.lastGrantedAt = new Date();
+        user.access.lastGrantedBy = req.user.email || String(req.user.id);
+        // Uzbek, because this is read by the student on their own dashboard,
+        // where every other instruction is already in Uzbek.
+        user.access.message =
+          String(message || '').trim() ||
+          `To'lovingiz tasdiqlandi. Hisobingizga ${value} ta mock qo'shildi.`;
+        user.access.messageAt = new Date();
+      }
+
+      outcome = `${user.email}: ${before} → ${user.subscription.examsRemaining} mock(s)`;
+    } else if (action === 'block') {
+      user.access.blocked = true;
+      user.access.blockedAt = new Date();
+      outcome = `${user.email} blocked`;
+    } else if (action === 'unblock') {
+      user.access.blocked = false;
+      user.access.blockedAt = null;
+      outcome = `${user.email} unblocked`;
+    } else {
+      throw new APIError('Unknown action. Use grant, set, block or unblock.', 400);
+    }
+
+    if (note !== undefined) user.access.note = String(note).slice(0, 500);
+
+    await user.save();
+    console.log(`Admin access change — ${outcome}`);
+
+    res.json({
+      success: true,
+      message: outcome,
+      data: {
+        id: String(user._id),
+        email: user.email,
+        blocked: Boolean(user.access.blocked),
+        remaining: user.subscription.examsRemaining,
+        pendingMessage: user.access.message || ''
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/students/access-all
+ * @desc    Block every student at once, or set everyone's balance
+ *
+ * The blunt instrument, for the day the link escapes: one click stops the whole
+ * class spending money, and access comes back one student at a time. Admins and
+ * teachers are never included — locking yourself out of your own dashboard from
+ * your own dashboard is not a recoverable mistake.
+ *
+ * Like the purge, it refuses to run unless the client says how many students it
+ * expects to change, so a stale page cannot act on a larger set than the teacher
+ * was shown.
+ */
+router.post('/students/access-all', async (req, res, next) => {
+  try {
+    const { action, amount, confirm } = req.body || {};
+
+    if (typeof confirm !== 'number') {
+      throw new APIError('Confirm the number of students this will change.', 400);
+    }
+
+    const filter = { role: 'student' };
+    const matched = await User.countDocuments(filter);
+    if (matched !== confirm) {
+      throw new APIError(
+        `The number of students changed since you checked — ${matched} now, not ${confirm}.`,
+        409
+      );
+    }
+
+    let update;
+    if (action === 'block') {
+      update = { $set: { 'access.blocked': true, 'access.blockedAt': new Date() } };
+    } else if (action === 'unblock') {
+      update = { $set: { 'access.blocked': false, 'access.blockedAt': null } };
+    } else if (action === 'set') {
+      const value = Number(amount);
+      if (!Number.isInteger(value) || value < 0 || value > MAX_GRANT) {
+        throw new APIError(`Give a whole number of mocks between 0 and ${MAX_GRANT}.`, 400);
+      }
+      update = { $set: { 'subscription.examsRemaining': value } };
+    } else {
+      throw new APIError('Unknown action. Use block, unblock or set.', 400);
+    }
+
+    const outcome = await User.updateMany(filter, update);
+    const changed = outcome.modifiedCount ?? 0;
+    console.log(`Admin bulk access change — ${action} on ${changed} student(s)`);
+
+    res.json({
+      success: true,
+      message: `${action} applied to ${changed} student(s).`,
+      data: { changed, matched }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

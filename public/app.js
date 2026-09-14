@@ -36,6 +36,10 @@
     qIndex: 0,
     answered: {},      // taskNumber -> { transcription, hasAudio }
     result: null,      // completed result detail
+    // What this student is allowed to do, straight from the server. Never
+    // decided here: a counter the page could edit would be a counter students
+    // could edit. The server checks again at the start of every attempt.
+    access: null,      // { remaining, blocked, contact, message }
     folder: null,      // which module's mocks are being browsed
     mockSearch: '',    // mocks screen: search box
     mockStatus: 'all', // mocks screen: status filter
@@ -218,7 +222,13 @@
       throw new Error('Your session expired — please sign in again.');
     }
     if (!response.ok) {
-      throw new Error(payload.message || `Request failed (${response.status})`);
+      const error = new Error(payload.message || `Request failed (${response.status})`);
+      // The reason, where the server named one. "You have no mocks left" and
+      // "your teacher stopped you" arrive the same way and need different
+      // screens, and matching on the wording would break the day it changed.
+      error.code = payload.code || '';
+      error.status = response.status;
+      throw error;
     }
     return payload.data !== undefined ? payload.data : payload;
   }
@@ -271,12 +281,28 @@
         exams,
         history,
         stats: profile?.stats || null,
+        access: profile?.access || state.access,
         user: profile?.user || state.user,
         loading: false
       });
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
+  }
+
+  /**
+   * Put the teacher's notice away.
+   *
+   * Cleared on screen first and on the server after: the student has read it,
+   * and a note that stays up because the network hiccupped reads as broken. If
+   * the request does fail the notice simply comes back on the next load, which
+   * is the harmless direction to fail in.
+   */
+  async function dismissNotice() {
+    setState({ access: { ...(state.access || {}), message: '' } });
+    try {
+      await api('/user/access/seen', { method: 'POST' });
+    } catch { /* it will reappear on the next load */ }
   }
 
   async function startExam(examId, mode = 'mock', part = null) {
@@ -301,6 +327,11 @@
         questions,
         micCheck: { phase: 'idle' },
         serverTranscription: Boolean(started.serverTranscription),
+        // The balance the server has just charged, so the dashboard behind this
+        // attempt is already right when the student comes back to it.
+        access: typeof started.remaining === 'number'
+          ? { ...(state.access || {}), remaining: started.remaining }
+          : state.access,
         mode: started.mode || mode,
         part: started.part || part,
         resultId: started.resultId,
@@ -314,6 +345,16 @@
       run.phase = 'ready';
       render();
     } catch (error) {
+      // Being out of mocks is not a fault, so it does not get a red error bar.
+      // It gets the page that explains what to do next.
+      if (error.code === 'no_credits' || error.code === 'blocked') {
+        return setState({
+          loading: false,
+          error: '',
+          access: { ...(state.access || {}), remaining: 0, blocked: error.code === 'blocked' },
+          screen: 'topup'
+        });
+      }
       setState({ loading: false, error: error.message });
     }
   }
@@ -925,6 +966,7 @@
       mocks: mocksScreen,
       results: resultsScreen,
       briefing: briefingScreen,
+      topup: topupScreen,
       exam: examScreen,
       submitted: submittedScreen,
       result: resultScreen
@@ -1193,6 +1235,99 @@
     </div>`;
   }
 
+  /**
+   * Everything the student reads about access, in Uzbek.
+   *
+   * Money and permission are exactly where a misunderstanding costs the most, so
+   * these are the last strings that should be left in English. The teacher's
+   * contact details are not here — they come from the server, because they can
+   * change without the app changing.
+   */
+  const ACCESS_UZ = {
+    remaining: n => `Qolgan mock: ${n}`,
+    remainingNone: 'Mock qolmadi',
+    free: "Birinchi mock — bepul",
+
+    outTitle: 'Mock imtihonlaringiz tugadi',
+    outBody:
+      "Har bir mock yozuvni matnga o'girish va tekshirish uchun haqiqiy pul talab qiladi, " +
+      "shuning uchun birinchi bepul mockdan keyin ustoz ruxsat beradi.",
+
+    blockedTitle: 'Ruxsat vaqtincha to\'xtatilgan',
+    blockedBody:
+      "Ustozingiz hisobingizni vaqtincha to'xtatib qo'ygan. Natijalaringiz saqlanib qoladi — " +
+      "ular yo'qolmaydi. Davom etish uchun ustoz bilan bog'laning.",
+
+    how: 'Qanday davom ettirish mumkin',
+    step1: "Quyidagi manzil orqali ustoz bilan bog'laning.",
+    step2: "To'lovni ustoz aytgan tarzda amalga oshiring — to'lov sayt orqali emas.",
+    step3:
+      "Ustoz ruxsat berishi bilan shu yerda xabar ko'rinadi va mock imtihon ochiladi. " +
+      "Ro'yxatdan o'tgan pochtangizni ayting:",
+    noContact:
+      "Ustozingizning aloqa ma'lumoti hali kiritilmagan. Iltimos, unga o'zingiz murojaat qiling.",
+    later: 'Keyinroq',
+    toDashboard: 'Bosh sahifaga qaytish',
+    dismiss: 'Tushunarli'
+  };
+
+  /**
+   * The teacher's notice — normally "your payment landed, here are your mocks".
+   *
+   * A payment made outside the app has to be confirmed inside it, or the student
+   * has paid and has no way to know it worked until they try to start a test.
+   * Dismissing it clears it on the server, so it appears once and not on every
+   * device forever.
+   */
+  function accessNotice() {
+    const message = state.access?.message;
+    if (!message) return '';
+
+    return `<div class="alert alert-ok" style="display:flex;justify-content:space-between;gap:12px;align-items:center">
+      <span>${esc(message)}</span>
+      <button class="btn btn-ghost btn-sm" data-action="notice-seen">${ACCESS_UZ.dismiss}</button>
+    </div>`;
+  }
+
+  /**
+   * The page a student lands on when they have nothing left to spend.
+   *
+   * It is not an error page: running out is the normal end of the free sample,
+   * and a student who paid last week and is waiting needs to see what happens
+   * next rather than a red bar. "Keyinroq" leaves without paying, on purpose —
+   * their results are still theirs to read.
+   */
+  function topupScreen() {
+    const access = state.access || {};
+    const blocked = Boolean(access.blocked);
+    const contact = access.contact || '';
+
+    const contactBlock = contact
+      ? `<a class="btn btn-lg" href="${esc(
+          contact.startsWith('http') ? contact : `https://t.me/${contact.replace(/^@/, '')}`
+        )}" target="_blank" rel="noopener noreferrer">${esc(contact)}</a>`
+      : `<p class="muted">${ACCESS_UZ.noContact}</p>`;
+
+    return `
+      <div class="card form-card" style="max-width:560px">
+        <h2 style="margin-bottom:8px">${blocked ? ACCESS_UZ.blockedTitle : ACCESS_UZ.outTitle}</h2>
+        <p class="muted">${blocked ? ACCESS_UZ.blockedBody : ACCESS_UZ.outBody}</p>
+
+        <h3 style="font-size:15px;margin-top:22px">${ACCESS_UZ.how}</h3>
+        <ol style="margin:10px 0 0 18px;line-height:1.7">
+          <li>${ACCESS_UZ.step1}</li>
+          <li>${ACCESS_UZ.step2}</li>
+          <li>${ACCESS_UZ.step3} <strong>${esc(state.user?.email || '')}</strong></li>
+        </ol>
+
+        <div style="margin-top:20px">${contactBlock}</div>
+
+        <button class="btn btn-ghost btn-block" style="margin-top:14px" data-go="dashboard">
+          ${ACCESS_UZ.later}
+        </button>
+      </div>`;
+  }
+
   function dashboardScreen() {
     if (state.loading && !state.exams.length) {
       return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">Loading…</p></div>`;
@@ -1210,12 +1345,28 @@
 
     const name = state.user?.firstName || '';
 
+    // The balance sits next to the button that spends it. A student who finds
+    // out they have none only after clicking Start has already been surprised.
+    const remaining = state.access?.remaining;
+    const counter = typeof remaining === 'number'
+      ? `<p class="muted" style="margin-top:8px;text-align:center">${
+          state.access?.blocked
+            ? esc(ACCESS_UZ.blockedTitle)
+            : remaining > 0
+            ? esc(ACCESS_UZ.remaining(remaining))
+            : `${esc(ACCESS_UZ.remainingNone)} · <button class="link-more" data-go="topup">${esc(ACCESS_UZ.how)}</button>`
+        }</p>`
+      : '';
+
     const welcome = `<div class="welcome">
       <div>
         <h1>Welcome back${name ? `, ${esc(name)}` : ''} 👋</h1>
         <p>Ready to test your English speaking skills?</p>
       </div>
-      <button class="btn btn-lg" data-folder="speaking">${icon('mic')} Start a speaking mock</button>
+      <div>
+        <button class="btn btn-lg" data-folder="speaking">${icon('mic')} Start a speaking mock</button>
+        ${counter}
+      </div>
     </div>`;
 
     const statsRow = `<div class="stat-grid">
@@ -1277,6 +1428,7 @@
       : firstMockEmptyState();
 
     return `
+      ${accessNotice()}
       ${welcome}
       ${statsRow}
       <div class="section-head" style="margin-top:8px"><h2>Ready for your next test?</h2>
@@ -2282,6 +2434,7 @@
     switch (action) {
       case 'signout': return signOut();
       case 'done-submitting': return loadDashboard();
+      case 'notice-seen': return dismissNotice();
       case 'mic-check': return runMicCheck();
       case 'start-questions':
       case 'start-questions-anyway':

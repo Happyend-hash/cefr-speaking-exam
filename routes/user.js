@@ -94,9 +94,47 @@ router.get('/profile', async (req, res, next) => {
           // bands was the whole point of putting them in models/ExamResult.js.
           maxScore: MAX_SCORE,
           bands: CEFR_BANDS
+        },
+        // What the student is allowed to do, and how to ask for more. The
+        // dashboard already fetches this profile, so the mock counter, the
+        // top-up page and the payment confirmation all arrive without a second
+        // request — and the counter cannot disagree with the server, because it
+        // is not kept anywhere else.
+        access: {
+          // null for teachers and admins, who are never charged. The dashboard
+          // shows a counter only when there is a number, so staff simply do not
+          // see one rather than seeing a number that means nothing.
+          remaining: user.examAccess().code === 'staff'
+            ? null
+            : user.subscription?.examsRemaining ?? 0,
+          blocked: Boolean(user.access?.blocked),
+          // Where to reach the teacher about paying. Configured once, in the
+          // environment, so the contact can change without a deploy of the app
+          // code and without the address being baked into the page.
+          contact: process.env.TELEGRAM_CONTACT || '',
+          // A one-off note from the teacher — normally the confirmation that a
+          // payment landed. Cleared by the student dismissing it.
+          message: user.access?.message || ''
         }
       }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/user/access/seen
+ * @desc    Dismiss the teacher's one-off notice
+ * @access  Private
+ */
+router.post('/access/seen', async (req, res, next) => {
+  try {
+    await User.updateOne(
+      { _id: req.user.id },
+      { $set: { 'access.message': '', 'access.messageAt': null } }
+    );
+    res.json({ success: true, message: 'Notice dismissed' });
   } catch (error) {
     next(error);
   }

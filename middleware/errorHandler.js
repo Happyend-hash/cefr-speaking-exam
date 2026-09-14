@@ -36,6 +36,11 @@ export const errorHandler = (error, req, res, next) => {
   res.status(statusCode).json({
     success: false,
     message: error.message,
+    // A machine-readable reason, where the thrower supplied one. The client
+    // needs to tell "blocked" from "out of credits" — same status family, very
+    // different screen — and matching on the English sentence would break the
+    // moment the wording changed.
+    ...(error.code ? { code: error.code } : {}),
     ...(process.env.NODE_ENV === 'development' && {
       stack: error.stack,
       details: error
@@ -47,9 +52,11 @@ export const errorHandler = (error, req, res, next) => {
  * Custom API Error Class
  */
 export class APIError extends Error {
-  constructor(message, statusCode = 500) {
+  constructor(message, statusCode = 500, code = null) {
     super(message);
     this.statusCode = statusCode;
+    // Optional. Only set it where a client has to act differently per reason.
+    if (code) this.code = code;
     this.name = 'APIError';
   }
 }
