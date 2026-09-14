@@ -162,7 +162,61 @@
         ${state.tests.length === 0 && !state.loading
           ? '<div class="card"><p class="muted">No tests yet. Create one, then add questions to it.</p></div>'
           : state.tests.map(testCard).join('')}
+
+        ${purgeCard()}
       </main>`;
+  }
+
+  /**
+   * Clearing old attempts.
+   *
+   * Attempts marked before the scale changed, and the zeros left when phones
+   * captured no words, feed every student's best score and skills chart. This
+   * removes them — and their recordings, permanently.
+   *
+   * Nothing is deleted until the teacher has been shown the exact count. The
+   * button carries that number, and the server refuses the delete if the number
+   * has moved since — a student finishing a mock between the check and the click
+   * must not be swept up in it.
+   */
+  function purgeCard() {
+    const p = state.purge || {};
+
+    return `<div class="card" style="margin-top:28px;border-color:#fecaca">
+      <h2 style="font-size:18px">Clear old attempts</h2>
+      <p class="muted" style="margin-top:6px">
+        Attempts marked before the 75-point scale, and ones that scored zero because
+        no words were captured, still count towards students' averages and levels.
+        Removing them also deletes their recordings, permanently.
+      </p>
+
+      <div class="row" style="gap:14px;margin-top:14px;flex-wrap:wrap;align-items:flex-end">
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span class="muted" style="font-size:13px">Completed before</span>
+          <input type="date" id="purge-before" value="${esc(p.before || '')}" />
+        </label>
+        <label class="row" style="gap:6px">
+          <input type="checkbox" id="purge-zeros" ${p.onlyZeros ? 'checked' : ''} />
+          <span class="muted" style="font-size:13px">Only attempts that scored 0</span>
+        </label>
+        <button class="btn btn-ghost btn-sm" data-action="purge-check" ${p.checking ? 'disabled' : ''}>
+          ${p.checking ? 'Checking…' : 'Check what matches'}
+        </button>
+      </div>
+
+      ${p.counted !== undefined ? (p.counted === 0
+        ? '<p class="muted" style="margin-top:14px">Nothing matches — there is nothing to clear.</p>'
+        : `<div style="margin-top:14px;padding:12px 14px;border-radius:10px;background:#fef2f2;border:1px solid #dc2626">
+             <strong>${p.counted} attempt${p.counted === 1 ? '' : 's'}</strong>
+             from ${p.students} student${p.students === 1 ? '' : 's'},
+             including ${p.recordings} recording${p.recordings === 1 ? '' : 's'}.
+             <p class="muted" style="margin-top:6px">This cannot be undone.</p>
+             <button class="btn btn-danger btn-sm" style="margin-top:10px"
+                     data-action="purge-run" ${p.running ? 'disabled' : ''}>
+               ${p.running ? 'Deleting…' : `Delete these ${p.counted} attempts`}
+             </button>
+           </div>`) : ''}
+    </div>`;
   }
 
   function newTestForm() {
@@ -553,6 +607,63 @@
       editingTask: null, addingTo: null,
       addingSectionTo: null, editingSection: null, addingQuestionTo: null, editingQuestion: null
     });
+    if (action === 'purge-check') return checkPurge();
+    if (action === 'purge-run') return runPurge();
+  }
+
+  /** Read the form without re-rendering, so a half-typed date is not lost. */
+  function purgeQuery() {
+    return {
+      before: document.getElementById('purge-before')?.value || '',
+      onlyZeros: Boolean(document.getElementById('purge-zeros')?.checked)
+    };
+  }
+
+  async function checkPurge() {
+    const query = purgeQuery();
+    if (!query.before && !query.onlyZeros) {
+      return setState({ error: 'Choose a date, or tick "only attempts that scored 0" — otherwise this would match every attempt ever taken.' });
+    }
+
+    setState({ purge: { ...query, checking: true }, error: '' });
+    try {
+      const params = new URLSearchParams();
+      if (query.before) params.set('before', query.before);
+      if (query.onlyZeros) params.set('onlyZeros', 'true');
+
+      const data = await api(`/admin/results/purge?${params}`);
+      setState({
+        purge: {
+          ...query,
+          counted: data.attempts,
+          recordings: data.recordings,
+          students: data.students
+        }
+      });
+    } catch (error) {
+      setState({ purge: { ...query }, error: error.message });
+    }
+  }
+
+  async function runPurge() {
+    const p = state.purge || {};
+    if (!p.counted) return;
+
+    setState({ purge: { ...p, running: true }, error: '' });
+    try {
+      const data = await api('/admin/results/purge', {
+        method: 'POST',
+        // The count is sent back so the server can refuse if the set has
+        // changed — a student finishing a mock in the meantime must not be
+        // caught by a click aimed at yesterday's data.
+        body: { before: p.before || undefined, onlyZeros: p.onlyZeros, confirm: p.counted }
+      });
+      state.notice = `Cleared ${data.deleted} attempt(s) and ${data.recordings} recording(s).`;
+      setState({ purge: {} });
+      await loadTests();
+    } catch (error) {
+      setState({ purge: { ...p, running: false }, error: error.message });
+    }
   }
 
   async function handleLogin(event) {

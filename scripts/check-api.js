@@ -77,7 +77,12 @@ for (const match of client.matchAll(
   const method = (methodMatch ? methodMatch[1] : 'GET').toUpperCase();
 
   for (const expanded of expandPath(rawPath)) {
-    calls.push({ method, path: '/api' + expanded.replace(/\/$/, '') });
+    // A query string is not part of the route. Left on, `?${params}` became a
+    // path segment and a perfectly good call was reported as a missing route —
+    // a false alarm, which is worse than no check at all, because the next real
+    // one gets waved through.
+    const withoutQuery = expanded.split('?')[0];
+    calls.push({ method, path: '/api' + withoutQuery.replace(/\/$/, '') });
   }
 }
 

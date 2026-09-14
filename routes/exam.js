@@ -12,6 +12,7 @@ import AudioStorageService, {
 } from '../services/AudioStorageService.js';
 import ImageStorageService from '../services/ImageStorageService.js';
 import PronunciationService from '../services/PronunciationService.js';
+import { removeResult } from '../services/AttemptCleanup.js';
 import AICallLimiter from '../services/MarkingQueue.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -116,38 +117,11 @@ router.get('/results', async (req, res, next) => {
     next(error);
   }
 });
-
 /**
  * @route   DELETE /api/exam/results/:resultId
- * @desc    Remove one attempt from the student's history, with its recordings.
+ * @desc    Delete one attempt and its recordings
  * @access  Private (owner or admin)
- *
- * The recordings go too. Deleting the attempt on its own would leave the audio
- * orphaned in GridFS — invisible to the student, still taking up space, and
- * still their voice. If a recording fails to delete the attempt is kept, so the
- * history never shows "deleted" while the audio is still stored.
  */
-async function removeResult(result) {
-  if (result.status === 'evaluating') {
-    return { ok: false, reason: 'it is being marked right now' };
-  }
-
-  const keys = result.taskResults.map(t => t.audioKey).filter(Boolean);
-  const failed = [];
-  for (const key of keys) {
-    if (!(await AudioStorageService.delete(key))) failed.push(key);
-  }
-
-  // Keep the attempt if its audio survived, so the history can never claim
-  // something is gone while the student's voice is still stored.
-  if (failed.length) {
-    return { ok: false, reason: `${failed.length} of ${keys.length} recordings could not be deleted` };
-  }
-
-  await result.deleteOne();
-  return { ok: true, recordingsDeleted: keys.length };
-}
-
 router.delete('/results/:resultId', async (req, res, next) => {
   try {
     const result = await loadOwnedResult(req, req.params.resultId);

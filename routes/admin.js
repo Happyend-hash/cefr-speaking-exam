@@ -8,6 +8,7 @@ import ImageStorageService, {
   ALLOWED_IMAGE_TYPES,
   MAX_IMAGE_BYTES
 } from '../services/ImageStorageService.js';
+import { removeResult } from '../services/AttemptCleanup.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -533,6 +534,133 @@ router.get('/overview', async (req, res, next) => {
     res.json({
       success: true,
       data: { students, tests, published, attempts, completed }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Clearing attempts.
+ *
+ * Attempts marked before the scale changed, and the zeros left by the spell
+ * when phones captured no words, now feed every student's best score, level
+ * and skills chart. A stale zero visibly drags down a student who did nothing
+ * wrong, and an old score out of 100 reads as a far higher level than it was.
+ *
+ * Two endpoints rather than one, deliberately. Deleting an attempt destroys the
+ * student's recordings with it and cannot be undone, so the count is fetched
+ * first and the button that does it says exactly what will go. A confirmation
+ * dialog that says "are you sure?" without saying "sure about what" is not a
+ * safeguard.
+ */
+
+/** Which attempts a clear would take, given the query. */
+function purgeFilter({ before, onlyZeros }) {
+  const filter = {};
+
+  if (before) {
+    const cutoff = new Date(before);
+    if (Number.isNaN(cutoff.getTime())) throw new APIError('That is not a valid date.', 400);
+    filter.completedAt = { $lt: cutoff };
+  }
+
+  // An attempt that scored nothing is almost always a recording that was never
+  // transcribed, not a student who said nothing worth marking.
+  if (onlyZeros) filter.overallScore = 0;
+
+  // An empty filter matches every attempt ever taken. The screen will not send
+  // one, but a screen is not a safeguard — the rule belongs on the side that
+  // does the deleting.
+  if (!Object.keys(filter).length) {
+    throw new APIError(
+      'Narrow this down: give a date, or restrict it to attempts that scored 0. ' +
+      'An unrestricted clear would delete every attempt ever taken.',
+      400
+    );
+  }
+
+  return filter;
+}
+
+/**
+ * @route   GET /api/admin/results/purge
+ * @desc    Count what a clear would remove. Changes nothing.
+ */
+router.get('/results/purge', authorize('admin'), async (req, res, next) => {
+  try {
+    const filter = purgeFilter({
+      before: req.query.before,
+      onlyZeros: req.query.onlyZeros === 'true'
+    });
+
+    const results = await ExamResult.find(filter).select('student taskResults').lean();
+    const recordings = results.reduce(
+      (sum, r) => sum + (r.taskResults || []).filter(t => t.audioKey).length,
+      0
+    );
+
+    res.json({
+      success: true,
+      data: {
+        attempts: results.length,
+        recordings,
+        students: new Set(results.map(r => String(r.student))).size
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/results/purge
+ * @desc    Delete those attempts and their recordings. Irreversible.
+ */
+router.post('/results/purge', authorize('admin'), async (req, res, next) => {
+  try {
+    const { before, onlyZeros, confirm } = req.body || {};
+
+    // The client has to say what it expects to delete. Without this, a stale
+    // page could delete a far larger set than the teacher was shown.
+    if (typeof confirm !== 'number') {
+      throw new APIError('Confirm the number of attempts to delete.', 400);
+    }
+
+    const filter = purgeFilter({ before, onlyZeros });
+    const results = await ExamResult.find(filter);
+
+    if (results.length !== confirm) {
+      throw new APIError(
+        `The number of attempts changed since you checked — ${results.length} match now, not ${confirm}. ` +
+        `Check again before deleting.`,
+        409
+      );
+    }
+
+    let deleted = 0;
+    let recordings = 0;
+    const refused = [];
+
+    for (const result of results) {
+      // Shares the same rule the students' own delete uses: an attempt is never
+      // removed while its recordings survive, so history can never claim
+      // something is gone while a student's voice is still stored.
+      const outcome = await removeResult(result);
+      if (outcome.ok) {
+        deleted += 1;
+        recordings += outcome.recordingsDeleted;
+      } else {
+        refused.push({ id: String(result._id), reason: outcome.reason });
+      }
+    }
+
+    console.log(`Admin cleared ${deleted} attempt(s) and ${recordings} recording(s)`);
+
+    res.json({
+      success: true,
+      message: `Deleted ${deleted} attempt(s) and ${recordings} recording(s).`,
+      data: { deleted, recordings, refused }
     });
   } catch (error) {
     next(error);
