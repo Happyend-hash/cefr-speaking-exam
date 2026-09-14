@@ -696,10 +696,18 @@
     }
   }
 
-  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  /**
+   * How often the dashboard re-checks an attempt that is still being marked.
+   *
+   * Slower than the old submit-screen poll on purpose. That one ran while a
+   * student stared at a spinner and every second showed; this one runs in the
+   * background behind a page they are already using, and a whole class doing it
+   * at four-second intervals is load bought for nothing.
+   */
+  const PENDING_POLL_MS = 12000;
 
-  const EVAL_POLL_MS = 4000;
-  const EVAL_GIVE_UP_MS = 6 * 60 * 1000;
+  /** The one live timer for the above, so it can never be started twice. */
+  let pendingWatch = null;
 
   /**
    * Submit an attempt and wait for the mark.
@@ -715,68 +723,81 @@
    * Polling also means a student can lock their phone, come back, and still get
    * their score.
    */
+  /**
+   * Hand the attempt in and let the student go.
+   *
+   * Marking already happens on the server after a 202, so holding the student
+   * on a spinner until it finished was a leftover from when it did not. It cost
+   * something real: thirty students finishing a lesson together meant thirty
+   * people watching a loading screen and thirty connections polling, and anyone
+   * who locked their phone had no way to tell whether their work had survived.
+   *
+   * Now the submit is confirmed and they are sent back to the dashboard, where
+   * the attempt is already listed as being marked and turns into a score by
+   * itself. A student who wants to wait still sees the result in about the same
+   * time; a student who does not is no longer made to.
+   */
   async function submitExam() {
     const resultId = state.resultId;
-    setState({ screen: 'evaluating', loading: true, error: '', evalStartedAt: Date.now() });
     resetRecorder();
+    setState({ screen: 'submitted', loading: true, error: '', submittedId: resultId });
 
-    let submitError = null;
-    api(`/exam/results/${resultId}/submit`, { method: 'POST' }).catch(err => { submitError = err; });
+    try {
+      await api(`/exam/results/${resultId}/submit`, { method: 'POST' });
+      setState({ loading: false });
+    } catch (error) {
+      // A failed hand-in is the one case worth stopping for: nothing is being
+      // marked, so sending them to wait for a result would be a lie.
+      const dropped = /fetch|network|load failed|aborted/i.test(error.message);
+      setState({
+        screen: 'exam',
+        loading: false,
+        error: dropped
+          ? 'Your answers are saved, but the connection dropped before they could be handed in. Try Submit again.'
+          : error.message
+      });
+    }
+  }
 
-    const deadline = Date.now() + EVAL_GIVE_UP_MS;
+  /**
+   * Keep the dashboard honest while something is being marked.
+   *
+   * Without this the attempt would sit at "Tekshirilmoqda…" until the student
+   * reloaded, and a student who waits would conclude it was stuck. One timer at
+   * a time, stopped as soon as nothing is pending or the student leaves — a
+   * poll that outlives its screen is how a phone's battery disappears.
+   */
+  function watchPending() {
+    clearPendingWatch();
+    if (!pendingAttempts().length) return;
 
-    while (Date.now() < deadline) {
-      await sleep(EVAL_POLL_MS);
-
-      // The student navigated away or started something else — stop polling.
-      if (state.screen !== 'evaluating' || state.resultId !== resultId) return;
+    pendingWatch = setTimeout(async () => {
+      pendingWatch = null;
+      if (state.screen !== 'dashboard') return;
 
       try {
-        const result = await api(`/exam/results/${resultId}`);
-
-        if (result.status === 'completed') {
-          setState({ result, screen: 'result', loading: false, error: '' });
-          return;
-        }
-
-        // Back to 'submitted' means marking ran and nothing could be marked.
-        // Two very different reasons, and the student needs the right one.
-        if (result.status === 'submitted') {
-          const tasks = result.taskResults || [];
-          const allUnread = tasks.length > 0 && tasks.every(t => t.status === 'not_transcribed');
-          setState({
-            screen: 'exam',
-            loading: false,
-            error: allUnread
-              ? 'None of your answers could be turned into text, so nothing could be marked. ' +
-                'Your recordings are saved. This is usually the browser — open the site ' +
-                'directly in Chrome rather than inside a messaging app, then try again.'
-              : submitError?.message ||
-                'Marking did not finish. Your answers are saved — you can submit again.'
-          });
-          return;
-        }
+        const history = await api('/exam/results');
+        // Only re-render if something actually changed, so the page does not
+        // flicker under a student who is reading it.
+        const changed = JSON.stringify(history.map(h => h.status)) !==
+                        JSON.stringify(state.history.map(h => h.status));
+        state.history = history;
+        if (changed) render();
+        else watchPending();
       } catch {
-        // A failed poll is expected on a flaky connection; keep waiting.
+        watchPending(); // a dropped poll is not worth reporting; try again
       }
-
-      // A real rejection from the API (not a dropped connection) is worth
-      // showing immediately rather than waiting out the whole deadline.
-      if (submitError && !/fetch|network|load failed|aborted/i.test(submitError.message)) {
-        setState({ screen: 'exam', loading: false, error: submitError.message });
-        return;
-      }
-
-      render(); // refresh the elapsed-time line
-    }
-
-    setState({
-      screen: 'exam',
-      loading: false,
-      error: 'Marking is taking longer than usual. Your answers are saved — ' +
-             'open this attempt from your history in a few minutes to see the result.'
-    });
+    }, PENDING_POLL_MS);
   }
+
+  function clearPendingWatch() {
+    if (pendingWatch) clearTimeout(pendingWatch);
+    pendingWatch = null;
+  }
+
+  /** Attempts handed in but not yet marked. */
+  const pendingAttempts = () =>
+    (state.history || []).filter(h => h.status === 'evaluating' || h.status === 'submitted');
 
   const currentTask = () => state.exam?.tasks?.[state.taskIndex] || null;
 
@@ -919,7 +940,7 @@
       results: resultsScreen,
       briefing: briefingScreen,
       exam: examScreen,
-      evaluating: evaluatingScreen,
+      submitted: submittedScreen,
       result: resultScreen
     }[state.screen] || landingScreen;
 
@@ -1132,20 +1153,46 @@
     </div>`;
   }
 
+  /**
+   * The five most recent attempts — including ones still being marked.
+   *
+   * A student is sent here the moment they hand in, so an attempt that is still
+   * being marked has to be visible. Showing only finished ones meant they
+   * arrived to find nothing, which reads as "my test disappeared" — a good deal
+   * worse than the spinner this replaced.
+   */
   function recentCard() {
-    const recent = completedAttempts().slice(0, 5);
+    const max = state.stats?.maxScore || MAX_SCORE;
+    const recent = (state.history || [])
+      .filter(h => h.status === 'completed' || h.status === 'evaluating' || h.status === 'submitted')
+      .slice(0, 5);
     if (!recent.length) return '';
+
+    const row = item => {
+      const pending = item.status !== 'completed';
+
+      // Nothing to open yet, so a pending row is not a button: it would look
+      // like something to press and do nothing when pressed.
+      if (pending) {
+        return `<div class="attempt attempt-pending">
+          <span class="attempt-name">${esc(item.examTitle)}</span>
+          <span class="chip chip-progress"><span class="pulse"></span> Tekshirilmoqda…</span>
+          <span class="attempt-date">${esc(fmtDate(item.startedAt))}</span>
+        </div>`;
+      }
+
+      return `<button class="attempt" data-result="${esc(item.id)}">
+        <span class="attempt-name">${esc(item.examTitle)}</span>
+        <span class="attempt-score">${item.overallScore}/${max}</span>
+        <span class="chip chip-speaking">${esc(item.overallLevel || '—')}</span>
+        <span class="attempt-date">${esc(fmtDate(item.completedAt))}</span>
+      </button>`;
+    };
 
     return `<div class="card">
       <div class="section-head"><h2>Recent attempts</h2>
         <p>Tap any attempt to read its feedback.</p></div>
-      ${recent.map(item => `
-        <button class="attempt" data-result="${esc(item.id)}">
-          <span class="attempt-name">${esc(item.examTitle)}</span>
-          <span class="attempt-score">${item.overallScore}/${state.stats?.maxScore || MAX_SCORE}</span>
-          <span class="chip chip-speaking">${esc(item.overallLevel || '—')}</span>
-          <span class="attempt-date">${esc(fmtDate(item.completedAt))}</span>
-        </button>`).join('')}
+      ${recent.map(row).join('')}
       <button class="link-more" data-go="results">View all results ${icon('chevron')}</button>
     </div>`;
   }
@@ -1233,9 +1280,14 @@
       </div>
     </div>` : '';
 
+    // A student who has just handed in their first mock has no completed
+    // attempt yet, but they were sent here to watch for it — so the recent list
+    // has to show even while the analytics below it have nothing to draw.
     const analytics = hasResults
       ? `${cefrCard(best)}
          <div class="split">${skillsCard()}${recentCard()}</div>`
+      : pendingAttempts().length
+      ? recentCard()
       : firstMockEmptyState();
 
     return `
@@ -1947,23 +1999,32 @@
     </div>`;
   }
 
-  function evaluatingScreen() {
-    const seconds = Math.round((Date.now() - (state.evalStartedAt || Date.now())) / 1000);
-    return `<div class="center-note">
-      <span class="spinner"></span>
-      <h2 style="margin:16px 0 8px">Assessing your answers</h2>
-      <p class="muted">Each answer is scored against the CEFR descriptors. A full mock takes a minute or two.</p>
-      ${seconds > 5 ? `<p class="muted" style="margin-top:10px">Waiting… ${fmtTime(seconds)}</p>` : ''}
-      ${seconds > 45
-        // Reassurance that matters on a phone: the marking is happening on the
-        // server, so leaving the page does not lose it.
-        ? `<p class="muted" style="margin-top:10px;max-width:26rem">
-             You can lock your phone or leave this page — the marking carries on,
-             and the result will be in your history.
-           </p>`
-        : ''}
+  /**
+   * What a student sees the moment they hand in.
+   *
+   * Deliberately a full screen rather than a browser dialog: this is the last
+   * thing they read after twelve minutes of being timed, and it has one job —
+   * tell them the work is safely in and where the result will appear. A native
+   * alert() would be dismissed by reflex before any of that registered.
+   *
+   * "Recent attempts" stays in English because that is what the section is
+   * called on the dashboard. Translating it here would send them looking for a
+   * heading that does not exist.
+   */
+  function submittedScreen() {
+    return `<div class="card submitted-card">
+      <div class="submitted-mark">${icon('check')}</div>
+      <h2>Imtihoningiz tekshirishga yuborildi</h2>
+      <p>Natijangiz tayyor bo'lgach, boshqaruv panelidagi
+         <strong>"Recent attempts"</strong> bo'limida ko'rinadi.</p>
+      <p class="muted">Kutib turishingiz shart emas — telefoningizni yopsangiz ham
+         tekshirish davom etadi.</p>
+      <button class="btn btn-lg" data-action="done-submitting" ${state.loading ? 'disabled' : ''}>
+        ${state.loading ? 'Yuborilmoqda…' : 'OK'}
+      </button>
     </div>`;
   }
+
 
   function resultScreen() {
     if (state.loading || !state.result) {
@@ -2111,6 +2172,12 @@
   function wire() {
     resolveAuthedMedia();
 
+    // The watcher belongs to the dashboard and nothing else. Deciding here,
+    // once per render, means it can never be left running behind a screen that
+    // stopped caring — including after a sign-out.
+    if (state.screen === 'dashboard' && state.user) watchPending();
+    else clearPendingWatch();
+
     root.querySelectorAll('[data-go]').forEach(el => {
       el.addEventListener('click', event => {
         event.preventDefault();
@@ -2208,6 +2275,7 @@
   function handleAction(action) {
     switch (action) {
       case 'signout': return signOut();
+      case 'done-submitting': return loadDashboard();
       case 'mic-check': return runMicCheck();
       case 'start-questions':
       case 'start-questions-anyway':
