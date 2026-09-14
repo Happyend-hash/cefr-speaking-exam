@@ -710,20 +710,6 @@
   let pendingWatch = null;
 
   /**
-   * Submit an attempt and wait for the mark.
-   *
-   * The outcome is read by polling the attempt, NOT by awaiting the submit
-   * request. Marking runs inside that request and can take a minute or more,
-   * and on a phone a request that long is routinely suspended when the screen
-   * locks or the browser backgrounds the tab — after which it may never settle,
-   * neither resolving nor rejecting. Awaiting it was leaving the page on
-   * "Assessing your answers" forever while the server had in fact finished and
-   * saved the result.
-   *
-   * Polling also means a student can lock their phone, come back, and still get
-   * their score.
-   */
-  /**
    * Hand the attempt in and let the student go.
    *
    * Marking already happens on the server after a 202, so holding the student
