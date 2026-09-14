@@ -802,7 +802,7 @@ export async function rescueAttempt(resultId) {
   return { ok: true, recovered, failed };
 }
 
-async function markAttempt(resultId) {
+export async function markAttempt(resultId) {
   const result = await ExamResult.findById(resultId);
   if (!result) return;
 

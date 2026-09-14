@@ -16,7 +16,7 @@ import AudioStorageService, {
 import TranscriptionService from '../services/TranscriptionService.js';
 import AIEvaluationService from '../services/AIEvaluationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
-import { isRescuable, rescueAttempt } from './exam.js';
+import { isRescuable, rescueAttempt, markAttempt } from './exam.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -807,6 +807,101 @@ router.post('/calibration/check', async (req, res, next) => {
         ? 'Nothing could be checked.'
         : `The examiner is ${averageGap > 0 ? 'above' : 'below'} your marks by ${Math.abs(averageGap)} on average.`,
       data: { checked, averageGap }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Re-marking attempts that were read perfectly well.
+ *
+ * Distinct from the rescue below, and easy to confuse with it. A rescue is for
+ * recordings nobody ever transcribed; this is for attempts whose transcripts
+ * were always fine but whose SCORE was produced by marking that has since
+ * changed. Nothing is re-transcribed and no audio is touched — the same words
+ * go through the current marking.
+ *
+ * Scoped to one person by design. Re-marking is not free: a full attempt is
+ * eight answers plus the whole-performance pass, so re-marking everybody to
+ * check one change would spend a great deal of somebody's quota to answer a
+ * question one attempt can answer.
+ */
+
+/** The student whose attempts a re-mark would cover, from an email or the caller. */
+async function resolveStudent(email, fallbackId) {
+  if (!email) return fallbackId;
+  const user = await User.findOne({ email: String(email).toLowerCase().trim() }).select('_id');
+  if (!user) throw new APIError(`No account found for ${email}.`, 404);
+  return user._id;
+}
+
+/**
+ * @route   GET /api/admin/results/remark
+ * @desc    Count what a re-mark would cover. Changes nothing.
+ */
+router.get('/results/remark', async (req, res, next) => {
+  try {
+    const student = await resolveStudent(req.query.email, req.user.id);
+    const attempts = await ExamResult.countDocuments({
+      student,
+      status: 'completed'
+    });
+
+    res.json({
+      success: true,
+      data: {
+        attempts,
+        // Eight answers and one whole-performance pass per attempt: worth
+        // showing, because it is the teacher's API quota being spent.
+        aiCalls: attempts * 9,
+        email: req.query.email || 'your own account'
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/results/remark
+ * @desc    Mark those attempts again with the current scoring.
+ */
+router.post('/results/remark', async (req, res, next) => {
+  try {
+    const student = await resolveStudent(req.body?.email, req.user.id);
+    const attempts = await ExamResult.find({ student, status: 'completed' })
+      .select('_id')
+      .lean();
+
+    if (!attempts.length) {
+      return res.json({
+        success: true,
+        message: 'No completed attempts to re-mark.',
+        data: { started: 0 }
+      });
+    }
+
+    const ids = attempts.map(a => String(a._id));
+
+    // One at a time, and after the response, for the same reason the rescue is:
+    // marking a full attempt takes long enough that holding the request open
+    // only invites closing the tab half way through.
+    (async () => {
+      for (const id of ids) {
+        try {
+          await markAttempt(id);
+        } catch (error) {
+          console.error(`Re-mark failed for ${id}:`, error.message);
+        }
+      }
+      console.log(`Re-marked ${ids.length} attempt(s)`);
+    })();
+
+    res.status(202).json({
+      success: true,
+      message: `Re-marking ${ids.length} attempt(s). Scores update as each finishes.`,
+      data: { started: ids.length }
     });
   } catch (error) {
     next(error);

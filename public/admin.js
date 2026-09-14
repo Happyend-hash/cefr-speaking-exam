@@ -38,6 +38,7 @@
     tests: [],
     overview: null,
     openTestId: null,
+    remark: null,
     calibration: null,       // { coverage, samples } once loaded
     calibrationOpen: false,
     addingSample: false,
@@ -175,6 +176,7 @@
           : state.tests.map(testCard).join('')}
 
         ${calibrationCard()}
+        ${remarkCard()}
         ${rescueCard()}
         ${purgeCard()}
       </main>`;
@@ -350,6 +352,86 @@
       ${s.notes ? `<p class="muted" style="font-size:13px;margin-top:6px">Why: ${esc(s.notes)}</p>` : ''}
       ${s.audioUrl ? `<audio controls src="${esc(s.audioUrl)}" style="margin-top:8px;width:100%;max-width:420px"></audio>` : ''}
     </div>`;
+  }
+
+  /**
+   * Marking existing attempts again with the current scoring.
+   *
+   * Not the same as the rescue below, and the difference matters: a rescue is
+   * for recordings that were never transcribed, this is for attempts whose
+   * transcripts were always fine but whose score came from marking that has
+   * since changed. Nothing is re-transcribed and no audio is touched.
+   *
+   * Scoped to one account on purpose. A full attempt costs nine AI calls, so
+   * re-marking a whole class to check one change spends a lot of quota to
+   * answer a question a single attempt can answer — and the count is shown
+   * before anything runs, because it is the teacher's bill.
+   */
+  function remarkCard() {
+    const r = state.remark || {};
+
+    return `<div class="card" style="margin-top:28px">
+      <h2 style="font-size:18px">Mark attempts again</h2>
+      <p class="muted" style="margin-top:6px">
+        Runs completed attempts through the current marking. Use this after the scoring
+        changes, to see the new result on work that has already been recorded. Recordings
+        and transcripts are untouched.
+      </p>
+
+      <div class="row" style="gap:12px;margin-top:14px;flex-wrap:wrap;align-items:flex-end">
+        <label style="display:flex;flex-direction:column;gap:4px;flex:1 1 260px">
+          <span class="muted" style="font-size:13px">Whose attempts (leave empty for your own)</span>
+          <input id="remark-email" type="email" placeholder="student@example.com"
+                 value="${esc(r.email || '')}" />
+        </label>
+        <button class="btn btn-ghost btn-sm" data-action="remark-check" ${r.checking ? 'disabled' : ''}>
+          ${r.checking ? 'Checking…' : 'Check'}
+        </button>
+      </div>
+
+      ${r.counted !== undefined ? (r.counted === 0
+        ? '<p class="muted" style="margin-top:14px">No completed attempts found for that account.</p>'
+        : `<div style="margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--indigo-50);border:1px solid var(--indigo-500)">
+             <strong>${r.counted} attempt${r.counted === 1 ? '' : 's'}</strong> for ${esc(r.who)}
+             — about ${r.aiCalls} AI calls.
+             <p class="muted" style="margin-top:6px">
+               Scores will change. The old ones are replaced, not kept.
+             </p>
+             <button class="btn btn-sm" style="margin-top:10px"
+                     data-action="remark-run" ${r.running ? 'disabled' : ''}>
+               ${r.running ? 'Started…' : `Mark ${r.counted} attempt${r.counted === 1 ? '' : 's'} again`}
+             </button>
+           </div>`) : ''}
+    </div>`;
+  }
+
+  async function checkRemark() {
+    const email = document.getElementById('remark-email')?.value.trim() || '';
+    setState({ remark: { email, checking: true }, error: '' });
+    try {
+      const query = email ? `?email=${encodeURIComponent(email)}` : '';
+      const data = await api('/admin/results/remark' + query);
+      setState({
+        remark: { email, counted: data.attempts, aiCalls: data.aiCalls, who: data.email }
+      });
+    } catch (error) {
+      setState({ remark: { email }, error: error.message });
+    }
+  }
+
+  async function runRemark() {
+    const r = state.remark || {};
+    setState({ remark: { ...r, running: true }, error: '' });
+    try {
+      const data = await api('/admin/results/remark', {
+        method: 'POST',
+        body: { email: r.email || undefined }
+      });
+      state.notice = `${data.started} attempt(s) are being marked again. Open the result in a few minutes to see the new score.`;
+      setState({ remark: {} });
+    } catch (error) {
+      setState({ remark: { ...r, running: false }, error: error.message });
+    }
   }
 
   /**
@@ -850,6 +932,8 @@
     });
     if (action === 'purge-check') return checkPurge();
     if (action === 'purge-run') return runPurge();
+    if (action === 'remark-check') return checkRemark();
+    if (action === 'remark-run') return runRemark();
     if (action === 'rescue-check') return checkRescue();
     if (action === 'rescue-run') return runRescue();
     if (action === 'calibration-open') return openCalibration();
