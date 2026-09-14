@@ -23,7 +23,14 @@
 
 const DEFAULT_CONCURRENCY = 12;
 
-class AICallLimiter {
+/**
+ * The limiter itself is not specific to the marking model — it is a ceiling on
+ * how many of anything may be in flight — so it is exported for reuse. The
+ * pronunciation assessor needs its own instance with its own, much smaller
+ * ceiling: Azure's free tier permits exactly one recording at a time, and a
+ * second one is refused outright rather than queued.
+ */
+export class CallLimiter {
   constructor(
     concurrency =
       Number(process.env.AI_CONCURRENCY) ||
@@ -71,4 +78,4 @@ class AICallLimiter {
   }
 }
 
-export default new AICallLimiter();
+export default new CallLimiter();

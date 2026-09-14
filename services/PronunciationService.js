@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { CallLimiter } from './MarkingQueue.js';
 
 /**
  * Pronunciation assessment — Azure AI Speech.
@@ -57,6 +58,26 @@ const DEFAULT_BUDGET_SECONDS = 60;
 
 /** Azure returns 0-100; this app marks out of 75. */
 const AZURE_MAX = 100;
+
+/**
+ * A ceiling on how many recordings are being assessed at once, server-wide.
+ *
+ * This is not an optimisation, it is the difference between working and not.
+ * Azure's free tier permits exactly ONE assessment at a time and cannot be
+ * raised; a second arriving while the first is in flight is refused with a 429,
+ * not queued. Marking already runs a student's answers in parallel and a class
+ * finishes together, so without this ceiling the first student is assessed and
+ * everyone else is told "not assessed" — which looks exactly like a broken
+ * feature and is really just an unqueued queue.
+ *
+ * Default 1, because that is what the free tier allows and a wrong default here
+ * fails silently. Standard tier permits 100: raise AZURE_SPEECH_CONCURRENCY to
+ * something like 20 there and a class stops waiting on each other.
+ */
+const azureLimiter = new CallLimiter(Number(process.env.AZURE_SPEECH_CONCURRENCY) || 1);
+
+/** Attempts per clip before giving up on it. */
+const MAX_ATTEMPTS = Number(process.env.AZURE_SPEECH_MAX_RETRIES) || 3;
 
 class PronunciationService {
   get key() {
@@ -159,7 +180,36 @@ class PronunciationService {
    * @param {Buffer} audio    the stored recording, in whatever the browser made
    * @param {string} referenceText  what the student was transcribed as saying
    */
-  async assessClip(audio, referenceText) {
+  /**
+   * Assess one clip, queued behind any others and retried if Azure is busy.
+   *
+   * The queue does the real work; the retry is for the case the docs warn about,
+   * where Azure returns 429 while scaling up to meet demand even though the
+   * caller is inside its quota. Waiting a moment is the only cure for that —
+   * asking for more quota does not help.
+   */
+  assessClip(audio, referenceText) {
+    return azureLimiter.run(() => this.assessClipWithRetry(audio, referenceText));
+  }
+
+  async assessClipWithRetry(audio, referenceText, attempt = 1) {
+    try {
+      return await this.assessClipOnce(audio, referenceText);
+    } catch (error) {
+      if (!error.retryable || attempt >= MAX_ATTEMPTS) throw error;
+
+      // Jitter so several waiting clips do not all return at the same instant
+      // and collide again.
+      const waitMs = Math.min(20000, 1500 * 2 ** (attempt - 1)) + Math.random() * 500;
+      console.warn(
+        `Azure busy (attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${Math.round(waitMs)}ms`
+      );
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      return this.assessClipWithRetry(audio, referenceText, attempt + 1);
+    }
+  }
+
+  async assessClipOnce(audio, referenceText) {
     if (!this.isConfigured()) throw new Error('Azure Speech is not configured');
 
     const wav = await this.toWav(audio);
@@ -193,7 +243,11 @@ class PronunciationService {
 
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
-      throw new Error(this.explainFailure(response.status, detail));
+      const failure = new Error(this.explainFailure(response.status, detail));
+      // A refused key stays refused however long we wait; a busy service does
+      // not. Only the second kind is worth trying again.
+      failure.retryable = response.status === 429 || response.status >= 500;
+      throw failure;
     }
 
     return this.parse(await response.json());
@@ -204,8 +258,12 @@ class PronunciationService {
     if (status === 401) return 'Azure rejected the speech key — check AZURE_SPEECH_KEY.';
     if (status === 403) return 'Azure received no speech key — AZURE_SPEECH_KEY is missing.';
     if (status === 429) {
-      return 'Azure throttled the request. On the free tier only one recording ' +
-             'can be assessed at a time, and 5 hours a month are included.';
+      // Requests are already queued to one at a time by default, so reaching
+      // here means either the monthly allowance is spent or Azure is still
+      // scaling — and the two need different responses from a teacher.
+      return 'Azure refused the request as too many. Either the free tier\'s ' +
+             '5 audio hours for this month are used up, or AZURE_SPEECH_CONCURRENCY ' +
+             'is set higher than your tier allows (the free tier permits 1).';
     }
     if (status === 400) return `Azure rejected the audio or the locale: ${detail.slice(0, 200)}`;
     return `Azure pronunciation assessment failed (${status}): ${detail.slice(0, 200)}`;
@@ -275,7 +333,12 @@ class PronunciationService {
 
     const results = [];
     const failures = [];
+    const startedAt = Date.now();
 
+    // One clip at a time within an attempt, deliberately. Each call queues
+    // behind everyone else's, so submitting all three at once would put one
+    // student three places ahead of a classmate who is still waiting for their
+    // first — the same unfairness the queue exists to prevent.
     for (const clip of clips) {
       try {
         const assessment = await this.assessClip(clip.audio, clip.transcription);
@@ -286,6 +349,14 @@ class PronunciationService {
         failures.push(error.message);
       }
     }
+
+    // Logged because capacity here is a real constraint and guessing at it is
+    // how the free tier's one-at-a-time limit went unnoticed in the first place.
+    console.log(
+      `Pronunciation: ${results.length}/${clips.length} clip(s) in ` +
+      `${((Date.now() - startedAt) / 1000).toFixed(1)}s ` +
+      `(queue ${azureLimiter.stats.running} running, ${azureLimiter.stats.waiting} waiting)`
+    );
 
     if (!results.length) {
       return { assessed: false, error: failures[0] || 'No answer could be assessed.' };
