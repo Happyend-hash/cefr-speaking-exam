@@ -144,8 +144,21 @@ const examResultSchema = new mongoose.Schema(
       assessedAt: Date
     },
 
+    /**
+     * The examiner's verdict on the whole performance.
+     *
+     * Stored rather than derived because it is a judgement, not arithmetic: the
+     * parts are a ladder (Part 1 tops out at B1, Part 2 shows B2, Part 3 shows
+     * C1) and the level is the highest rung actually demonstrated. Averaging the
+     * answers produced a band too low for anyone who could argue at C1.
+     */
+    overallFeedback: String,
+    overallReasoning: String,      // which rung each part demonstrated
+    overallStrengths: [String],
+    overallImprovements: [String],
+
     // Overall Results
-    overallScore: Number, // Average of all tasks
+    overallScore: Number, // the whole-performance judgement; see above
 
     // The outcome of the test, not an input to it — so it is only set once
     // evaluation has run. Requiring it made starting an attempt impossible.

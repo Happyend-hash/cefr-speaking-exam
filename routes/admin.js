@@ -3,11 +3,18 @@ import multer from 'multer';
 import mongoose from 'mongoose';
 import Exam from '../models/Exam.js';
 import ExamResult from '../models/ExamResult.js';
+import CalibrationSample from '../models/CalibrationSample.js';
 import User from '../models/User.js';
 import ImageStorageService, {
   ALLOWED_IMAGE_TYPES,
   MAX_IMAGE_BYTES
 } from '../services/ImageStorageService.js';
+import AudioStorageService, {
+  ALLOWED_AUDIO_TYPES,
+  MAX_AUDIO_BYTES
+} from '../services/AudioStorageService.js';
+import TranscriptionService from '../services/TranscriptionService.js';
+import AIEvaluationService from '../services/AIEvaluationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
 import { isRescuable, rescueAttempt } from './exam.js';
 import { authorize } from '../middleware/auth.js';
@@ -535,6 +542,271 @@ router.get('/overview', async (req, res, next) => {
     res.json({
       success: true,
       data: { students, tests, published, attempts, completed }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * The calibration library.
+ *
+ * Marked sample answers the examiner is shown alongside the answer it is
+ * judging, so it compares against the teacher's standard instead of inventing a
+ * scale. See models/CalibrationSample.js for why this is the highest-value fix.
+ *
+ * Samples arrive two ways: a recording uploaded from outside, transcribed here;
+ * or a transcript typed in directly. Either way the teacher supplies the mark —
+ * that judgement is the whole point, and nothing else in the system can provide
+ * it.
+ */
+
+const sampleUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_AUDIO_BYTES },
+  fileFilter: (req, file, cb) => {
+    const type = (file.mimetype || '').split(';')[0].trim();
+    if (ALLOWED_AUDIO_TYPES.includes(type)) return cb(null, true);
+    cb(new APIError(`Unsupported audio format: ${type}`, 400));
+  }
+});
+
+/**
+ * @route   GET /api/admin/calibration
+ * @desc    Every sample, with a note on where the set is thin.
+ */
+router.get('/calibration', async (req, res, next) => {
+  try {
+    const samples = await CalibrationSample.find().sort({ part: 1, score: 1 }).lean();
+
+    // Spread is what teaches the scale, so the gaps matter more than the count.
+    // A part with four C1 samples and nothing below is worse calibrated than one
+    // with a single sample at each of B1, B2 and C1.
+    const PARTS = ['1.1', '1.2', '2', '3'];
+    const coverage = PARTS.map(part => {
+      const mine = samples.filter(s => s.part === part && s.isActive);
+      return {
+        part,
+        total: mine.length,
+        levels: [...new Set(mine.map(s => s.level))].sort(),
+        missing: ['B1', 'B2', 'C1'].filter(l => !mine.some(s => s.level === l))
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        coverage,
+        samples: samples.map(s => ({
+          id: s._id,
+          part: s.part,
+          level: s.level,
+          score: s.score,
+          scoreSource: s.scoreSource,
+          question: s.question,
+          transcription: s.transcription,
+          notes: s.notes,
+          isActive: s.isActive,
+          hasAudio: Boolean(s.audioKey),
+          audioUrl: s.audioKey ? `/api/exam/audio/${s.audioKey}` : null,
+          createdAt: s.createdAt
+        }))
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/calibration
+ * @desc    Add a sample, from an uploaded recording or a typed transcript.
+ */
+router.post('/calibration', sampleUpload.single('audio'), async (req, res, next) => {
+  try {
+    const { part, level, score, question, notes, scoreSource } = req.body;
+
+    if (!['1.1', '1.2', '2', '3'].includes(part)) {
+      throw new APIError('Choose which part this answer belongs to.', 400);
+    }
+    const mark = Number(score);
+    if (!Number.isFinite(mark) || mark < 0 || mark > 75) {
+      throw new APIError('Give a score between 0 and 75.', 400);
+    }
+    if (!['A1', 'A2', 'B1', 'B2', 'C1'].includes(level)) {
+      throw new APIError('Choose the level this answer represents.', 400);
+    }
+
+    let transcription = String(req.body.transcription || '').trim();
+    let audioKey = null;
+
+    if (req.file?.buffer?.length) {
+      const stored = await AudioStorageService.store(req.file.buffer, {
+        filename: `calibration-part-${part}-${level}.webm`,
+        contentType: (req.file.mimetype || '').split(';')[0].trim(),
+        studentId: req.user.id,
+        resultId: null,
+        taskNumber: 0
+      });
+      audioKey = stored.audioKey;
+
+      // Transcribe here rather than asking the teacher to type it out: the
+      // marker reads transcripts, so a sample has to be a transcript produced
+      // the same way, or it is teaching the model against a different medium.
+      if (!transcription) {
+        const { text } = await TranscriptionService.transcribe(req.file.buffer, {
+          filename: `calibration-part-${part}.webm`,
+          contentType: (req.file.mimetype || 'audio/webm').split(';')[0].trim()
+        });
+        transcription = String(text || '').trim();
+      }
+    }
+
+    if (!transcription) {
+      throw new APIError(
+        audioKey
+          ? 'No words could be heard in that recording, so it cannot be used as a sample.'
+          : 'Upload a recording or paste the transcript.',
+        400
+      );
+    }
+
+    const sample = await CalibrationSample.create({
+      part,
+      level,
+      score: Math.round(mark),
+      scoreSource: scoreSource === 'real-exam' ? 'real-exam' : 'teacher-estimate',
+      question: question || '',
+      notes: notes || '',
+      transcription,
+      audioKey,
+      addedBy: req.user.id
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Sample added for Part ${part} at ${level}.`,
+      data: { id: sample._id, transcription }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PATCH /api/admin/calibration/:id
+ * @desc    Correct a sample's mark, or take it out of use.
+ */
+router.patch('/calibration/:id', async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid sample id', 400);
+    const sample = await CalibrationSample.findById(req.params.id);
+    if (!sample) throw new APIError('Sample not found', 404);
+
+    const { score, level, notes, isActive, scoreSource } = req.body;
+    if (score !== undefined) {
+      const mark = Number(score);
+      if (!Number.isFinite(mark) || mark < 0 || mark > 75) {
+        throw new APIError('Give a score between 0 and 75.', 400);
+      }
+      sample.score = Math.round(mark);
+    }
+    if (level !== undefined) sample.level = level;
+    if (notes !== undefined) sample.notes = notes;
+    if (isActive !== undefined) sample.isActive = Boolean(isActive);
+    if (scoreSource !== undefined) sample.scoreSource = scoreSource;
+
+    await sample.save();
+    res.json({ success: true, message: 'Sample updated', data: { id: sample._id } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/admin/calibration/:id
+ */
+router.delete('/calibration/:id', async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid sample id', 400);
+    const sample = await CalibrationSample.findById(req.params.id);
+    if (!sample) throw new APIError('Sample not found', 404);
+
+    if (sample.audioKey) await AudioStorageService.delete(sample.audioKey);
+    await sample.deleteOne();
+
+    res.json({ success: true, message: 'Sample removed' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/calibration/check
+ * @desc    Mark the samples themselves and report the examiner's score beside
+ *          the teacher's.
+ *
+ * A wrongly scored sample is inherited silently by every marking that follows,
+ * so calibration needs a way to be wrong out loud. If the teacher says 67 and
+ * the examiner still says 54, the anchors are not landing — and that should be
+ * discovered from a button, not from a confused student.
+ */
+router.post('/calibration/check', async (req, res, next) => {
+  try {
+    const samples = await CalibrationSample.find({ isActive: true }).lean();
+    if (!samples.length) {
+      return res.json({
+        success: true,
+        message: 'No samples to check yet.',
+        data: { checked: [], averageGap: null }
+      });
+    }
+
+    const checked = [];
+    for (const sample of samples) {
+      try {
+        // Marked against the OTHER samples, never itself — a sample that can see
+        // its own answer key proves nothing.
+        const anchors = (await CalibrationSample.anchorsForPart(sample.part))
+          .filter(a => String(a._id) !== String(sample._id));
+
+        const evaluation = await AIEvaluationService.evaluateTask({
+          transcription: sample.transcription,
+          taskType: 'speaking',
+          question: sample.question || 'Sample answer',
+          part: sample.part,
+          anchors
+        });
+
+        checked.push({
+          id: String(sample._id),
+          part: sample.part,
+          level: sample.level,
+          teacherScore: sample.score,
+          examinerScore: evaluation.score,
+          gap: evaluation.score - sample.score
+        });
+      } catch (error) {
+        checked.push({
+          id: String(sample._id),
+          part: sample.part,
+          teacherScore: sample.score,
+          error: error.message
+        });
+      }
+    }
+
+    const gaps = checked.filter(c => typeof c.gap === 'number').map(c => c.gap);
+    const averageGap = gaps.length
+      ? Math.round((gaps.reduce((a, b) => a + b, 0) / gaps.length) * 10) / 10
+      : null;
+
+    res.json({
+      success: true,
+      message: averageGap === null
+        ? 'Nothing could be checked.'
+        : `The examiner is ${averageGap > 0 ? 'above' : 'below'} your marks by ${Math.abs(averageGap)} on average.`,
+      data: { checked, averageGap }
     });
   } catch (error) {
     next(error);

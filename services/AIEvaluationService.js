@@ -36,7 +36,8 @@ class AIEvaluationService {
         instructions,
         topic,
         pros,
-        cons
+        cons,
+        anchors
       } = taskData;
 
       if (!transcription || transcription.trim().length === 0) {
@@ -67,7 +68,7 @@ class AIEvaluationService {
             cefrLevel,
             referenceImages,
             followUpQuestions,
-            { part, instructions, topic, pros, cons }
+            { part, instructions, topic, pros, cons, anchors }
           );
 
       const response = await this.callClaudeAPI(prompt);
@@ -78,6 +79,106 @@ class AIEvaluationService {
       console.error('Error in evaluateTask:', error);
       throw new Error(`AI Evaluation failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Decide the candidate's level from the whole performance.
+   *
+   * This replaces averaging the eight answers, which was wrong in a way that
+   * quietly cost real candidates a band. The parts are a ladder, not equal
+   * slices: Part 1 can only ever demonstrate up to B1, Part 2 is where B2 is
+   * shown, Part 3 is where C1 is. Averaging them asks a 30-second Part 1.1
+   * answer to prove C1, marks it down when it cannot, and then drags a genuinely
+   * C1 candidate to the middle of B2. A teacher who scores 67 in the real exam
+   * was being handed 52 by arithmetic alone.
+   *
+   * So the overall mark is a judgement across every answer at once, the way an
+   * examiner forms one. Per-answer scores stay — they are useful feedback — but
+   * they no longer decide the outcome.
+   */
+  async evaluateAttempt({ answers, examTitle }) {
+    const byPart = answers.reduce((groups, answer) => {
+      (groups[answer.part] ||= []).push(answer);
+      return groups;
+    }, {});
+
+    const transcript = Object.entries(byPart)
+      .map(([part, group]) => `
+=== PART ${part} ===
+${group.map(a => `Q: ${a.question}\nA: "${a.transcription}"`).join('\n\n')}`)
+      .join('\n');
+
+    const prompt = `You are an expert examiner for the O'zbekiston Multilevel English speaking exam.
+You have the candidate's complete performance${examTitle ? ` on ${examTitle}` : ''} and must decide their level.
+
+HOW THIS EXAM ESTABLISHES A LEVEL — read this carefully, it is not an average:
+The parts are a ladder. Each one is where a particular level gets demonstrated.
+
+- PART 1 (1.1 and 1.2) establishes whether the candidate is A1, A2 or B1.
+  This part cannot show more than B1. Doing it well proves B1, not C1.
+- PART 2 is where B2 is demonstrated. A candidate who sustains an extended,
+  connected two-minute turn covering all three questions is showing B2.
+- PART 3 is where C1 is demonstrated. A candidate who argues a clear position,
+  develops reasons and engages with the opposing side is showing C1.
+
+The level is THE HIGHEST RUNG THE CANDIDATE ACTUALLY DEMONSTRATES. Weakness
+lower down does not cap them at that lower rung — it moves them down WITHIN the
+band they reached, not out of it:
+
+- Strong Part 3, weak Part 1 → solid or upper B2. Not B1.
+- Strong Part 2, weak Part 1, moderate Part 3 → B2, toward the lower end.
+- Strong throughout, including Part 3 → C1.
+- Handles Part 1 well but cannot sustain Part 2 → B1.
+
+Overall impression across the whole performance is weighed alongside this.
+
+YOU ARE READING AUTOMATIC TRANSCRIPTION OF SPEECH:
+No punctuation, inferred sentence boundaries, and repetitions or restarts that
+are normal in speech and often artefacts of transcription rather than errors.
+Judge the English a listener would have heard. Pronunciation and fluency are
+measured separately from the audio and are not yours to judge — do not mention
+accent, pace or hesitation anywhere.
+
+THE CANDIDATE'S FULL PERFORMANCE:
+${transcript}
+
+SCALE — out of 75:
+- 65-75  C1     - 51-64  B2     - 31-50  B1     - 16-30  A2     - 0-15  A1
+
+Decide the band first from the ladder above, then place the candidate within it.
+Do not hedge toward the middle: a candidate who demonstrates C1 in Part 3 belongs
+in the 65-75 band, and placing them at 58 to be safe is a marking error, not
+caution.
+
+Reply with JSON only:
+{
+  "score": (0-75),
+  "level": "A1|A2|B1|B2|C1",
+  "reasoning": "Which rung each part demonstrated, and how that produced this band",
+  "overallFeedback": "What the candidate does well and what holds them back, addressed to them",
+  "strengths": ["...", "...", "..."],
+  "areasForImprovement": ["...", "...", "..."]
+}
+
+${this.languageInstruction}
+Mark as the official examiner would: neither severe nor generous.`;
+
+    const response = await this.callClaudeAPI(prompt);
+    const verdict = this.parseEvaluation(response);
+
+    const score = Number(verdict.score);
+    if (!Number.isFinite(score)) throw new Error('Overall marking returned no usable score');
+
+    return {
+      score: Math.max(0, Math.min(MAX_SCORE, Math.round(score))),
+      // The band table is the authority on which level a score is, so the level
+      // is derived rather than trusted — the two can never disagree.
+      level: levelForScore(Math.max(0, Math.min(MAX_SCORE, Math.round(score)))),
+      reasoning: verdict.reasoning || '',
+      overallFeedback: verdict.overallFeedback || '',
+      strengths: verdict.strengths || [],
+      areasForImprovement: verdict.areasForImprovement || []
+    };
   }
 
   /**
@@ -155,11 +256,36 @@ Be rigorous and specific. Quote the candidate's own words when pointing out an e
     followUpQuestions,
     context = {}
   ) {
-    const { part, instructions, topic, pros, cons } = context;
+    const { part, instructions, topic, pros, cons, anchors = [] } = context;
+
+    /**
+     * Marked samples for this same part, lowest first.
+     *
+     * This is the single change that most affects accuracy. Without it the model
+     * invents the scale on every call and drifts toward the middle; with two or
+     * three known points it compares instead of guessing. Only samples for the
+     * same part are ever shown — a Part 1.1 example would actively mislead
+     * someone marking Part 3.
+     */
+    const anchorBlock = anchors.length
+      ? `\nMARKED SAMPLES FOR THIS PART — the teacher's own standard.
+Match these. An answer as good as the ${anchors[anchors.length - 1].score}/75 sample deserves about that mark; do not award less out of caution.
+${anchors.map(a => `
+--- ${a.level}, scored ${a.score}/75${a.scoreSource === 'real-exam' ? ' (confirmed by the real exam)' : ''}
+${a.question ? `Question: ${a.question}\n` : ''}"${a.transcription}"
+${a.notes ? `Why: ${a.notes}` : ''}`).join('\n')}
+--- end of samples\n`
+      : '';
 
     // What each part is actually testing. Without this the model grades a
     // 30-second Part 1.1 answer by the same yardstick as a 2-minute Part 3
     // argument, and marks the short one down for being short.
+    //
+    // The ceilings matter more than they look. The parts are a ladder: Part 1
+    // can only ever show A1-B1, Part 2 is where B2 is demonstrated, Part 3 is
+    // where C1 is. So an excellent Part 1.1 answer is an excellent B1-ceiling
+    // performance, and scoring it against the full 0-75 range asks it to prove
+    // something the task does not give it room to prove.
     const PART_BRIEF = {
       '1.1': 'Part 1.1 — three short personal questions, 30 seconds each. Expect a direct, ' +
              'relevant answer with a little detail. Brevity is correct here and must not be penalised.',
@@ -192,6 +318,14 @@ ${referenceImages?.length ? `- Reference Context: the student was shown ${refere
 
 STUDENT'S RESPONSE (Transcribed):
 "${transcription}"
+${anchorBlock}
+YOU ARE READING AUTOMATIC TRANSCRIPTION OF SPEECH, NOT WRITING:
+There is no punctuation because the transcriber does not add it, and sentence
+boundaries have to be inferred. Repetitions, restarts and self-corrections are
+normal features of fluent speech and are frequently transcription artefacts
+rather than the candidate's errors. Judge the English a listener would have
+heard, not the typography. Do not count a missing comma, a run-on line or a
+repeated word as a grammatical error.
 
 WHAT YOU CAN AND CANNOT JUDGE:
 You are reading a transcript. You did not hear this student. Pronunciation and
@@ -227,20 +361,30 @@ Please evaluate this response and provide a detailed assessment in the following
   "suggestedLevel": "CEFR level (A1/A2/B1/B2/C1/C2)"
 }
 
-SCORING SCALE — score out of 75, exactly as the O'zbekiston Multilevel exam does:
-- 65-75  C1
-- 51-64  B2
-- 31-50  B1
-- 16-30  A2
-- 0-15   A1
+HOW TO ARRIVE AT THE SCORE:
+Decide the band first, then the number inside it. Ask "is this A2, B1, B2 or C1
+for this part?" and only then place it within that band. Choosing a band is a
+judgement you can make reliably; choosing between 58 and 64 in the abstract is
+not, and starting from the number is how marking drifts to the middle.
 
-Never award more than 75. Set "suggestedLevel" to the band the score falls in,
-using the table above — the two must agree.
+- 65-75  C1     - 51-64  B2     - 31-50  B1     - 16-30  A2     - 0-15  A1
+
+Set "suggestedLevel" to the band the score falls in — the two must agree. Never
+award more than 75.
+
+Score this answer against what THIS PART can show. Part 1 tops out at B1 by
+design, so an answer that does everything Part 1 asks is a strong answer and
+should be scored as one, even though the task gives no room to demonstrate C1.
+Do not mark an answer down for failing to show a level its own task never asked
+for. The candidate's overall level is decided separately, across all parts
+together — it is not your job here and you must not hedge toward the middle in
+anticipation of it.
 
 ${this.languageInstruction}
-Be fair but rigorous. Judge accuracy, range, coherence, and how well the answer
-does what this part of the exam asks. Do not mark a short answer down for being
-short when the part calls for a short answer.`;
+Mark as the official examiner would: neither severe nor generous. Judge accuracy,
+range, coherence, and how well the answer does what this part of the exam asks.
+Do not mark a short answer down for being short when the part calls for a short
+answer.`;
   }
 
   /**

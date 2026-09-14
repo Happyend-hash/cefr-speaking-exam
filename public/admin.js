@@ -38,6 +38,10 @@
     tests: [],
     overview: null,
     openTestId: null,
+    calibration: null,       // { coverage, samples } once loaded
+    calibrationOpen: false,
+    addingSample: false,
+    calibrationCheck: null,  // results of the last consistency check
     editingTask: null,   // taskNumber being edited (writing)
     addingTo: null,      // test id the add-form is open for (writing)
     addingSectionTo: null,
@@ -59,12 +63,19 @@
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-  async function api(path, { method = 'GET', body } = {}) {
+  async function api(path, { method = 'GET', body, form } = {}) {
     const headers = {};
     if (state.token) headers.Authorization = `Bearer ${state.token}`;
+    // A FormData body sets its own Content-Type, including the multipart
+    // boundary. Setting it here would overwrite that and the upload would
+    // arrive unparseable.
     if (body) headers['Content-Type'] = 'application/json';
 
-    const res = await fetch(`${API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    const res = await fetch(`${API}${path}`, {
+      method,
+      headers,
+      body: form ? form : body ? JSON.stringify(body) : undefined
+    });
     let payload = {};
     try { payload = await res.json(); } catch {}
 
@@ -163,9 +174,182 @@
           ? '<div class="card"><p class="muted">No tests yet. Create one, then add questions to it.</p></div>'
           : state.tests.map(testCard).join('')}
 
+        ${calibrationCard()}
         ${rescueCard()}
         ${purgeCard()}
       </main>`;
+  }
+
+  /**
+   * The calibration library.
+   *
+   * Marked sample answers the examiner is shown while judging the same part, so
+   * it compares against this teacher's standard rather than inventing a scale.
+   * Without them the marker drifts toward the middle and a candidate who scores
+   * 67 in the real exam is handed 52.
+   *
+   * The card leads with coverage rather than a list, because spread is what
+   * teaches a scale: three samples at B1, B2 and C1 are worth more than ten all
+   * sitting at C1, and a teacher can only collect what they can see is missing.
+   */
+  function calibrationCard() {
+    const cal = state.calibration;
+
+    if (!state.calibrationOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Calibration samples</h2>
+        <p class="muted" style="margin-top:6px">
+          Marked example answers that teach the examiner your standard. Without them
+          it guesses the scale and marks low.
+        </p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="calibration-open">
+          Open calibration
+        </button>
+      </div>`;
+    }
+
+    const coverage = (cal?.coverage || []).map(c => `
+      <div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)">
+        <strong>Part ${esc(c.part)}</strong>
+        <span class="muted">${c.total} sample${c.total === 1 ? '' : 's'}${
+          c.levels.length ? ` · ${c.levels.join(', ')}` : ''
+        }</span>
+        ${c.missing.length
+          ? `<span class="tag tag-draft">needs ${c.missing.join(', ')}</span>`
+          : '<span class="tag tag-live">covered</span>'}
+      </div>`).join('');
+
+    const check = state.calibrationCheck;
+    const checkBlock = check ? `
+      <div style="margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--ground);border:1px solid var(--line)">
+        <strong>${check.averageGap === null
+          ? 'Nothing could be checked.'
+          : `The examiner is ${check.averageGap > 0 ? 'above' : 'below'} your marks by ${Math.abs(check.averageGap)} on average.`}</strong>
+        <p class="muted" style="margin-top:4px">
+          Each sample was marked against the others, never itself.
+        </p>
+        <div style="margin-top:10px">
+          ${(check.checked || []).map(c => `
+            <div class="row" style="justify-content:space-between;font-size:13px;padding:4px 0">
+              <span>Part ${esc(c.part)} · ${esc(c.level || '')}</span>
+              ${c.error
+                ? `<span class="muted">${esc(c.error)}</span>`
+                : `<span>you ${c.teacherScore} · examiner ${c.examinerScore}
+                     <strong style="color:${Math.abs(c.gap) <= 4 ? 'var(--green)' : 'var(--red)'}">
+                       ${c.gap > 0 ? '+' : ''}${c.gap}</strong></span>`}
+            </div>`).join('')}
+        </div>
+      </div>` : '';
+
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Calibration samples</h2>
+        <button class="btn btn-ghost btn-sm" data-action="calibration-close">Close</button>
+      </div>
+      <p class="muted" style="margin-top:6px">
+        Example answers with the mark you would give them. The examiner sees the samples
+        for the part it is judging and matches your standard instead of guessing.
+        Spread matters more than number — one at B1, B2 and C1 beats ten at C1.
+      </p>
+
+      <h3 style="font-size:15px;margin-top:18px">Coverage</h3>
+      ${coverage || '<p class="muted">No samples yet.</p>'}
+
+      <div class="row" style="gap:10px;margin-top:16px">
+        <button class="btn btn-sm" data-action="sample-add">+ Add a sample</button>
+        <button class="btn btn-ghost btn-sm" data-action="calibration-check" ${state.loading ? 'disabled' : ''}>
+          ${state.loading ? 'Checking…' : 'Check calibration'}
+        </button>
+      </div>
+      ${checkBlock}
+      ${state.addingSample ? sampleForm() : ''}
+      ${(cal?.samples || []).length ? `<h3 style="font-size:15px;margin-top:22px">Samples</h3>
+        ${cal.samples.map(sampleRow).join('')}` : ''}
+    </div>`;
+  }
+
+  function sampleForm() {
+    return `<form id="sample-form" class="card" style="margin-top:16px;background:var(--ground)">
+      <h3 style="font-size:15px;margin-bottom:12px">New sample</h3>
+
+      <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span class="muted" style="font-size:13px">Part</span>
+          <select name="part" required>
+            <option value="1.1">1.1</option><option value="1.2">1.2</option>
+            <option value="2">2</option><option value="3" selected>3</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span class="muted" style="font-size:13px">Level</span>
+          <select name="level" required>
+            <option>A2</option><option>B1</option><option selected>B2</option><option>C1</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span class="muted" style="font-size:13px">Score / 75</span>
+          <input name="score" type="number" min="0" max="75" required style="width:90px" />
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span class="muted" style="font-size:13px">Score is</span>
+          <select name="scoreSource">
+            <option value="teacher-estimate">my estimate</option>
+            <option value="real-exam">a real exam result</option>
+          </select>
+        </label>
+      </div>
+
+      <label style="display:block;margin-top:12px">
+        <span class="muted" style="font-size:13px">Question the answer responds to (optional)</span>
+        <input name="question" placeholder="e.g. Some people believe technology isolates us…" />
+      </label>
+
+      <label style="display:block;margin-top:12px">
+        <span class="muted" style="font-size:13px">Recording (optional — it will be transcribed for you)</span>
+        <input name="audio" type="file" accept="audio/*" />
+      </label>
+
+      <label style="display:block;margin-top:12px">
+        <span class="muted" style="font-size:13px">Or paste the transcript</span>
+        <textarea name="transcription" rows="5" placeholder="Leave empty if you uploaded a recording."></textarea>
+      </label>
+
+      <label style="display:block;margin-top:12px">
+        <span class="muted" style="font-size:13px">Why it earns this mark (optional, but it is what the examiner reads)</span>
+        <input name="notes" placeholder="e.g. clear position, developed reasons, a few slips under pressure" />
+      </label>
+
+      <div class="row" style="gap:10px;margin-top:14px">
+        <button class="btn btn-sm" type="submit" ${state.loading ? 'disabled' : ''}>
+          ${state.loading ? 'Saving…' : 'Save sample'}
+        </button>
+        <button class="btn btn-ghost btn-sm" type="button" data-action="sample-cancel">Cancel</button>
+      </div>
+    </form>`;
+  }
+
+  function sampleRow(s) {
+    return `<div class="card" style="margin-top:10px;${s.isActive ? '' : 'opacity:.55'}">
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div>
+          <strong>Part ${esc(s.part)} · ${esc(s.level)} · ${s.score}/75</strong>
+          <span class="muted" style="font-size:13px">
+            ${s.scoreSource === 'real-exam' ? ' — confirmed by the real exam' : ' — your estimate'}
+            ${s.hasAudio ? ' · has recording' : ''}
+          </span>
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm" data-sample-toggle="${esc(s.id)}" data-active="${s.isActive}">
+            ${s.isActive ? 'Deactivate' : 'Activate'}
+          </button>
+          <button class="btn btn-ghost btn-sm btn-quiet" data-sample-delete="${esc(s.id)}">Delete</button>
+        </div>
+      </div>
+      ${s.question ? `<p class="muted" style="font-size:13px;margin-top:6px">Q: ${esc(s.question)}</p>` : ''}
+      <p style="font-size:14px;margin-top:6px">${esc(s.transcription.slice(0, 400))}${s.transcription.length > 400 ? '…' : ''}</p>
+      ${s.notes ? `<p class="muted" style="font-size:13px;margin-top:6px">Why: ${esc(s.notes)}</p>` : ''}
+      ${s.audioUrl ? `<audio controls src="${esc(s.audioUrl)}" style="margin-top:8px;width:100%;max-width:420px"></audio>` : ''}
+    </div>`;
   }
 
   /**
@@ -581,6 +765,14 @@
   function wire() {
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
     document.getElementById('new-test-form')?.addEventListener('submit', handleNewTest);
+    document.getElementById('sample-form')?.addEventListener('submit', handleNewSample);
+
+    root.querySelectorAll('[data-sample-toggle]').forEach(el =>
+      el.addEventListener('click', () =>
+        toggleSample(el.dataset.sampleToggle, el.dataset.active === 'true')));
+
+    root.querySelectorAll('[data-sample-delete]').forEach(el =>
+      el.addEventListener('click', () => deleteSample(el.dataset.sampleDelete)));
 
     root.querySelectorAll('[data-action]').forEach(el =>
       el.addEventListener('click', () => handleAction(el.dataset.action)));
@@ -660,6 +852,87 @@
     if (action === 'purge-run') return runPurge();
     if (action === 'rescue-check') return checkRescue();
     if (action === 'rescue-run') return runRescue();
+    if (action === 'calibration-open') return openCalibration();
+    if (action === 'calibration-close') return setState({ calibrationOpen: false, addingSample: false });
+    if (action === 'calibration-check') return runCalibrationCheck();
+    if (action === 'sample-add') return setState({ addingSample: true, error: '' });
+    if (action === 'sample-cancel') return setState({ addingSample: false });
+  }
+
+  async function openCalibration() {
+    setState({ calibrationOpen: true, loading: true, error: '' });
+    try {
+      const data = await api('/admin/calibration');
+      setState({ calibration: data, loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  async function loadCalibration() {
+    try {
+      state.calibration = await api('/admin/calibration');
+    } catch { /* the card shows what it has */ }
+  }
+
+  async function handleNewSample(event) {
+    event.preventDefault();
+    const form = event.target;
+
+    // Sent as multipart because a sample may carry a recording. The transcript
+    // is optional when audio is present — the server transcribes it, so the
+    // sample is a transcript produced exactly the way marked answers are.
+    const data = new FormData();
+    for (const field of ['part', 'level', 'score', 'scoreSource', 'question', 'transcription', 'notes']) {
+      data.append(field, form[field]?.value || '');
+    }
+    const file = form.audio?.files?.[0];
+    if (file) data.append('audio', file);
+
+    if (!file && !form.transcription.value.trim()) {
+      return setState({ error: 'Upload a recording or paste the transcript.' });
+    }
+
+    setState({ loading: true, error: '' });
+    try {
+      await api('/admin/calibration', { method: 'POST', form: data });
+      await loadCalibration();
+      state.notice = 'Sample added. It will be used the next time an answer for that part is marked.';
+      setState({ loading: false, addingSample: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  async function toggleSample(id, isActive) {
+    try {
+      await api(`/admin/calibration/${id}`, { method: 'PATCH', body: { isActive: !isActive } });
+      await loadCalibration();
+      render();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  async function deleteSample(id) {
+    if (!window.confirm('Delete this sample? The examiner will stop using it.')) return;
+    try {
+      await api(`/admin/calibration/${id}`, { method: 'DELETE' });
+      await loadCalibration();
+      render();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  async function runCalibrationCheck() {
+    setState({ loading: true, error: '', calibrationCheck: null });
+    try {
+      const data = await api('/admin/calibration/check', { method: 'POST' });
+      setState({ calibrationCheck: data, loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
   }
 
   async function checkRescue() {

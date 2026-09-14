@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 
 import Exam from '../models/Exam.js';
 import ExamResult, { MAX_SCORE } from '../models/ExamResult.js';
+import CalibrationSample from '../models/CalibrationSample.js';
 import AIEvaluationService from '../services/AIEvaluationService.js';
 import TranscriptionService from '../services/TranscriptionService.js';
 import AudioStorageService, {
@@ -213,6 +214,12 @@ router.get('/results/:resultId', async (req, res, next) => {
         overallScore: result.overallScore ?? null,
         overallLevel: result.overallLevel,
         isPassed: result.isPassed,
+        // The examiner's verdict on the whole performance, which is where the
+        // level actually comes from — the per-answer marks are feedback.
+        overallFeedback: result.overallFeedback || '',
+        overallReasoning: result.overallReasoning || '',
+        overallStrengths: result.overallStrengths || [],
+        overallImprovements: result.overallImprovements || [],
         // Always sent, even unassessed: the client has to be able to say
         // "not assessed" rather than quietly leaving the criterion out, which
         // would read as though pronunciation had simply been forgotten.
@@ -838,7 +845,14 @@ async function markAttempt(resultId) {
 
     jobs.push(async () => {
       try {
+        // The teacher's marked samples for this same part, so the examiner
+        // compares against a known standard instead of inventing the scale.
+        const anchors = question?.part
+          ? await CalibrationSample.anchorsForPart(question.part)
+          : [];
+
         const evaluation = await AIEvaluationService.evaluateTask({
+          anchors,
           transcription: taskResult.transcription,
           taskType: taskResult.type,
           question: task ? task.question : question.text,
@@ -967,8 +981,50 @@ async function markAttempt(resultId) {
     return;
   }
 
-  result.calculateOverallScore();
-  result.overallLevel = result.determineCEFRLevel();
+  /*
+   * The level comes from the whole performance, not from averaging the answers.
+   *
+   * The parts are a ladder — Part 1 tops out at B1, Part 2 is where B2 is shown,
+   * Part 3 where C1 is — so averaging eight answers asked a 30-second Part 1.1
+   * reply to prove C1, marked it down when it could not, and pulled a genuine C1
+   * candidate into the middle of B2. This reads every answer at once, as an
+   * examiner does.
+   *
+   * The old average survives as the fallback. It is wrong in the way described
+   * above, but it is wrong in a knowable direction, and a marked attempt with a
+   * pessimistic score beats an attempt with no score at all.
+   */
+  const speakingAnswers = result.taskResults
+    .filter(t => t.status === 'evaluated' && String(t.transcription || '').trim())
+    .map(t => ({
+      part: questionByNumber.get(t.taskNumber)?.part || '—',
+      question: questionByNumber.get(t.taskNumber)?.text || '',
+      transcription: t.transcription
+    }));
+
+  let overall = null;
+  if (speakingAnswers.length && result.taskResults.some(t => t.audioKey)) {
+    try {
+      overall = await AICallLimiter.run(() =>
+        AIEvaluationService.evaluateAttempt({ answers: speakingAnswers, examTitle: exam.title })
+      );
+    } catch (error) {
+      console.error(`Overall marking failed for ${result._id}, averaging instead:`, error.message);
+    }
+  }
+
+  if (overall) {
+    result.overallScore = overall.score;
+    result.overallLevel = overall.level;
+    result.overallFeedback = overall.overallFeedback;
+    result.overallReasoning = overall.reasoning;
+    result.overallStrengths = overall.strengths;
+    result.overallImprovements = overall.areasForImprovement;
+  } else {
+    result.calculateOverallScore();
+    result.overallLevel = result.determineCEFRLevel();
+  }
+
   // Passing means reaching B1, the lowest certified band on the 75-point scale.
   result.isPassed = result.overallScore >= (Number(process.env.PASS_SCORE) || 31);
   result.status = 'completed';

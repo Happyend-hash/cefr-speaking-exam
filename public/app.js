@@ -2048,6 +2048,26 @@
         </div>
       </div>
 
+      ${r.overallFeedback ? `<div class="card">
+        <div class="section-head"><h2>Umumiy baho</h2>
+          <p>Butun imtihon bo'yicha — bu yerdan darajangiz aniqlanadi.</p></div>
+        <p>${esc(r.overallFeedback)}</p>
+        ${r.overallReasoning
+          // Why this level, part by part. A student told "B2" learns nothing;
+          // a student told which part carried them and which held them back
+          // knows what to practise next.
+          ? `<p class="muted" style="margin-top:12px">${esc(r.overallReasoning)}</p>`
+          : ''}
+        ${r.overallStrengths?.length
+          ? `<div style="margin-top:14px"><div class="section-title">${esc(UI_TEXT.strengths)}</div>
+               <ul class="pill-list">${r.overallStrengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>`
+          : ''}
+        ${r.overallImprovements?.length
+          ? `<div style="margin-top:12px"><div class="section-title">${esc(UI_TEXT.improvements)}</div>
+               <ul class="pill-list">${r.overallImprovements.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>`
+          : ''}
+      </div>` : ''}
+
       ${unread.map(t => `
         <div class="card">
           <div class="row" style="justify-content:space-between">
