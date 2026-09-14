@@ -9,6 +9,7 @@ import ImageStorageService, {
   MAX_IMAGE_BYTES
 } from '../services/ImageStorageService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
+import { isRescuable, rescueAttempt } from './exam.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -534,6 +535,102 @@ router.get('/overview', async (req, res, next) => {
     res.json({
       success: true,
       data: { students, tests, published, attempts, completed }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Rescuing attempts that were never read.
+ *
+ * A batch of attempts came back as zeros because the recordings arrived with no
+ * words attached — most mobile browsers have no speech recognition, and at the
+ * time that was the only transcriber. The audio was always fine. It was never
+ * read, and the student was handed a false A1 for an answer nobody had seen.
+ *
+ * Server-side transcription fixed the cause, and the recordings are still in
+ * storage, so those attempts are recoverable rather than rubbish. Deleting them
+ * would destroy work that can be turned into a real score instead.
+ */
+
+/**
+ * @route   GET /api/admin/results/rescue
+ * @desc    Count attempts holding recordings that were never transcribed.
+ */
+router.get('/results/rescue', authorize('admin'), async (req, res, next) => {
+  try {
+    // Anything that finished badly, or never finished at all. Attempts still in
+    // progress are excluded: a student may simply be part-way through one.
+    const candidates = await ExamResult.find({
+      status: { $in: ['completed', 'submitted'] }
+    }).select('student taskResults overallScore status').lean();
+
+    const rescuable = candidates.filter(isRescuable);
+
+    res.json({
+      success: true,
+      data: {
+        attempts: rescuable.length,
+        students: new Set(rescuable.map(r => String(r.student))).size,
+        answers: rescuable.reduce(
+          (sum, r) => sum + (r.taskResults || []).filter(
+            t => t.audioKey && !String(t.transcription || '').trim()
+          ).length,
+          0
+        )
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/results/rescue
+ * @desc    Transcribe those recordings and mark the attempts properly.
+ *
+ * Returns as soon as the work is under way. Re-reading and re-marking a class's
+ * worth of attempts takes minutes, and holding the teacher's browser open for
+ * it would only invite them to close the tab half way and wonder what happened.
+ * Each attempt updates itself as it finishes, exactly as a fresh one does.
+ */
+router.post('/results/rescue', authorize('admin'), async (req, res, next) => {
+  try {
+    const candidates = await ExamResult.find({
+      status: { $in: ['completed', 'submitted'] }
+    }).select('_id taskResults').lean();
+
+    const ids = candidates.filter(isRescuable).map(r => String(r._id));
+    if (!ids.length) {
+      return res.json({
+        success: true,
+        message: 'Nothing to rescue — every attempt with a recording has been read.',
+        data: { started: 0 }
+      });
+    }
+
+    // One at a time, deliberately. Each rescue transcribes several recordings
+    // and then marks them, and firing fifty at once would collide with the
+    // students actually sitting exams right now.
+    (async () => {
+      let rescued = 0;
+      for (const id of ids) {
+        try {
+          const outcome = await rescueAttempt(id);
+          if (outcome.ok) rescued += 1;
+          else console.warn(`Rescue skipped ${id}: ${outcome.reason}`);
+        } catch (error) {
+          console.error(`Rescue failed for ${id}:`, error.message);
+        }
+      }
+      console.log(`Rescue finished: ${rescued}/${ids.length} attempt(s) recovered`);
+    })();
+
+    res.status(202).json({
+      success: true,
+      message: `Re-reading ${ids.length} attempt(s). Scores will appear as each one finishes.`,
+      data: { started: ids.length }
     });
   } catch (error) {
     next(error);

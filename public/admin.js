@@ -163,8 +163,57 @@
           ? '<div class="card"><p class="muted">No tests yet. Create one, then add questions to it.</p></div>'
           : state.tests.map(testCard).join('')}
 
+        ${rescueCard()}
         ${purgeCard()}
       </main>`;
+  }
+
+  /**
+   * Recovering attempts nobody ever read.
+   *
+   * Students were handed zeros because their recordings arrived with no words:
+   * most mobile browsers have no speech recognition, and at the time that was
+   * the only transcriber. The audio was always fine. Server-side transcription
+   * fixed the cause, and the recordings are still stored — so these attempts can
+   * be turned into real scores rather than thrown away.
+   *
+   * Deliberately placed above the clear-attempts panel: given a zero, recovering
+   * it is almost always the better answer, and the destructive option should not
+   * be the first one a teacher meets.
+   */
+  function rescueCard() {
+    const r = state.rescue || {};
+
+    return `<div class="card" style="margin-top:28px">
+      <h2 style="font-size:18px">Re-read unmarked recordings</h2>
+      <p class="muted" style="margin-top:6px">
+        Some attempts scored zero because the recording was never turned into text —
+        older phones could not do it. That is fixed, and the recordings are still here,
+        so those attempts can be read and marked properly instead of deleted.
+      </p>
+
+      <div class="row" style="gap:12px;margin-top:14px">
+        <button class="btn btn-ghost btn-sm" data-action="rescue-check" ${r.checking ? 'disabled' : ''}>
+          ${r.checking ? 'Checking…' : 'Check what can be recovered'}
+        </button>
+      </div>
+
+      ${r.counted !== undefined ? (r.counted === 0
+        ? '<p class="muted" style="margin-top:14px">Nothing to recover — every attempt with a recording has been read.</p>'
+        : `<div style="margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--green-bg);border:1px solid var(--green)">
+             <strong>${r.counted} attempt${r.counted === 1 ? '' : 's'}</strong>
+             from ${r.students} student${r.students === 1 ? '' : 's'},
+             holding ${r.answers} unread recording${r.answers === 1 ? '' : 's'}.
+             <p class="muted" style="margin-top:6px">
+               Nothing is deleted. Each attempt is read again and re-marked, and the
+               score updates itself when it finishes.
+             </p>
+             <button class="btn btn-sm" style="margin-top:10px"
+                     data-action="rescue-run" ${r.running ? 'disabled' : ''}>
+               ${r.running ? 'Started…' : `Re-read these ${r.counted} attempts`}
+             </button>
+           </div>`) : ''}
+    </div>`;
   }
 
   /**
@@ -609,6 +658,34 @@
     });
     if (action === 'purge-check') return checkPurge();
     if (action === 'purge-run') return runPurge();
+    if (action === 'rescue-check') return checkRescue();
+    if (action === 'rescue-run') return runRescue();
+  }
+
+  async function checkRescue() {
+    setState({ rescue: { checking: true }, error: '' });
+    try {
+      const data = await api('/admin/results/rescue');
+      setState({
+        rescue: { counted: data.attempts, students: data.students, answers: data.answers }
+      });
+    } catch (error) {
+      setState({ rescue: {}, error: error.message });
+    }
+  }
+
+  async function runRescue() {
+    const r = state.rescue || {};
+    setState({ rescue: { ...r, running: true }, error: '' });
+    try {
+      const data = await api('/admin/results/rescue', { method: 'POST' });
+      // The work carries on server-side after this returns, so the notice says
+      // what is happening rather than claiming it is done.
+      state.notice = `${data.started} attempt(s) are being re-read. Scores appear as each one finishes — check back in a few minutes.`;
+      setState({ rescue: {} });
+    } catch (error) {
+      setState({ rescue: { ...r, running: false }, error: error.message });
+    }
   }
 
   /** Read the form without re-rendering, so a half-typed date is not lost. */

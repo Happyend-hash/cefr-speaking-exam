@@ -718,6 +718,83 @@ function pronunciationFeedback(pronunciation) {
   return `${opening} Ustida ishlash kerak bo'lgan so'zlar: ${words.join(', ')}.`;
 }
 
+/**
+ * Which attempts can be rescued, and why they need rescuing.
+ *
+ * A batch of attempts was handed back as zeros, or as nothing at all, because
+ * the recordings arrived with no words attached: most mobile browsers have no
+ * speech recognition, and at the time that was the only transcriber. The audio
+ * was always fine — it was never read.
+ *
+ * That is now fixed, and the recordings are still in storage, so those attempts
+ * are not broken. They are unread. This finds them.
+ */
+export function isRescuable(result) {
+  const answers = result.taskResults || [];
+  const withAudio = answers.filter(t => t.audioKey);
+  if (!withAudio.length) return false;
+
+  // An answer holding a recording but no words is one nobody has read yet.
+  return withAudio.some(t => !String(t.transcription || '').trim());
+}
+
+/**
+ * Read the recordings that were never read, then mark the attempt properly.
+ *
+ * Transcribing first is the whole point: marking alone would skip these answers
+ * again, because it (correctly) refuses to score an answer with no words. The
+ * words have to be recovered from the audio before there is anything to mark.
+ */
+export async function rescueAttempt(resultId) {
+  const result = await ExamResult.findById(resultId);
+  if (!result) return { ok: false, reason: 'not found' };
+
+  let recovered = 0;
+  let failed = 0;
+
+  for (const taskResult of result.taskResults) {
+    if (!taskResult.audioKey) continue;
+    if (String(taskResult.transcription || '').trim()) continue;
+
+    try {
+      const audio = await AudioStorageService.readBuffer(taskResult.audioKey);
+      const { text } = await TranscriptionService.transcribe(audio, {
+        filename: `task-${taskResult.taskNumber}.webm`,
+        contentType: 'audio/webm'
+      });
+
+      if (String(text || '').trim()) {
+        taskResult.transcription = text;
+        // Back to 'pending' so marking picks it up: 'not_transcribed' is what
+        // told it to leave this answer alone in the first place.
+        taskResult.status = 'pending';
+        recovered += 1;
+      } else {
+        failed += 1;
+      }
+    } catch (error) {
+      console.warn(`Rescue: task ${taskResult.taskNumber} of ${resultId} — ${error.message}`);
+      failed += 1;
+    }
+  }
+
+  if (!recovered) {
+    return { ok: false, reason: failed ? 'no words could be recovered' : 'nothing to recover' };
+  }
+
+  // Clear the old verdict so a rescue that then fails to mark leaves no stale
+  // score behind claiming to be current. `set(..., undefined)` is Mongoose's
+  // way of unsetting a path — a plain assignment of undefined is ignored.
+  result.set('overallScore', undefined);
+  result.set('overallLevel', undefined);
+  result.set('isPassed', undefined);
+  result.status = 'submitted';
+  await result.save();
+
+  await markAttempt(resultId);
+  return { ok: true, recovered, failed };
+}
+
 async function markAttempt(resultId) {
   const result = await ExamResult.findById(resultId);
   if (!result) return;
