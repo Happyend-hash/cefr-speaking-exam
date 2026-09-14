@@ -959,9 +959,15 @@ export async function markAttempt(resultId) {
   }
 
   if (jobs.length) {
+    // Tokens, not money: the rate changes and a stale dollar figure in a log is
+    // worse than an honest count. This is how the cost per mock stops being my
+    // arithmetic and starts being a measurement.
+    const spend = AIEvaluationService.costSummary;
     console.log(
       `Marked ${jobs.length} answer(s) for ${result._id} in ` +
-      `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+      `${((Date.now() - startedAt) / 1000).toFixed(1)}s — ` +
+      `since boot: ${spend.calls} calls, ${spend.input} in / ${spend.output} out, ` +
+      `cache ${spend.cacheHitRate}% hit (${spend.cacheRead} read / ${spend.cacheWrite} written)`
     );
   }
 

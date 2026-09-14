@@ -16,6 +16,44 @@ class AIEvaluationService {
     // reasoning is billed against the same budget, and a budget spent before
     // the JSON is written comes back as a truncated reply with nothing to parse.
     this.maxTokens = parseInt(process.env.CLAUDE_MAX_TOKENS) || 4000;
+
+    /**
+     * A cheaper model for the per-answer feedback, if one is configured.
+     *
+     * The per-answer notes are supporting detail; the candidate's level comes
+     * from the whole-performance pass, which always uses the main model. So the
+     * two can be split — but only once there are calibration samples to prove
+     * the cheaper one still marks to the same standard, which is what the
+     * calibration check is for. Unset, both use the same model and nothing
+     * changes.
+     */
+    this.answerModel = process.env.CLAUDE_ANSWER_MODEL || null;
+
+    /** Tokens spent since boot, so the cost is measured rather than estimated. */
+    this.spend = { calls: 0, input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+  }
+
+  /**
+   * What has been spent since this container started.
+   *
+   * Reported in tokens rather than money on purpose: prices change, differ per
+   * model, and a dollar figure that quietly goes stale is worse than an honest
+   * count. Multiply by the current rate when you want the bill.
+   */
+  get costSummary() {
+    const { calls, input, output, cacheWrite, cacheRead } = this.spend;
+    return {
+      calls,
+      input,
+      output,
+      cacheWrite,
+      cacheRead,
+      // The share of repeated prompt text read from cache instead of paid for
+      // in full. Near zero means caching is not working.
+      cacheHitRate: cacheRead + cacheWrite
+        ? Math.round((cacheRead / (cacheRead + cacheWrite)) * 100)
+        : 0
+    };
   }
 
   /**
@@ -108,8 +146,8 @@ class AIEvaluationService {
 ${group.map(a => `Q: ${a.question}\nA: "${a.transcription}"`).join('\n\n')}`)
       .join('\n');
 
-    const prompt = `You are an expert examiner for the O'zbekiston Multilevel English speaking exam.
-You have the candidate's complete performance${examTitle ? ` on ${examTitle}` : ''} and must decide their level.
+    const cached = `You are an expert examiner for the O'zbekiston Multilevel English speaking exam.
+You are given a candidate's complete performance and must decide their level.
 
 HOW THIS EXAM ESTABLISHES A LEVEL — read this carefully, it is not an average:
 The parts are a ladder. Each one is where a particular level gets demonstrated.
@@ -139,9 +177,6 @@ Judge the English a listener would have heard. Pronunciation and fluency are
 measured separately from the audio and are not yours to judge — do not mention
 accent, pace or hesitation anywhere.
 
-THE CANDIDATE'S FULL PERFORMANCE:
-${transcript}
-
 SCALE — out of 75:
 - 65-75  C1     - 51-64  B2     - 31-50  B1     - 16-30  A2     - 0-15  A1
 
@@ -163,7 +198,10 @@ Reply with JSON only:
 ${this.languageInstruction}
 Mark as the official examiner would: neither severe nor generous.`;
 
-    const response = await this.callClaudeAPI(prompt);
+    const user = `${examTitle ? `Exam: ${examTitle}\n\n` : ''}THE CANDIDATE'S FULL PERFORMANCE:
+${transcript}`;
+
+    const response = await this.callClaudeAPI({ cached, user });
     const verdict = this.parseEvaluation(response);
 
     const score = Number(verdict.score);
@@ -301,23 +339,22 @@ ${a.notes ? `Why: ${a.notes}` : ''}`).join('\n')}
            'done the task.'
     };
 
-    return `You are an expert examiner for the O'zbekiston Multilevel English speaking exam, assessing against the CEFR framework.
+    /*
+     * Split so the unchanging half can be cached.
+     *
+     * Everything fixed for this part — the examiner's role, what the part
+     * tests, the marked samples, how to arrive at a score — goes in `cached`.
+     * Only the question and the student's words go in `user`. Marking one mock
+     * makes eight calls that share the whole of `cached`; sent in full each
+     * time, that prefix is paid for eight times over.
+     *
+     * The prefix has to be byte-identical to be reused, so nothing about a
+     * particular candidate may leak into it.
+     */
+    const cached = `You are an expert examiner for the O'zbekiston Multilevel English speaking exam, assessing against the CEFR framework.
 
-TASK INFORMATION:
-- Task Type: ${taskType}${part ? `\n- Exam Part: ${part}` : ''}${
-      PART_BRIEF[part] ? `\n- What this part tests: ${PART_BRIEF[part]}` : ''
-    }
-- Target Level: ${cefrLevel || 'not fixed — this is a Multilevel sitting, so determine the level from the performance'}${
-      instructions ? `\n- Instructions the student was given: ${instructions}` : ''
-    }${topic ? `\n- Topic / statement on screen: ${topic}` : ''}
-- Question/Prompt: ${question}
-${pros?.length ? `- Arguments FOR shown to the student: ${pros.join('; ')}` : ''}
-${cons?.length ? `- Arguments AGAINST shown to the student: ${cons.join('; ')}` : ''}
-${followUpQuestions?.length ? `- Follow-up Questions: ${followUpQuestions.join(', ')}` : ''}
-${referenceImages?.length ? `- Reference Context: the student was shown ${referenceImages.length} picture(s). You cannot see them.` : ''}
-
-STUDENT'S RESPONSE (Transcribed):
-"${transcription}"
+WHAT THIS PART TESTS:
+${PART_BRIEF[part] || 'A speaking task in the Multilevel format.'}
 ${anchorBlock}
 YOU ARE READING AUTOMATIC TRANSCRIPTION OF SPEECH, NOT WRITING:
 There is no punctuation because the transcriber does not add it, and sentence
@@ -328,38 +365,10 @@ heard, not the typography. Do not count a missing comma, a run-on line or a
 repeated word as a grammatical error.
 
 WHAT YOU CAN AND CANNOT JUDGE:
-You are reading a transcript. You did not hear this student. Pronunciation and
-fluency are therefore not yours to score — they are measured separately from the
-audio itself by a speech assessor, and your guess would overwrite a measurement.
-Do not mention pronunciation, accent, intonation, pace or hesitation anywhere in
-your feedback, including in strengths and areas for improvement: you have no
-evidence for any of it. Judge what the words show — grammar, vocabulary,
-coherence and whether the task was done — and let the overall score reflect only
-those.
-
-Please evaluate this response and provide a detailed assessment in the following JSON format:
-
-{
-  "score": (numeric score from 0 to 75 — the Multilevel scale),
-  "criteria": {
-    "grammar": {
-      "score": (0-75),
-      "feedback": "Specific feedback on grammatical accuracy, sentence structure, and complexity"
-    },
-    "vocabulary": {
-      "score": (0-75),
-      "feedback": "Feedback on vocabulary range, appropriateness, and use of idiomatic expressions"
-    },
-    "coherence": {
-      "score": (0-75),
-      "feedback": "Feedback on logical organization, coherence, and task completion"
-    }
-  },
-  "overallFeedback": "A comprehensive summary of the response quality and assessment",
-  "strengths": ["Strength 1", "Strength 2", "Strength 3"],
-  "areasForImprovement": ["Area 1", "Area 2", "Area 3"],
-  "suggestedLevel": "CEFR level (A1/A2/B1/B2/C1/C2)"
-}
+You did not hear this student. Pronunciation and fluency are measured separately
+from the audio by a speech assessor and are not yours to score — do not mention
+pronunciation, accent, intonation, pace or hesitation anywhere. Judge what the
+words show: grammar, vocabulary, coherence, and whether the task was done.
 
 HOW TO ARRIVE AT THE SCORE:
 Decide the band first, then the number inside it. Ask "is this A2, B1, B2 or C1
@@ -369,22 +378,47 @@ not, and starting from the number is how marking drifts to the middle.
 
 - 65-75  C1     - 51-64  B2     - 31-50  B1     - 16-30  A2     - 0-15  A1
 
-Set "suggestedLevel" to the band the score falls in — the two must agree. Never
-award more than 75.
-
 Score this answer against what THIS PART can show. Part 1 tops out at B1 by
 design, so an answer that does everything Part 1 asks is a strong answer and
 should be scored as one, even though the task gives no room to demonstrate C1.
 Do not mark an answer down for failing to show a level its own task never asked
 for. The candidate's overall level is decided separately, across all parts
-together — it is not your job here and you must not hedge toward the middle in
+together — it is not your job here, and you must not hedge toward the middle in
 anticipation of it.
 
+REPLY WITH THIS JSON AND NOTHING ELSE:
+
+{
+  "score": (0-75),
+  "criteria": {
+    "grammar":    { "score": (0-75), "feedback": "one sentence, at most 20 words" },
+    "vocabulary": { "score": (0-75), "feedback": "one sentence, at most 20 words" },
+    "coherence":  { "score": (0-75), "feedback": "one sentence, at most 20 words" }
+  },
+  "suggestedLevel": "A1|A2|B1|B2|C1"
+}
+
+Keep each comment to one short sentence, quoting the candidate's own words where
+it helps. This is per-answer detail only: the summary of the whole performance,
+the candidate's strengths and what they should work on are written separately,
+once, across every answer — so do not write them here. "suggestedLevel" must
+agree with the band the score falls in. Never award more than 75.
+
 ${this.languageInstruction}
-Mark as the official examiner would: neither severe nor generous. Judge accuracy,
-range, coherence, and how well the answer does what this part of the exam asks.
-Do not mark a short answer down for being short when the part calls for a short
-answer.`;
+Mark as the official examiner would: neither severe nor generous.`;
+
+    const user = `QUESTION: ${question}${
+      instructions ? `\nInstructions the student was given: ${instructions}` : ''
+    }${topic ? `\nTopic on screen: ${topic}` : ''}${
+      pros?.length ? `\nArguments FOR shown to the student: ${pros.join('; ')}` : ''
+    }${cons?.length ? `\nArguments AGAINST shown to the student: ${cons.join('; ')}` : ''}${
+      followUpQuestions?.length ? `\nFollow-up questions: ${followUpQuestions.join(', ')}` : ''
+    }${referenceImages?.length ? `\nThe student was shown ${referenceImages.length} picture(s). You cannot see them.` : ''}
+
+THE STUDENT'S ANSWER (transcribed):
+"${transcription}"`;
+
+    return { cached, user, model: this.answerModel };
   }
 
   /**
@@ -426,17 +460,51 @@ answer.`;
     }
   }
 
+  /**
+   * One call to the model.
+   *
+   * `prompt` may be a plain string, or `{ cached, user, model }` — where
+   * `cached` is the part that does not change between calls.
+   *
+   * Why that split exists: marking a mock makes eight calls that share the same
+   * examiner instructions, the same part brief and the same calibration samples,
+   * and only differ in one question and one answer. Sent whole each time, the
+   * identical prefix is paid for eight times over. Marked as cacheable it is
+   * paid for once and read cheaply thereafter, which on an eight-answer attempt
+   * is most of the input cost.
+   *
+   * The prefix must genuinely be identical to hit — hence it holds only what is
+   * fixed for a part, and the question and the student's words go in the user
+   * message where they belong.
+   */
   async callClaudeAPIOnce(prompt) {
+    const isSplit = prompt && typeof prompt === 'object';
+    const userText = isSplit ? prompt.user : prompt;
+
     const payload = {
-      model: this.model,
+      // Per-call model override, so the cheap model can be tried on per-answer
+      // feedback while the level itself stays on the better one.
+      model: (isSplit && prompt.model) || this.model,
       max_tokens: this.maxTokens,
       messages: [
         {
           role: 'user',
-          content: prompt
+          content: userText
         }
       ]
     };
+
+    if (isSplit && prompt.cached) {
+      payload.system = [
+        {
+          type: 'text',
+          text: prompt.cached,
+          // Below the model's minimum cacheable length this is simply ignored,
+          // so there is nothing to guard against — it either helps or does not.
+          cache_control: { type: 'ephemeral' }
+        }
+      ];
+    }
 
     // Temperature is sent only when explicitly configured. Some models accept a
     // narrower range than others, and an unsupported value is rejected with a
@@ -474,6 +542,24 @@ answer.`;
           `the API returned no text to read (blocks: ${kinds}; stop_reason: ${stop || 'unknown'})` +
             (stop === 'max_tokens' ? ' — the answer was cut off; raise CLAUDE_MAX_TOKENS' : '')
         );
+      }
+
+      /*
+       * What this call actually cost, in tokens.
+       *
+       * Logged because the bill was previously a matter of arithmetic and
+       * guesswork — and because caching is invisible unless you look: a prefix
+       * that stops matching goes on working and silently costs full price
+       * again. `read` climbing while `wrote` stays flat is the cache doing its
+       * job; `wrote` on every call means it is missing and worth investigating.
+       */
+      const usage = response.data?.usage;
+      if (usage) {
+        this.spend.calls += 1;
+        this.spend.input += usage.input_tokens || 0;
+        this.spend.output += usage.output_tokens || 0;
+        this.spend.cacheWrite += usage.cache_creation_input_tokens || 0;
+        this.spend.cacheRead += usage.cache_read_input_tokens || 0;
       }
 
       return text;
