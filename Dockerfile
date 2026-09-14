@@ -2,6 +2,12 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# ffmpeg converts browser recordings (WebM/Opus) into the 16 kHz mono PCM WAV
+# that Azure's pronunciation assessment accepts, and trims them to the clip
+# length it allows. Without it pronunciation reports itself unavailable and
+# everything else — transcription, marking, scoring — carries on unaffected.
+RUN apk add --no-cache ffmpeg
+
 # Copy package files
 COPY package*.json ./
 

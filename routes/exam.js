@@ -3,7 +3,7 @@ import multer from 'multer';
 import mongoose from 'mongoose';
 
 import Exam from '../models/Exam.js';
-import ExamResult from '../models/ExamResult.js';
+import ExamResult, { MAX_SCORE } from '../models/ExamResult.js';
 import AIEvaluationService from '../services/AIEvaluationService.js';
 import TranscriptionService from '../services/TranscriptionService.js';
 import AudioStorageService, {
@@ -11,6 +11,7 @@ import AudioStorageService, {
   MAX_AUDIO_BYTES
 } from '../services/AudioStorageService.js';
 import ImageStorageService from '../services/ImageStorageService.js';
+import PronunciationService from '../services/PronunciationService.js';
 import AICallLimiter from '../services/MarkingQueue.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -238,6 +239,20 @@ router.get('/results/:resultId', async (req, res, next) => {
         overallScore: result.overallScore ?? null,
         overallLevel: result.overallLevel,
         isPassed: result.isPassed,
+        // Always sent, even unassessed: the client has to be able to say
+        // "not assessed" rather than quietly leaving the criterion out, which
+        // would read as though pronunciation had simply been forgotten.
+        pronunciation: result.pronunciation?.assessed
+          ? {
+              assessed: true,
+              accuracy: result.pronunciation.accuracy,
+              fluency: result.pronunciation.fluency,
+              prosody: result.pronunciation.prosody,
+              overall: result.pronunciation.overall,
+              secondsAssessed: result.pronunciation.secondsAssessed,
+              problemWords: result.pronunciation.problemWords || []
+            }
+          : { assessed: false },
         startedAt: result.startedAt,
         submittedAt: result.submittedAt,
         completedAt: result.completedAt,
@@ -665,6 +680,70 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
  * Everything is reported by updating the attempt itself: 'completed' with a
  * score, or back to 'submitted' if nothing could be marked.
  */
+/**
+ * Measure the attempt's pronunciation, if Azure is configured.
+ *
+ * Only a sample of the attempt is sent — see PronunciationService for why — so
+ * this pulls the recordings back out of GridFS for the answers that service
+ * chooses, not for all eight. Recordings are fetched lazily for that reason:
+ * each is about three quarters of a megabyte, and loading the whole attempt into
+ * memory to use one minute of it would be wasteful with fifty students at once.
+ *
+ * Never throws. A pronunciation score is an enrichment; if Azure is down or the
+ * key has expired, the student still gets marked on everything else.
+ */
+async function assessPronunciation(result) {
+  if (!PronunciationService.isConfigured()) return null;
+
+  try {
+    // Rank by how much was said before fetching anything, so only the clips
+    // that will actually be assessed are ever downloaded.
+    const candidates = result.taskResults
+      .filter(t => t.audioKey && String(t.transcription || '').trim())
+      .sort((a, b) => b.transcription.length - a.transcription.length)
+      .slice(0, 3);
+
+    if (!candidates.length) return null;
+
+    const answers = [];
+    for (const taskResult of candidates) {
+      try {
+        answers.push({
+          taskNumber: taskResult.taskNumber,
+          transcription: taskResult.transcription,
+          audio: await AudioStorageService.readBuffer(taskResult.audioKey)
+        });
+      } catch (error) {
+        console.warn(`Could not read audio for task ${taskResult.taskNumber}:`, error.message);
+      }
+    }
+
+    return await PronunciationService.assessAttempt(answers);
+  } catch (error) {
+    console.error('Pronunciation assessment failed:', error.message);
+    return { assessed: false, error: error.message };
+  }
+}
+
+/**
+ * Say what the pronunciation measurement found, in Uzbek, naming names.
+ *
+ * "Talaffuz: 61/75" tells a student nothing they can act on. The words the
+ * assessor scored lowest are the actual lesson, so they are what gets said.
+ */
+function pronunciationFeedback(pronunciation) {
+  const accuracy = Math.round(pronunciation.accuracy);
+  const seconds = pronunciation.secondsAssessed || 0;
+
+  const opening =
+    `Talaffuz aniqligi ${accuracy}/100 — ovozingizning ${seconds} soniyasi bo'yicha o'lchandi.`;
+
+  const words = (pronunciation.problemWords || []).slice(0, 5).map(w => w.word);
+  if (!words.length) return `${opening} Aniq xato topilmadi.`;
+
+  return `${opening} Ustida ishlash kerak bo'lgan so'zlar: ${words.join(', ')}.`;
+}
+
 async function markAttempt(resultId) {
   const result = await ExamResult.findById(resultId);
   if (!result) return;
@@ -752,7 +831,67 @@ async function markAttempt(resultId) {
   // from turning into a burst of rate-limit errors when several attempts are
   // being marked at once.
   const startedAt = Date.now();
-  await Promise.all(jobs.map(job => AICallLimiter.run(job)));
+
+  /*
+   * Pronunciation is measured alongside the marking, not after it.
+   *
+   * A different service listens to the audio, so it shares nothing with the AI
+   * calls and there is no reason to make the student wait for one before the
+   * other begins. It is also deliberately outside the AI limiter: that cap
+   * exists to protect the Anthropic rate limit, and Azure has its own.
+   */
+  const [pronunciation] = await Promise.all([
+    assessPronunciation(result),
+    Promise.all(jobs.map(job => AICallLimiter.run(job)))
+  ]);
+
+  if (pronunciation) {
+    result.pronunciation = { ...pronunciation, assessedAt: new Date() };
+
+    /*
+     * Put the measured scores where the student already looks.
+     *
+     * The result screen renders whatever criteria an answer carries, so adding
+     * them here means pronunciation and fluency appear beside grammar and
+     * vocabulary without the client needing to know where they came from. They
+     * are the same measurement on every answer — it was sampled for the attempt
+     * as a whole — and `measured: true` marks them as observed rather than
+     * judged, so nothing downstream mistakes them for the model's opinion.
+     *
+     * The attempt's own score is NOT touched. It stays the average of what the
+     * examiner model marked, so the band boundaries keep meaning exactly what
+     * they meant before pronunciation was measurable.
+     */
+    if (pronunciation.assessed) {
+      const asExamScore = value => PronunciationService.toExamScale(value, MAX_SCORE);
+      const measured = {};
+
+      if (typeof pronunciation.accuracy === 'number') {
+        measured.pronunciation = {
+          score: asExamScore(pronunciation.accuracy),
+          measured: true,
+          feedback: pronunciationFeedback(pronunciation)
+        };
+      }
+      if (typeof pronunciation.fluency === 'number') {
+        measured.fluency = {
+          score: asExamScore(pronunciation.fluency),
+          measured: true,
+          feedback: `Nutq ravonligi ${Math.round(pronunciation.fluency)}/100 — ` +
+                    `tezlik, to'xtalishlar va ritm bo'yicha o'lchandi.`
+        };
+      }
+
+      for (const taskResult of result.taskResults) {
+        if (taskResult.status !== 'evaluated' || !taskResult.aiEvaluation) continue;
+        taskResult.aiEvaluation.criteria = {
+          ...(taskResult.aiEvaluation.criteria || {}),
+          ...measured
+        };
+        taskResult.markModified('aiEvaluation.criteria');
+      }
+    }
+  }
 
   if (jobs.length) {
     console.log(

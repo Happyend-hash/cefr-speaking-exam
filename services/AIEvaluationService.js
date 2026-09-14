@@ -45,8 +45,6 @@ class AIEvaluationService {
           criteria: {
             grammar: { score: 0, feedback: 'No response provided' },
             vocabulary: { score: 0, feedback: 'No response provided' },
-            fluency: { score: 0, feedback: 'No response provided' },
-            pronunciation: { score: 0, feedback: 'Unable to assess - no audio' },
             coherence: { score: 0, feedback: 'No response provided' }
           },
           overallFeedback: 'No response was submitted for evaluation.',
@@ -195,6 +193,16 @@ ${referenceImages?.length ? `- Reference Context: the student was shown ${refere
 STUDENT'S RESPONSE (Transcribed):
 "${transcription}"
 
+WHAT YOU CAN AND CANNOT JUDGE:
+You are reading a transcript. You did not hear this student. Pronunciation and
+fluency are therefore not yours to score — they are measured separately from the
+audio itself by a speech assessor, and your guess would overwrite a measurement.
+Do not mention pronunciation, accent, intonation, pace or hesitation anywhere in
+your feedback, including in strengths and areas for improvement: you have no
+evidence for any of it. Judge what the words show — grammar, vocabulary,
+coherence and whether the task was done — and let the overall score reflect only
+those.
+
 Please evaluate this response and provide a detailed assessment in the following JSON format:
 
 {
@@ -207,14 +215,6 @@ Please evaluate this response and provide a detailed assessment in the following
     "vocabulary": {
       "score": (0-75),
       "feedback": "Feedback on vocabulary range, appropriateness, and use of idiomatic expressions"
-    },
-    "fluency": {
-      "score": (0-75),
-      "feedback": "Feedback on speech fluency, pace, hesitations, and natural delivery"
-    },
-    "pronunciation": {
-      "score": (0-75),
-      "feedback": "Assessment of pronunciation clarity (note: estimated from transcription accuracy)"
     },
     "coherence": {
       "score": (0-75),
@@ -238,7 +238,7 @@ Never award more than 75. Set "suggestedLevel" to the band the score falls in,
 using the table above — the two must agree.
 
 ${this.languageInstruction}
-Be fair but rigorous. Judge accuracy, fluency, coherence, and how well the answer
+Be fair but rigorous. Judge accuracy, range, coherence, and how well the answer
 does what this part of the exam asks. Do not mark a short answer down for being
 short when the part calls for a short answer.`;
   }

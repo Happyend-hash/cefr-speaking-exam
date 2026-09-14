@@ -117,6 +117,33 @@ const examResultSchema = new mongoose.Schema(
       }
     ],
 
+    /**
+     * Measured pronunciation, from Azure AI Speech.
+     *
+     * Attempt-level rather than per-answer because it is sampled: pronunciation
+     * is a stable trait within one sitting, so a minute of the student's longest
+     * answers is assessed and the result describes the whole attempt. Storing it
+     * per answer would imply a precision the sampling does not have.
+     *
+     * `assessed: false` is a real and expected state — no key configured, the
+     * service refused, or nothing in the attempt could be assessed. The client
+     * must then say so, and never substitute a guess.
+     */
+    pronunciation: {
+      assessed: { type: Boolean, default: false },
+      // All 0-100, exactly as Azure returns them. Converted to this app's own
+      // scale at display time, so the raw measurement is never lost.
+      accuracy: Number,   // how closely the phonemes match a native production
+      fluency: Number,    // pace, pausing, rhythm
+      prosody: Number,    // stress and intonation; en-US only, and costs extra
+      overall: Number,    // Azure's weighted combination of the above
+      clipsAssessed: Number,
+      secondsAssessed: Number,
+      problemWords: [{ word: String, accuracy: Number, errorType: String }],
+      error: String,
+      assessedAt: Date
+    },
+
     // Overall Results
     overallScore: Number, // Average of all tasks
 

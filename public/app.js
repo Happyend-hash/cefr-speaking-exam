@@ -2028,12 +2028,29 @@
             ${Object.entries(criteria).map(([name, value]) => `
               <div class="criterion">
                 <div class="criterion-head">
-                  <span class="criterion-name">${esc(criterionLabel(name))}</span>
+                  <span class="criterion-name">${esc(criterionLabel(name))}${
+                    // Two of these are measured from the recording and the rest
+                    // are an examiner's judgement of the words. A student
+                    // deserves to know which is which — the measured ones can be
+                    // trusted to the point, the judged ones are an opinion.
+                    value?.measured ? '<span class="measured-tag">o\'lchandi</span>' : ''
+                  }</span>
                   <span class="criterion-score">${value?.score ?? 0} / ${MAX_SCORE}</span>
                 </div>
-                <div class="bar-track"><div class="bar-fill" style="width:${pctOfMax(value?.score)}%"></div></div>
+                <div class="bar-track"><div class="bar-fill${value?.measured ? ' measured' : ''}" style="width:${pctOfMax(value?.score)}%"></div></div>
                 ${value?.feedback ? `<p>${esc(value.feedback)}</p>` : ''}
               </div>`).join('')}
+            ${state.result?.pronunciation && !state.result.pronunciation.assessed
+              // Silence would read as "pronunciation was fine". Saying nothing
+              // was measured is the only honest thing to show here.
+              ? `<div class="criterion criterion-absent">
+                   <div class="criterion-head">
+                     <span class="criterion-name">${esc(criterionLabel('pronunciation'))}</span>
+                     <span class="criterion-score">—</span>
+                   </div>
+                   <p>Bu javobda talaffuz o'lchanmadi. Uni o'qituvchingiz baholashi kerak.</p>
+                 </div>`
+              : ''}
           </div>
 
           ${e.strengths?.length ? `<div style="margin-top:14px"><div class="section-title">${esc(UI_TEXT.strengths)}</div><ul class="pill-list">${e.strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
