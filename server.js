@@ -238,10 +238,35 @@ app.use(errorHandler);
 // SERVER START
 // ===========================
 
+/**
+ * The database, named without naming the password.
+ *
+ * This line used to print the connection credentials to the deploy log on every
+ * boot. It meant to print the database name — it took the last "/"-separated
+ * segment — but an Atlas URI has no path segment before its query string
+ * (mongodb+srv://user:pass@host/?retryWrites=true), so the last segment WAS
+ * "user:pass@host", and the password went into the logs of every deployment,
+ * readable by anyone who could open the Railway dashboard.
+ *
+ * Credentials are now stripped before anything is printed, and the fallback is
+ * a constant rather than any part of the URI: a parser that fails must not
+ * respond by printing the raw string it failed to parse.
+ */
 const databaseName = (() => {
   try {
-    const withoutQuery = MONGODB_URI.split('?')[0];
-    return withoutQuery.split('/').filter(Boolean).pop() || '(default)';
+    const withoutScheme = MONGODB_URI.replace(/^[a-z+]+:\/\//i, '');
+    // Everything before the LAST "@" is credentials. The last one, not the
+    // first: a password may contain "@" — correctly it would be
+    // percent-encoded, but a password that should have been encoded and was not
+    // is exactly the case where a leak must not happen. A host cannot contain
+    // "@", so splitting at the last one is always right.
+    const hostAndPath = withoutScheme.includes('@')
+      ? withoutScheme.slice(withoutScheme.lastIndexOf('@') + 1)
+      : withoutScheme;
+
+    const [host, ...rest] = hostAndPath.split('?')[0].split('/');
+    const database = rest.filter(Boolean).pop();
+    return database ? `${database} @ ${host}` : host || '(default)';
   } catch {
     return '(unknown)';
   }
