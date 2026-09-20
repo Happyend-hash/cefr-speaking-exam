@@ -284,6 +284,10 @@ router.get('/results/:resultId', async (req, res, next) => {
          * and nothing about how to move.
          */
         criteria: buildCriteriaDetail(result.criterionBands),
+        // The teacher's correction, if one was recorded. Sent to everyone but
+        // only rendered for admins — it is not secret, it is simply not a
+        // student's business which way their teacher disagreed with a marker.
+        teacherBands: result.teacherBands?.correctedAt ? result.teacherBands : null,
         // Always sent, even unassessed: the client has to be able to say
         // "not assessed" rather than quietly leaving the criterion out, which
         // would read as though pronunciation had simply been forgotten.
@@ -1106,11 +1110,17 @@ export async function markAttempt(resultId) {
   let overall = null;
   if (speakingAnswers.length && result.taskResults.some(t => t.audioKey)) {
     try {
+      // The teacher's corrected attempts, spread across the scale. Fetched
+      // per attempt rather than cached in memory so a correction made a minute
+      // ago is in force for the next student, not after the next deploy.
+      const anchors = await ExamResult.markingAnchors();
+
       overall = await AICallLimiter.run(() =>
         AIEvaluationService.evaluateAttempt({
           answers: speakingAnswers,
           examTitle: exam.title,
-          pronunciation: result.pronunciation
+          pronunciation: result.pronunciation,
+          anchors
         })
       );
     } catch (error) {

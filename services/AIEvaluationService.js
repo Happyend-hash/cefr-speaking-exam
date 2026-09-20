@@ -136,7 +136,56 @@ class AIEvaluationService {
    * examiner forms one. Per-answer scores stay — they are useful feedback — but
    * they no longer decide the outcome.
    */
-  async evaluateAttempt({ answers, examTitle, pronunciation = null }) {
+  /**
+   * Worked examples in the teacher's own hand, for the cached half of the
+   * prompt.
+   *
+   * Each is a performance the teacher re-marked, with the bands they would have
+   * given. This is the only thing in the prompt that carries a human's standard
+   * rather than a description of one, and it is why a marker stops parking on
+   * band 4: it can see what a 5 and a 6 look like in this school's judgement.
+   *
+   * Transcripts are truncated hard. The examples exist to show the SHAPE of a
+   * performance at each band, and three full mocks quoted in every prompt would
+   * cost more than the marking itself.
+   */
+  buildAnchorBlock(anchors = []) {
+    if (!anchors.length) return '';
+
+    const blocks = anchors.map((anchor, index) => {
+      const bands = CRITERION_KEYS
+        .map(key => `${key} ${anchor.teacherBands?.[key] ?? '—'}`)
+        .join(', ');
+
+      const extract = (anchor.taskResults || [])
+        .map(t => String(t.transcription || '').trim())
+        .filter(Boolean)
+        .join(' … ')
+        .slice(0, 700);
+
+      const provenance = anchor.teacherBands?.source === 'real-exam'
+        ? 'bands confirmed against an official certificate'
+        : "the teacher's own marking";
+
+      return `EXAMPLE ${index + 1} (${provenance})
+Bands awarded: ${bands}
+${anchor.teacherBands?.note ? `Examiner's note: ${anchor.teacherBands.note}\n` : ''}What the candidate said (extract): "${extract}"`;
+    });
+
+    return `
+
+MARKED EXAMPLES FROM THIS SCHOOL — match this standard:
+These are real performances with the bands an experienced examiner gave them.
+Where your judgement differs from these, these are right and you are wrong.
+Note especially where they were awarded 5 and 6: those bands exist and are
+earned regularly. A marker that awards 4 to every criterion of every candidate
+is not being careful, it is refusing to use the scale.
+
+${blocks.join('\n\n')}
+`;
+  }
+
+  async evaluateAttempt({ answers, examTitle, pronunciation = null, anchors = [] }) {
     const byPart = answers.reduce((groups, answer) => {
       (groups[answer.part] ||= []).push(answer);
       return groups;
@@ -170,6 +219,7 @@ used at half its resolution.
 THE OFFICIAL CRITERIA AND DESCRIPTORS:
 
 ${CRITERIA_PROMPT_BLOCK}
+${this.buildAnchorBlock(anchors)}
 
 HOW THE PARTS CONTRIBUTE:
 The three parts give different evidence, and a criterion is judged on the best

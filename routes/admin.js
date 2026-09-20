@@ -1387,4 +1387,69 @@ router.post('/students/access-all', async (req, res, next) => {
   }
 });
 
+/**
+ * @route   POST /api/admin/results/:id/bands
+ * @desc    Record the bands the teacher would have awarded this performance
+ *
+ * The calibration loop, closed. A disagreement with the marker stops being a
+ * complaint and becomes an example the marker reads on every future attempt.
+ *
+ * The student's reported score is NOT changed. A correction is evidence about
+ * the marker, not a re-grade of the candidate — re-grading on a teacher's
+ * second look would make the score depend on whether anyone happened to review
+ * it, which is a worse injustice than the one it fixes. Re-mark the attempt if
+ * the score itself should move.
+ */
+router.post('/results/:id/bands', async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid result id', 400);
+
+    const result = await ExamResult.findById(req.params.id);
+    if (!result) throw new APIError('Attempt not found', 404);
+
+    const keys = ['vocabulary', 'grammar', 'fluencyCoherence', 'communicative', 'pronunciation'];
+    const bands = {};
+
+    for (const key of keys) {
+      const value = req.body?.[key];
+      // An unset criterion is left unset rather than zeroed: a teacher who only
+      // wants to correct pronunciation should not have to restate the other
+      // four, and a blank must never be read as "band 0".
+      if (value === undefined || value === null || value === '') continue;
+      const band = Number(value);
+      if (!Number.isInteger(band) || band < 0 || band > 6) {
+        throw new APIError(`${key} must be a whole number from 0 to 6`, 400);
+      }
+      bands[key] = band;
+    }
+
+    if (Object.keys(bands).length === 0) {
+      throw new APIError('Give at least one band to record', 400);
+    }
+
+    const source = req.body?.source === 'real-exam' ? 'real-exam' : 'teacher-estimate';
+
+    result.teacherBands = {
+      ...bands,
+      note: String(req.body?.note || '').slice(0, 600),
+      source,
+      correctedBy: req.user.email || String(req.user.id),
+      correctedAt: new Date()
+    };
+
+    await result.save();
+
+    const anchors = await ExamResult.countDocuments({ 'teacherBands.correctedAt': { $exists: true } });
+    console.log(`Calibration: bands recorded for ${result._id} (${source}); ${anchors} anchor(s) now`);
+
+    res.json({
+      success: true,
+      message: `Recorded. ${anchors} corrected attempt${anchors === 1 ? '' : 's'} now teach the marker.`,
+      data: { id: String(result._id), bands, source, anchors }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

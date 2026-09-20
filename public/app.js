@@ -299,6 +299,39 @@
    * the request does fail the notice simply comes back on the next load, which
    * is the harmless direction to fail in.
    */
+  /**
+   * Send the teacher's bands as calibration.
+   *
+   * Reads the inputs straight from the DOM rather than mirroring them in state:
+   * every keystroke would otherwise re-render the panel and throw away the
+   * caret, and these five numbers are read exactly once, when Save is pressed.
+   */
+  async function saveBands() {
+    const body = {};
+    root.querySelectorAll('[data-band]').forEach(input => {
+      const value = input.value.trim();
+      if (value !== '') body[input.dataset.band] = Number(value);
+    });
+
+    body.note = document.getElementById('band-note')?.value?.trim() || '';
+    if (document.getElementById('band-real')?.checked) body.source = 'real-exam';
+
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const saved = await api(`/admin/results/${state.result.id}/bands`, { method: 'POST', body });
+      // Re-read the result so the panel shows what the server stored rather
+      // than what this page hoped it sent.
+      const result = await api(`/exam/results/${state.result.id}`);
+      setState({
+        result,
+        loading: false,
+        notice: `Saved. ${saved.anchors} corrected attempt${saved.anchors === 1 ? '' : 's'} now teach the marker.`
+      });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
   async function dismissNotice() {
     setState({ access: { ...(state.access || {}), message: '' } });
     try {
@@ -1260,12 +1293,31 @@
       "Rasmiy imtihon mezonlari. Har biri 0 dan 6 gacha baholanadi; 4 ball — " +
       "daraja talabiga mos degani.",
     next: band => `${band} ball uchun nima kerak`,
+    measured: "O'lchangan",
+    azure: { accuracy: 'aniqlik', fluency: 'ravonlik', prosody: 'ohang' },
     // Bands 5 and 2 have no descriptor of their own — the sheet defines them as
     // the space between their neighbours, so the page shows the band above and
     // says so rather than printing "between 4 and 6" as if it were advice.
     between: (band, shown) =>
       `${band} ball — hozirgi darajangizdan yuqori, ${shown} ball xususiyatlari ko'rina boshlashi kerak:`,
     top: "Bu mezon bo'yicha eng yuqori ball."
+  };
+
+  /**
+   * The correction panel's labels — in English, unlike everything else on this
+   * screen. Only the teacher sees this block, and every other admin surface on
+   * the site is already English; switching language mid-panel for an audience
+   * of one would be worse than consistent.
+   */
+  const CORRECT_UZ = {
+    heading: 'Your marking',
+    intro:
+      'Set the bands you would have given. This does not change the score the student sees — ' +
+      'it becomes a worked example the marker is shown on every future attempt.',
+    note: 'Why (optional — the marker reads this)',
+    real: 'Confirmed by a real certificate',
+    save: 'Save as calibration',
+    savedAt: when => `Recorded ${when}.`
   };
 
   const ACCESS_UZ = {
@@ -2225,6 +2277,19 @@
         ${c.descriptor
           ? `<p style="margin-top:10px">${esc(c.descriptor)}</p>`
           : ''}
+        ${c.key === 'pronunciation' && state.result?.pronunciation?.assessed
+          // The measurement behind the band, shown where the band is. This is
+          // the one criterion with an instrument rather than an opinion behind
+          // it, and a teacher checking whether the marker respected the
+          // measurement should not have to go hunting for it.
+          ? `<div class="muted" style="font-size:13px;margin-top:8px">
+               ${CRITERIA_UZ.measured}:
+               ${['accuracy', 'fluency', 'prosody']
+                 .filter(k => Number.isFinite(Number(state.result.pronunciation[k])))
+                 .map(k => `${CRITERIA_UZ.azure[k]} ${Math.round(state.result.pronunciation[k])}`)
+                 .join(' · ')} / 100
+             </div>`
+          : ''}
         ${c.next
           // The actionable half. A band number says where a student is; this
           // says what the next one asks of them, in the words the examiner
@@ -2246,6 +2311,59 @@
       </div>
       <p class="muted" style="margin-top:6px">${CRITERIA_UZ.intro}</p>
       <div style="margin-top:8px">${rows}</div>
+      ${correctionForm(criteria)}
+    </div>`;
+  }
+
+  /**
+   * The teacher's correction, on the result itself.
+   *
+   * Only an admin sees it, and it sits here rather than in the admin panel on
+   * purpose: the moment a teacher disagrees with a mark is the moment they are
+   * looking at it. A correction that requires navigating somewhere else is a
+   * correction that does not get made.
+   *
+   * It does not change the student's score. It teaches the marker, and the
+   * next attempt marked anywhere on the site is marked against it.
+   */
+  function correctionForm(criteria) {
+    if (state.user?.role !== 'admin') return '';
+
+    const saved = state.result?.teacherBands;
+
+    const fields = criteria.map(c => `
+      <label style="display:flex;flex-direction:column;gap:4px">
+        <span class="muted" style="font-size:12px">${esc(c.name)}</span>
+        <input type="number" min="0" max="6" style="width:68px"
+               data-band="${esc(c.key)}"
+               value="${saved?.[c.key] ?? c.band}" />
+      </label>`).join('');
+
+    return `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
+      <strong style="font-size:14px">${CORRECT_UZ.heading}</strong>
+      <p class="muted" style="margin-top:4px;font-size:13px">${CORRECT_UZ.intro}</p>
+
+      <div class="row" style="gap:12px;flex-wrap:wrap;margin-top:12px;align-items:flex-end">
+        ${fields}
+      </div>
+
+      <div class="row" style="gap:12px;margin-top:12px;flex-wrap:wrap;align-items:flex-end">
+        <label style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:220px">
+          <span class="muted" style="font-size:12px">${CORRECT_UZ.note}</span>
+          <input type="text" id="band-note" value="${esc(saved?.note || '')}" />
+        </label>
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="band-real" ${saved?.source === 'real-exam' ? 'checked' : ''} />
+          <span style="font-size:13px">${CORRECT_UZ.real}</span>
+        </label>
+        <button class="btn btn-sm" data-action="bands-save" ${state.loading ? 'disabled' : ''}>
+          ${state.loading ? '…' : CORRECT_UZ.save}
+        </button>
+      </div>
+
+      ${saved?.correctedAt
+        ? `<p class="muted" style="margin-top:10px;font-size:13px">${esc(CORRECT_UZ.savedAt(fmtDate(saved.correctedAt)))}</p>`
+        : ''}
     </div>`;
   }
 
@@ -2522,6 +2640,7 @@
       case 'signout': return signOut();
       case 'done-submitting': return loadDashboard();
       case 'notice-seen': return dismissNotice();
+      case 'bands-save': return saveBands();
       case 'criteria-open': return setState({ criteriaOpen: true });
       case 'criteria-close': return setState({ criteriaOpen: false });
       case 'mic-check': return runMicCheck();

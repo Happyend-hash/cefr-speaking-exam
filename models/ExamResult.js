@@ -191,6 +191,36 @@ const examResultSchema = new mongoose.Schema(
     rawTotal: Number,
     denominator: Number,
 
+    /**
+     * The teacher's own bands for this performance, where they disagreed.
+     *
+     * This is the calibration loop closing. Until now a disagreement was a
+     * message to somebody; here it becomes data the marker reads on every
+     * future attempt. The teacher's marks NEVER overwrite the reported score —
+     * the student's result stands as marked — because a correction is evidence
+     * about the marker, not a re-grade of the candidate.
+     *
+     * `source` matters more than it looks. A band set against a real
+     * certificate is worth far more than an expert guess, and the day a mock
+     * and a certificate disagree you need to know which anchors came from the
+     * agency and which from a teacher's ear.
+     */
+    teacherBands: {
+      vocabulary: Number,
+      grammar: Number,
+      fluencyCoherence: Number,
+      communicative: Number,
+      pronunciation: Number,
+      note: String,
+      source: {
+        type: String,
+        enum: ['teacher-estimate', 'real-exam'],
+        default: 'teacher-estimate'
+      },
+      correctedBy: String,
+      correctedAt: Date
+    },
+
     // Overall Results
     overallScore: Number, // the whole-performance judgement; see above
 
@@ -349,10 +379,49 @@ examResultSchema.methods.generateCertificate = function () {
   return true;
 };
 
+/**
+ * The teacher-corrected attempts the marker should be shown.
+ *
+ * Chosen for SPREAD, not recency. Three corrected attempts all sitting around
+ * band 4 teach a marker nothing it does not already do; one near the bottom,
+ * one in the middle and one near the top teach it the whole scale. So the
+ * corrections are sorted by the teacher's own total and sampled across the
+ * range, with real-exam-backed corrections preferred over estimates wherever
+ * both exist.
+ *
+ * Kept small on purpose: these go in the cached half of every marking prompt,
+ * and a prompt that carries ten worked examples costs more than it teaches.
+ */
+examResultSchema.statics.markingAnchors = async function (limit = 3) {
+  const corrected = await this.find({ 'teacherBands.correctedAt': { $exists: true } })
+    .select('teacherBands taskResults.transcription taskResults.taskNumber')
+    .sort({ 'teacherBands.correctedAt': -1 })
+    .limit(40)
+    .lean();
+
+  if (corrected.length <= limit) return corrected;
+
+  const total = doc =>
+    ['vocabulary', 'grammar', 'fluencyCoherence', 'communicative', 'pronunciation']
+      .reduce((sum, key) => sum + (Number(doc.teacherBands?.[key]) || 0), 0);
+
+  const ranked = corrected
+    .map(doc => ({ doc, total: total(doc), real: doc.teacherBands?.source === 'real-exam' }))
+    .sort((a, b) => (b.real - a.real) || (a.total - b.total));
+
+  // Even slices across the ranked list: lowest, middle, highest.
+  const picked = [];
+  for (let i = 0; i < limit; i += 1) {
+    picked.push(ranked[Math.round((i * (ranked.length - 1)) / (limit - 1))].doc);
+  }
+  return [...new Set(picked)];
+};
+
 // ===========================
 // INDEXES
 // ===========================
 
+examResultSchema.index({ 'teacherBands.correctedAt': -1 });
 examResultSchema.index({ student: 1 });
 examResultSchema.index({ exam: 1 });
 examResultSchema.index({ student: 1, createdAt: -1 });
