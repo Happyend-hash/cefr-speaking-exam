@@ -276,7 +276,17 @@ accuracy ${Math.round(pronunciation.accuracy ?? 0)}, fluency ${Math.round(pronun
             ? `\nWords mispronounced: ${pronunciation.problemWords.slice(0, 8).map(w => w.word).join(', ')}`
             : ''
         }
-Use these for the talaffuz band, read against its descriptors.`
+Use these for the talaffuz band, read against its descriptors.${
+          pronunciation.accuracySuspect
+            ? `
+
+WARNING — THE ACCURACY FIGURE ABOVE IS UNRELIABLE FOR THIS ATTEMPT.
+It sits far below fluency and prosody, which does not happen to a real speaker:
+someone whose sounds are genuinely unclear is also hesitant and flat. Judge the
+talaffuz band on fluency and prosody, and on the words listed as mispronounced
+if any. Do not mark the candidate down for the accuracy number.`
+            : ''
+        }`
       : `\n\nNo pronunciation measurement is available for this attempt. Return null for
 the talaffuz band.`;
 

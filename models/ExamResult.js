@@ -145,6 +145,10 @@ const examResultSchema = new mongoose.Schema(
       fluency: Number,    // pace, pausing, rhythm
       prosody: Number,    // stress and intonation; en-US only, and costs extra
       overall: Number,    // Azure's weighted combination of the above
+      // True when accuracy sat far below fluency and prosody — the signature of
+      // a broken measurement rather than an unclear speaker. Stored so a past
+      // attempt can be recognised as one marked on a bad figure.
+      accuracySuspect: Boolean,
       clipsAssessed: Number,
       secondsAssessed: Number,
       problemWords: [{ word: String, accuracy: Number, errorType: String }],

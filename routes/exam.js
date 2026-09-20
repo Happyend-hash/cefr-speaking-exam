@@ -298,6 +298,7 @@ router.get('/results/:resultId', async (req, res, next) => {
               fluency: result.pronunciation.fluency,
               prosody: result.pronunciation.prosody,
               overall: result.pronunciation.overall,
+              accuracySuspect: Boolean(result.pronunciation.accuracySuspect),
               secondsAssessed: result.pronunciation.secondsAssessed,
               problemWords: result.pronunciation.problemWords || []
             }

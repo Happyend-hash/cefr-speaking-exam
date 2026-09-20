@@ -21,18 +21,36 @@ import { CallLimiter } from './MarkingQueue.js';
  * measurements. When this service is not configured, the app now says
  * "not assessed" rather than filling the gap with a guess.
  *
- * Scripted, not unscripted — deliberately
- * ---------------------------------------
- * Azure can assess free speech with no reference text, but Microsoft's own
- * guidance says the unscripted path uses a weaker recognizer and recommends
- * transcribing first, then assessing against that transcript, whenever the
- * score matters. It matters here — this is a graded exam. And it costs nothing
- * extra: the attempt has already been transcribed by the time marking runs, so
- * the transcript is sitting there waiting to be used as the reference.
+ * Unscripted — reversing an earlier decision, on evidence
+ * -------------------------------------------------------
+ * This service originally assessed against the student's own transcript.
+ * The reasoning was Microsoft's: the unscripted path uses a weaker recognizer,
+ * so transcribe first and assess against that transcript whenever the score
+ * matters. It matters here — this is a graded exam — and the transcript was
+ * already sitting there, free.
  *
- * A consequence worth knowing: completeness is meaningless in this mode. The
- * reference text IS what the student said, so completeness is always ~100 and
- * is ignored. Accuracy, fluency and prosody are the real outputs.
+ * That reasoning missed one thing, and it was the thing that counted: our
+ * transcript is MACHINE-MADE. Assessing against it does not compare the student
+ * to what they meant to say; it compares them to what the recogniser thought it
+ * heard. Every transcription error becomes a mispronounced word.
+ *
+ * Measured on one speaker, one microphone, two attempts minutes apart:
+ *
+ *   short Part 1.1 answers  -> accuracy 88
+ *   full mock, Parts 1-3    -> accuracy 39
+ *
+ * Fluency was 83 in both; prosody 78 and 73. Only accuracy moved, because only
+ * accuracy depends on the reference. The longer and more complex the speech,
+ * the worse the transcript, and the more the student was punished for it — so
+ * the candidates most deserving of high bands were the ones most penalised.
+ *
+ * A weaker recognizer scoring what was actually said beats a stronger one
+ * scoring the wrong text. So unscripted is the default now, and the old
+ * behaviour remains one variable away (AZURE_SPEECH_UNSCRIPTED=false) for the
+ * case it was always right for: a candidate reading a script somebody chose.
+ *
+ * Completeness is ignored either way — there is no script to be complete
+ * against. Accuracy, fluency and prosody are the real outputs.
  *
  * Why only a sample of the attempt is assessed
  * -------------------------------------------
@@ -58,6 +76,17 @@ const DEFAULT_BUDGET_SECONDS = 60;
 
 /** Azure returns 0-100; this app marks out of 75. */
 const AZURE_MAX = 100;
+
+/**
+ * How far accuracy must fall below BOTH fluency and prosody before it is
+ * treated as a fault in the measurement rather than in the speaker.
+ *
+ * 25 comes from the case that exposed this: one attempt measured accuracy 39
+ * against fluency 83 and prosody 73 — gaps of 44 and 34 — while the same
+ * speaker measured 88 minutes earlier. A genuine pronunciation problem does
+ * not leave fluency and intonation untouched.
+ */
+const SUSPECT_GAP = 25;
 
 /**
  * A ceiling on how many recordings are being assessed at once, server-wide.
@@ -94,6 +123,17 @@ class PronunciationService {
    */
   get prosodyEnabled() {
     return String(process.env.AZURE_SPEECH_PROSODY || '').toLowerCase() === 'true';
+  }
+
+  /**
+   * Score the speech Azure hears, not the speech our recogniser wrote down.
+   *
+   * Defaults ON: scripted assessment is only correct when the candidate is
+   * reading a text somebody chose, and nobody here is. See assessClipOnce for
+   * the measurements that made this the default.
+   */
+  get unscripted() {
+    return String(process.env.AZURE_SPEECH_UNSCRIPTED || 'true').toLowerCase() !== 'false';
   }
 
   get locale() {
@@ -217,15 +257,41 @@ class PronunciationService {
     // PascalCase keys and string booleans: the REST header takes a different
     // shape from the SDK's config object, and copying SDK field names here
     // silently yields accuracy-only results.
+    /*
+     * UNSCRIPTED BY DEFAULT — and this is a correction of a real fault.
+     *
+     * Azure scores pronunciation against a ReferenceText. We used to pass the
+     * student's own transcript, reasoning that their own words could not be the
+     * wrong script. But that transcript is MACHINE-MADE, and every word the
+     * recogniser got wrong became a word the student had "mispronounced".
+     *
+     * The effect was measured, not theorised. The same speaker, same
+     * microphone, two attempts minutes apart:
+     *
+     *   short Part 1.1 answers  -> accuracy 88   (transcript near-perfect)
+     *   full mock, Parts 1-3    -> accuracy 39   (transcript full of errors)
+     *
+     * Fluency held at 83 in both and prosody at 78 and 73, because neither
+     * depends on the reference. Only accuracy collapsed. The system was
+     * punishing students for speaking at length and complexity — precisely the
+     * candidates who deserved the higher bands.
+     *
+     * An empty ReferenceText puts Azure in unscripted mode, where it recognises
+     * the speech itself and scores what it heard. That is what this feature is
+     * designed for on spontaneous speech, and it removes the transcript from
+     * the measurement entirely.
+     *
+     * Set AZURE_SPEECH_UNSCRIPTED=false to go back to scripted assessment,
+     * which is only correct if a student is reading a known text aloud.
+     */
     const config = {
-      ReferenceText: String(referenceText || '').slice(0, 4000),
+      ReferenceText: this.unscripted ? '' : String(referenceText || '').slice(0, 4000),
       GradingSystem: 'HundredMark',
       Granularity: 'Phoneme',
       // Without Comprehensive, Azure returns accuracy and nothing else.
       Dimension: 'Comprehensive',
-      // Miscue compares what was said against a script the student was meant to
-      // read. Our reference is the student's own words, so there is nothing to
-      // be missing from and it would only invent errors.
+      // Miscue finds words skipped or inserted against a script the student was
+      // meant to read. There is no such script here, scripted or not.
       EnableMiscue: 'False',
       EnableProsodyAssessment: this.prosodyEnabled ? 'True' : 'False'
     };
@@ -382,14 +448,47 @@ class PronunciationService {
       })
       .slice(0, 8);
 
+    const accuracy = mean(r => r.accuracy);
+    const fluency = mean(r => r.fluency);
+    const prosody = mean(r => r.prosody);
+
+    /*
+     * A second line of defence for the measurement that already failed once.
+     *
+     * Accuracy is the figure that collapses when something is wrong with the
+     * reference, and it collapses ALONE — a speaker whose sounds are genuinely
+     * unclear is also hesitant and flat, so a real problem drags fluency and
+     * prosody down with it. Accuracy far below both of them is therefore a
+     * symptom of the measurement, not of the speaker.
+     *
+     * Flagged rather than discarded: the marker is told the figure is
+     * unreliable and judges on the rest, which is honest about what we know.
+     * Silently dropping it would leave nobody able to see that Azure is
+     * misbehaving, and this fault went unnoticed for weeks exactly because
+     * nothing said so out loud.
+     */
+    const others = [fluency, prosody].filter(v => typeof v === 'number');
+    const accuracySuspect =
+      typeof accuracy === 'number' &&
+      others.length > 0 &&
+      others.every(value => value - accuracy >= SUSPECT_GAP);
+
+    if (accuracySuspect) {
+      console.warn(
+        `Pronunciation: accuracy ${Math.round(accuracy)} sits ${SUSPECT_GAP}+ below ` +
+        `fluency/prosody (${others.map(Math.round).join('/')}) — treating it as unreliable`
+      );
+    }
+
     return {
       assessed: true,
       clipsAssessed: results.length,
       secondsAssessed: results.length * CLIP_SECONDS,
-      accuracy: mean(r => r.accuracy),
-      fluency: mean(r => r.fluency),
-      prosody: mean(r => r.prosody),
-      overall: mean(r => r.overall) ?? mean(r => r.accuracy),
+      accuracy,
+      fluency,
+      prosody,
+      overall: mean(r => r.overall) ?? accuracy,
+      accuracySuspect,
       problemWords,
       error: failures.length ? failures[0] : undefined
     };
