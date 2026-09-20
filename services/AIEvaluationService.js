@@ -738,7 +738,22 @@ Numbers stay numbers. Do not translate the JSON field names.
         return evaluation;
       }
 
-      const missing = ['score', 'criteria', 'overallFeedback'].filter(
+      /*
+       * `overallFeedback` is NOT required here, and removing it is the fix for
+       * a bug that silently broke every per-answer mark.
+       *
+       * The per-answer reply used to carry its own summary, strengths and
+       * improvements. Trimming that out halved the output tokens and removed
+       * duplication with the whole-performance pass — but this validator went
+       * on demanding a field the prompt had stopped asking for, so every answer
+       * threw, every attempt reported "0 marked", and students watched
+       * "Tekshirilmoqda…" that would never finish.
+       *
+       * What a per-answer reply must carry is a score and the criteria behind
+       * it. Anything else is commentary, and commentary the model chose not to
+       * write is not a reason to throw away a mark it did.
+       */
+      const missing = ['score', 'criteria'].filter(
         key => evaluation[key] === undefined || evaluation[key] === null
       );
       if (missing.length) {

@@ -1069,20 +1069,6 @@ export async function markAttempt(resultId) {
 
   const evaluatedCount = result.taskResults.filter(t => t.status === 'evaluated').length;
 
-  if (evaluatedCount === 0) {
-    // Nothing could be marked. Drop back to 'submitted' so the attempt is not
-    // stuck in 'evaluating', and leave the task statuses as the explanation —
-    // the client reads them and tells the student whether this was a
-    // transcription problem or a marking one.
-    result.status = 'submitted';
-    await result.save();
-    console.warn(
-      `Nothing marked for ${result._id}: ` +
-      `${untranscribed.length} untranscribed, ${failures.length} failed`
-    );
-    return;
-  }
-
   /*
    * The mark comes from the whole performance, as the agency's own method
    * requires: "topshiriqlarning 3 turi bo'yicha umumlashgan baho qo'yiladi" —
@@ -1100,9 +1086,17 @@ export async function markAttempt(resultId) {
    * The old average survives as the fallback. It is wrong in the way described
    * above, but it is wrong in a knowable direction, and a marked attempt with a
    * pessimistic score beats an attempt with no score at all.
+   *
+   * THIS PASS DEPENDS ON TRANSCRIPTS, NOT ON THE PER-ANSWER MARKING. It used to
+   * require `status === 'evaluated'`, which quietly chained the mark to the
+   * commentary: when a parser bug made every per-answer call throw, there were
+   * no "evaluated" answers, so the whole-performance pass never ran either and
+   * an attempt with three perfectly good transcripts came back unmarked. The
+   * per-answer notes are supporting detail; the candidate's words are the
+   * evidence. Losing the detail must not cost the mark.
    */
   const speakingAnswers = result.taskResults
-    .filter(t => t.status === 'evaluated' && String(t.transcription || '').trim())
+    .filter(t => t.status !== 'not_transcribed' && String(t.transcription || '').trim())
     .map(t => ({
       part: questionByNumber.get(t.taskNumber)?.part || '—',
       question: questionByNumber.get(t.taskNumber)?.text || '',
@@ -1122,6 +1116,29 @@ export async function markAttempt(resultId) {
     } catch (error) {
       console.error(`Overall marking failed for ${result._id}, averaging instead:`, error.message);
     }
+  }
+
+  /*
+   * Nothing could be marked at all — no whole-performance verdict AND no
+   * per-answer score to average. The attempt goes back to 'submitted' so the
+   * admin re-mark and rescue tools can find it, and so it is not left claiming
+   * to be mid-evaluation forever.
+   *
+   * Bailing here rather than earlier is deliberate: the old guard bailed as
+   * soon as the per-answer marking failed, before the whole-performance pass
+   * had been given a chance. That pass only needs transcripts, so it can mark
+   * an attempt whose commentary failed entirely — which is exactly what it did
+   * for every attempt broken by the parser bug.
+   */
+  if (!overall && evaluatedCount === 0) {
+    result.status = 'submitted';
+    await result.save();
+    console.warn(
+      `Nothing marked for ${result._id}: ` +
+      `${untranscribed.length} untranscribed, ${failures.length} failed, ` +
+      `${speakingAnswers.length} transcript(s) available`
+    );
+    return;
   }
 
   if (overall) {
