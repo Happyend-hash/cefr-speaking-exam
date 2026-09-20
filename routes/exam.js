@@ -15,6 +15,13 @@ import ImageStorageService from '../services/ImageStorageService.js';
 import User from '../models/User.js';
 import PronunciationService from '../services/PronunciationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
+import { RAW_MAX, BAND_MAX } from '../services/ScoreConversion.js';
+import {
+  CRITERIA,
+  BAND_LABELS,
+  descriptorFor,
+  nextBandFor
+} from '../content/speakingCriteria.js';
 import AICallLimiter from '../services/MarkingQueue.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -68,6 +75,33 @@ function flattenExam(exam, onlyPart = null) {
   }
 
   return flat;
+}
+
+/**
+ * The detail behind a result's score: each official criterion, the band
+ * awarded, what that band means, and what the next one up requires.
+ *
+ * Returns an empty array for attempts marked before criterion bands existed, so
+ * the client shows the score alone rather than an empty panel promising detail
+ * it does not have.
+ */
+function buildCriteriaDetail(bands) {
+  if (!bands) return [];
+
+  return CRITERIA.map(criterion => {
+    const band = Number(bands[criterion.key] ?? bands.get?.(criterion.key));
+    if (!Number.isFinite(band)) return null;
+
+    return {
+      key: criterion.key,
+      name: criterion.name,
+      band,
+      max: BAND_MAX,
+      label: BAND_LABELS[band] || '',
+      descriptor: descriptorFor(criterion.key, band),
+      next: nextBandFor(criterion.key, band)
+    };
+  }).filter(Boolean);
 }
 
 /** Load a result and confirm the caller owns it (admins may view any). */
@@ -240,6 +274,16 @@ router.get('/results/:resultId', async (req, res, next) => {
         overallReasoning: result.overallReasoning || '',
         overallStrengths: result.overallStrengths || [],
         overallImprovements: result.overallImprovements || [],
+        /*
+         * The official criterion bands, assembled here rather than on the
+         * client so the descriptors can never drift: the sentence a student
+         * reads is the one the marker was shown, from the same file.
+         *
+         * `next` carries the band above and what it describes, which is the
+         * actionable half — a band number alone tells a student where they are
+         * and nothing about how to move.
+         */
+        criteria: buildCriteriaDetail(result.criterionBands),
         // Always sent, even unassessed: the client has to be able to say
         // "not assessed" rather than quietly leaving the criterion out, which
         // would read as though pronunciation had simply been forgotten.
@@ -1040,13 +1084,18 @@ export async function markAttempt(resultId) {
   }
 
   /*
-   * The level comes from the whole performance, not from averaging the answers.
+   * The mark comes from the whole performance, as the agency's own method
+   * requires: "topshiriqlarning 3 turi bo'yicha umumlashgan baho qo'yiladi" —
+   * one generalised judgement across the three task types.
    *
-   * The parts are a ladder — Part 1 tops out at B1, Part 2 is where B2 is shown,
-   * Part 3 where C1 is — so averaging eight answers asked a 30-second Part 1.1
-   * reply to prove C1, marked it down when it could not, and pulled a genuine C1
-   * candidate into the middle of B2. This reads every answer at once, as an
-   * examiner does.
+   * So the marker awards the five official criterion bands, 0-6 each, and the
+   * published conversion table turns those into the 0-75 figure. Averaging the
+   * answers was never how this exam works: it asked a 30-second Part 1.1 reply
+   * to prove C1, marked it down when it could not, and pulled genuine C1
+   * candidates into the middle of B2.
+   *
+   * The measured pronunciation goes in with the transcripts, because talaffuz
+   * is one of the five criteria and a transcript cannot hear an accent.
    *
    * The old average survives as the fallback. It is wrong in the way described
    * above, but it is wrong in a knowable direction, and a marked attempt with a
@@ -1064,7 +1113,11 @@ export async function markAttempt(resultId) {
   if (speakingAnswers.length && result.taskResults.some(t => t.audioKey)) {
     try {
       overall = await AICallLimiter.run(() =>
-        AIEvaluationService.evaluateAttempt({ answers: speakingAnswers, examTitle: exam.title })
+        AIEvaluationService.evaluateAttempt({
+          answers: speakingAnswers,
+          examTitle: exam.title,
+          pronunciation: result.pronunciation
+        })
       );
     } catch (error) {
       console.error(`Overall marking failed for ${result._id}, averaging instead:`, error.message);
@@ -1078,13 +1131,20 @@ export async function markAttempt(resultId) {
     result.overallReasoning = overall.reasoning;
     result.overallStrengths = overall.strengths;
     result.overallImprovements = overall.areasForImprovement;
+    // The bands and the arithmetic that produced the score, kept so the
+    // conversion can be corrected later without re-marking anybody.
+    result.criterionBands = overall.bands;
+    result.rawTotal = overall.raw;
+    result.denominator = RAW_MAX;
   } else {
     result.calculateOverallScore();
     result.overallLevel = result.determineCEFRLevel();
   }
 
-  // Passing means reaching B1, the lowest certified band on the 75-point scale.
-  result.isPassed = result.overallScore >= (Number(process.env.PASS_SCORE) || 31);
+  // Passing means reaching B1 — which the agency puts at 38, not the 31 this
+  // once used. The old figure let a candidate the agency would not certify at
+  // B1 pass a mock that told them they were ready.
+  result.isPassed = result.overallScore >= (Number(process.env.PASS_SCORE) || 38);
   result.status = 'completed';
   result.evaluatedAt = new Date();
   result.completedAt = new Date();

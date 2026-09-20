@@ -2,6 +2,8 @@ import axios from 'axios';
 
 // The bands live in one place so the score always means the same thing.
 import { CEFR_BANDS, levelForScore, MAX_SCORE } from '../models/ExamResult.js';
+import { CRITERIA_PROMPT_BLOCK, CRITERION_KEYS, BAND_LABELS } from '../content/speakingCriteria.js';
+import { bandsToRaw, rawToScore, BAND_MAX } from './ScoreConversion.js';
 
 /**
  * AI Evaluation Service - Integrates with Claude Opus for CEFR assessment
@@ -134,7 +136,7 @@ class AIEvaluationService {
    * examiner forms one. Per-answer scores stay — they are useful feedback — but
    * they no longer decide the outcome.
    */
-  async evaluateAttempt({ answers, examTitle }) {
+  async evaluateAttempt({ answers, examTitle, pronunciation = null }) {
     const byPart = answers.reduce((groups, answer) => {
       (groups[answer.part] ||= []).push(answer);
       return groups;
@@ -147,71 +149,131 @@ ${group.map(a => `Q: ${a.question}\nA: "${a.transcription}"`).join('\n\n')}`)
       .join('\n');
 
     const cached = `You are an expert examiner for the O'zbekiston Multilevel English speaking exam.
-You are given a candidate's complete performance and must decide their level.
+You are given a candidate's complete performance and must award the official
+criterion bands for it.
 
-HOW THIS EXAM ESTABLISHES A LEVEL — read this carefully, it is not an average:
-The parts are a ladder. Each one is where a particular level gets demonstrated.
+HOW THIS EXAM IS MARKED — this is the agency's method, not ours:
+One generalised judgement is made across all three task types together
+("topshiriqlarning 3 turi bo'yicha umumlashgan baho qo'yiladi"). You do not mark
+answers separately and average them. You read the whole performance and decide,
+for each criterion, which band it sits in.
 
-- PART 1 (1.1 and 1.2) establishes whether the candidate is A1, A2 or B1.
-  This part cannot show more than B1. Doing it well proves B1, not C1.
-- PART 2 is where B2 is demonstrated. A candidate who sustains an extended,
-  connected two-minute turn covering all three questions is showing B2.
-- PART 3 is where C1 is demonstrated. A candidate who argues a clear position,
-  develops reasons and engages with the opposing side is showing C1.
+Each criterion is scored 0-${BAND_MAX} against the published descriptors below.
+Band 4 is the pivot: it means the candidate MEETS the requirement. 6 is above
+it, 3 is close to it, 1 does not meet it.
 
-The level is THE HIGHEST RUNG THE CANDIDATE ACTUALLY DEMONSTRATES. Weakness
-lower down does not cap them at that lower rung — it moves them down WITHIN the
-band they reached, not out of it:
+Bands 5 and 2 are deliberately not described by the agency. Band 5 means the
+candidate shows everything band 4 describes plus some of band 6; band 2 sits
+between 1 and 3. Use them — a scale where nobody is ever a 5 is a scale being
+used at half its resolution.
 
-- Strong Part 3, weak Part 1 → solid or upper B2. Not B1.
-- Strong Part 2, weak Part 1, moderate Part 3 → B2, toward the lower end.
-- Strong throughout, including Part 3 → C1.
-- Handles Part 1 well but cannot sustain Part 2 → B1.
+THE OFFICIAL CRITERIA AND DESCRIPTORS:
 
-Overall impression across the whole performance is weighed alongside this.
+${CRITERIA_PROMPT_BLOCK}
+
+HOW THE PARTS CONTRIBUTE:
+The three parts give different evidence, and a criterion is judged on the best
+evidence available for it, not on an average across parts.
+
+- PART 1 (1.1 and 1.2) is short answers. It shows vocabulary and accuracy on
+  familiar topics. It cannot show sustained discourse, so weakness here is not
+  evidence about coherence over a long turn.
+- PART 2 is the extended turn. This is where fluency, coherence and the ability
+  to sustain discourse are actually visible.
+- PART 3 is argument. This is where the higher bands of communicative
+  effectiveness and range get demonstrated.
+
+A candidate who argues well in Part 3 but is terse in Part 1 has DEMONSTRATED
+the higher band — weakness earlier does not cancel evidence produced later. Mark
+the highest level the candidate actually shows, then adjust within the criterion
+for how consistently they show it.
 
 YOU ARE READING AUTOMATIC TRANSCRIPTION OF SPEECH:
 No punctuation, inferred sentence boundaries, and repetitions or restarts that
 are normal in speech and often artefacts of transcription rather than errors.
-Judge the English a listener would have heard. Pronunciation and fluency are
-measured separately from the audio and are not yours to judge — do not mention
-accent, pace or hesitation anywhere.
+Judge the English a listener would have heard.
 
-SCALE — out of 75:
-- 65-75  C1     - 51-64  B2     - 31-50  B1     - 16-30  A2     - 0-15  A1
-
-Decide the band first from the ladder above, then place the candidate within it.
-Do not hedge toward the middle: a candidate who demonstrates C1 in Part 3 belongs
-in the 65-75 band, and placing them at 58 to be safe is a marking error, not
-caution.
+PRONUNCIATION (talaffuz) IS MEASURED, NOT GUESSED:
+A transcript cannot hear an accent. Where measured figures are supplied in the
+performance below, the talaffuz band must follow them and the descriptors
+together. Where no measurement is supplied, return null for that band rather
+than inventing one — a criterion nobody could judge is not a criterion the
+candidate failed, and the scoring handles a missing band correctly.
 
 Reply with JSON only:
 {
-  "score": (0-75),
-  "level": "A1|A2|B1|B2|C1",
-  "reasoning": "Which rung each part demonstrated, and how that produced this band",
+  "bands": {
+${CRITERION_KEYS.map(key => `    "${key}": 0-${BAND_MAX}`).join(',\n')}
+  },
+  "reasoning": "Which part gave the evidence for each band, in one or two sentences",
   "overallFeedback": "What the candidate does well and what holds them back, addressed to them",
   "strengths": ["...", "...", "..."],
   "areasForImprovement": ["...", "...", "..."]
 }
 
 ${this.languageInstruction}
-Mark as the official examiner would: neither severe nor generous.`;
+Award the bands the official examiner would: neither severe nor generous. Do not
+hedge toward band 3 or 4 for safety — a candidate whose performance matches the
+band 6 descriptor gets a 6, and marking them down to be cautious is a marking
+error, not caution.`;
+
+    const measured = pronunciation?.assessed
+      ? `\n\nMEASURED PRONUNCIATION (Azure AI Speech, 0-100, from the candidate's actual audio):
+accuracy ${Math.round(pronunciation.accuracy ?? 0)}, fluency ${Math.round(pronunciation.fluency ?? 0)}${
+          Number.isFinite(pronunciation.prosody) ? `, prosody ${Math.round(pronunciation.prosody)}` : ''
+        }, overall ${Math.round(pronunciation.overall ?? 0)}${
+          pronunciation.problemWords?.length
+            ? `\nWords mispronounced: ${pronunciation.problemWords.slice(0, 8).map(w => w.word).join(', ')}`
+            : ''
+        }
+Use these for the talaffuz band, read against its descriptors.`
+      : `\n\nNo pronunciation measurement is available for this attempt. Return null for
+the talaffuz band.`;
 
     const user = `${examTitle ? `Exam: ${examTitle}\n\n` : ''}THE CANDIDATE'S FULL PERFORMANCE:
-${transcript}`;
+${transcript}${measured}`;
 
     const response = await this.callClaudeAPI({ cached, user });
     const verdict = this.parseEvaluation(response);
 
-    const score = Number(verdict.score);
-    if (!Number.isFinite(score)) throw new Error('Overall marking returned no usable score');
+    const bands = {};
+    for (const key of CRITERION_KEYS) {
+      const awarded = verdict.bands?.[key];
+
+      /*
+       * A band the marker could not award stays ABSENT rather than becoming a
+       * zero. Zero is a real judgement on this scale — worse than band 1 — and
+       * must never stand in for "unknown".
+       *
+       * The emptiness is tested before the conversion to a number, because
+       * Number(null) is 0 and Number('') is 0. Left to Number() alone, the
+       * marker returning null for an unmeasurable pronunciation — exactly what
+       * the prompt instructs it to do — silently became a zero and cost the
+       * candidate eight points on the reported score.
+       */
+      if (awarded === null || awarded === undefined || awarded === '') continue;
+
+      const band = Number(awarded);
+      if (!Number.isFinite(band)) continue;
+      bands[key] = Math.max(0, Math.min(BAND_MAX, Math.round(band)));
+    }
+
+    if (Object.keys(bands).length === 0) {
+      throw new Error('Overall marking returned no usable criterion bands');
+    }
+
+    const raw = bandsToRaw(bands);
+    const score = rawToScore(raw);
 
     return {
-      score: Math.max(0, Math.min(MAX_SCORE, Math.round(score))),
-      // The band table is the authority on which level a score is, so the level
-      // is derived rather than trusted — the two can never disagree.
-      level: levelForScore(Math.max(0, Math.min(MAX_SCORE, Math.round(score)))),
+      bands,
+      raw,
+      score,
+      // The agency's table is the authority on both numbers, so neither is
+      // taken from the model: the bands convert to a score, and the score
+      // determines the level. The marker's own arithmetic is never trusted,
+      // which is why it is no longer asked for any.
+      level: levelForScore(score),
       reasoning: verdict.reasoning || '',
       overallFeedback: verdict.overallFeedback || '',
       strengths: verdict.strengths || [],
@@ -270,11 +332,12 @@ Respond with ONLY valid JSON in exactly this structure, and nothing else:
   "overallFeedback": "A short paragraph summarising the level of this answer and why",
   "strengths": ["Strength 1", "Strength 2", "Strength 3"],
   "areasForImprovement": ["Specific, actionable point 1", "Point 2", "Point 3"],
-  "suggestedLevel": "CEFR level (A1/A2/B1/B2/C1/C2)"
+  "suggestedLevel": "B1|B2|C1, or 'below B1'"
 }
 
 SCORING SCALE — out of 75, the O'zbekiston Multilevel scale:
-- 65-75  C1    - 51-64  B2    - 31-50  B1    - 16-30  A2    - 0-15  A1
+- 65-75  C1    - 51-64  B2    - 38-50  B1    - 0-37  below B1
+There is no A2 or A1 in this exam: anything under 38 is simply below B1.
 
 Never award more than 75, and make "suggestedLevel" agree with the band the score falls in.
 
@@ -646,9 +709,35 @@ Numbers stay numbers. Do not translate the JSON field names.
 
       const evaluation = JSON.parse(jsonMatch[0]);
 
-      // Validate structure. Note `!evaluation.score` would reject a legitimate
-      // score of 0 — which is exactly what a silent or off-topic answer earns —
-      // so test for the field being present, not truthy.
+      /*
+       * Two reply shapes go through this parser, and validating one against the
+       * other is worse than not validating at all: the caller catches the error
+       * and falls back to averaging, so a shape mismatch would not crash — it
+       * would quietly undo the whole-performance marking and nobody would see
+       * why the scores were low again.
+       *
+       *   whole-performance: { bands: {...}, ... }  — the criterion bands
+       *   per-answer:        { score, criteria, overallFeedback }
+       *
+       * The shape is recognised by what it carries, not by a flag, because the
+       * model decides what it sends and a flag it forgot would be worse than a
+       * field it did.
+       *
+       * Note `!evaluation.score` would reject a legitimate score of 0 — which is
+       * exactly what a silent or off-topic answer earns — so every check below
+       * tests for the field being present, not truthy.
+       */
+      if (evaluation.bands !== undefined && evaluation.bands !== null) {
+        if (typeof evaluation.bands !== 'object') {
+          throw new Error(`bands came back as ${JSON.stringify(evaluation.bands)}, not an object`);
+        }
+        const usable = Object.values(evaluation.bands).some(
+          band => typeof band === 'number' && !Number.isNaN(band)
+        );
+        if (!usable) throw new Error('the reply carried no numeric criterion band');
+        return evaluation;
+      }
+
       const missing = ['score', 'criteria', 'overallFeedback'].filter(
         key => evaluation[key] === undefined || evaluation[key] === null
       );

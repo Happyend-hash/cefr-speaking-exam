@@ -40,6 +40,7 @@
     // decided here: a counter the page could edit would be a counter students
     // could edit. The server checks again at the start of every attempt.
     access: null,      // { remaining, blocked, contact, message }
+    criteriaOpen: false, // result screen: is the criteria panel expanded
     folder: null,      // which module's mocks are being browsed
     mockSearch: '',    // mocks screen: search box
     mockStatus: 'all', // mocks screen: status filter
@@ -572,7 +573,10 @@
   }
 
   async function openResult(resultId) {
-    setState({ screen: 'result', loading: true, error: '', result: null });
+    // The details panel closes with the result it belonged to: opening another
+    // attempt should show that attempt's headline, not inherit the last one's
+    // expanded state.
+    setState({ screen: 'result', loading: true, error: '', result: null, criteriaOpen: false });
     try {
       const result = await api(`/exam/results/${resultId}`);
       setState({ result, loading: false });
@@ -1243,6 +1247,27 @@
    * contact details are not here — they come from the server, because they can
    * change without the app changing.
    */
+  /**
+   * The details panel's own labels. The criterion names, band labels and
+   * descriptors are NOT here — those come from the server, in the agency's
+   * wording, so there is exactly one copy of them in the system.
+   */
+  const CRITERIA_UZ = {
+    open: "Batafsil — mezonlar bo'yicha ballaringiz",
+    close: 'Yopish',
+    heading: 'Baholash mezonlari',
+    intro:
+      "Rasmiy imtihon mezonlari. Har biri 0 dan 6 gacha baholanadi; 4 ball — " +
+      "daraja talabiga mos degani.",
+    next: band => `${band} ball uchun nima kerak`,
+    // Bands 5 and 2 have no descriptor of their own — the sheet defines them as
+    // the space between their neighbours, so the page shows the band above and
+    // says so rather than printing "between 4 and 6" as if it were advice.
+    between: (band, shown) =>
+      `${band} ball — hozirgi darajangizdan yuqori, ${shown} ball xususiyatlari ko'rina boshlashi kerak:`,
+    top: "Bu mezon bo'yicha eng yuqori ball."
+  };
+
   const ACCESS_UZ = {
     remaining: n => `Qolgan mock: ${n}`,
     remainingNone: 'Mock qolmadi',
@@ -2164,6 +2189,66 @@
   }
 
 
+  /**
+   * The official criteria, behind a "Batafsil" toggle.
+   *
+   * Collapsed by default because the score and the level are what a candidate
+   * came for — this is the same order the certificate puts them in. Open, it is
+   * the only place a student can see the exam's actual marking criteria applied
+   * to their own words.
+   *
+   * Every sentence here is the agency's, sent by the server from the same file
+   * the marker read. Nothing is paraphrased on the way to the screen: a student
+   * comparing this against the official sheet has to find the same wording.
+   */
+  function criteriaCard() {
+    const criteria = state.result?.criteria || [];
+    // Attempts marked before criterion bands existed have none. Showing an
+    // empty panel would promise detail that is not there.
+    if (!criteria.length) return '';
+
+    if (!state.criteriaOpen) {
+      return `<div class="card">
+        <button class="btn btn-ghost btn-block" data-action="criteria-open">
+          ${CRITERIA_UZ.open}
+        </button>
+      </div>`;
+    }
+
+    const rows = criteria.map(c => `
+      <div style="padding:16px 0;border-bottom:1px solid var(--line)">
+        <div class="row" style="justify-content:space-between;align-items:baseline;gap:12px">
+          <strong>${esc(c.name)}</strong>
+          <span><strong style="font-size:20px">${c.band}</strong><span class="muted"> / ${c.max}</span></span>
+        </div>
+        <div class="muted" style="font-size:13px;margin-top:2px">${esc(c.label)}</div>
+        ${c.descriptor
+          ? `<p style="margin-top:10px">${esc(c.descriptor)}</p>`
+          : ''}
+        ${c.next
+          // The actionable half. A band number says where a student is; this
+          // says what the next one asks of them, in the words the examiner
+          // will be reading when they sit the real exam.
+          ? `<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--ground)">
+               <div class="section-title">${esc(CRITERIA_UZ.next(c.next.band))}</div>
+               ${c.next.between
+                 ? `<p class="muted" style="margin-top:6px;font-size:13px">${esc(CRITERIA_UZ.between(c.next.band, c.next.describes))}</p>`
+                 : ''}
+               <p style="margin-top:6px">${esc(c.next.descriptor)}</p>
+             </div>`
+          : `<p class="muted" style="margin-top:12px">${esc(CRITERIA_UZ.top)}</p>`}
+      </div>`).join('');
+
+    return `<div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">${CRITERIA_UZ.heading}</h2>
+        <button class="btn btn-ghost btn-sm" data-action="criteria-close">${CRITERIA_UZ.close}</button>
+      </div>
+      <p class="muted" style="margin-top:6px">${CRITERIA_UZ.intro}</p>
+      <div style="margin-top:8px">${rows}</div>
+    </div>`;
+  }
+
   function resultScreen() {
     if (state.loading || !state.result) {
       return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">Loading results…</p></div>`;
@@ -2199,6 +2284,8 @@
           <span class="badge ${r.isPassed ? 'badge-pass' : 'badge-fail'}">${r.isPassed ? 'Passed' : 'Not yet passed'}</span>
         </div>
       </div>
+
+      ${criteriaCard()}
 
       ${r.overallFeedback ? `<div class="card">
         <div class="section-head"><h2>Umumiy baho</h2>
@@ -2435,6 +2522,8 @@
       case 'signout': return signOut();
       case 'done-submitting': return loadDashboard();
       case 'notice-seen': return dismissNotice();
+      case 'criteria-open': return setState({ criteriaOpen: true });
+      case 'criteria-close': return setState({ criteriaOpen: false });
       case 'mic-check': return runMicCheck();
       case 'start-questions':
       case 'start-questions-anyway':

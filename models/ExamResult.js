@@ -1,5 +1,13 @@
 import mongoose from 'mongoose';
 
+/**
+ * The level for anyone below the B1 floor. The agency's system has no A2 or A1
+ * — under 38 is simply "below B1". Declared here rather than beside the band
+ * table lower down because the schemas below reference it at module load, and a
+ * `const` used before its declaration throws.
+ */
+export const BELOW_B1 = 'B1dan quyi';
+
 const examResultSchema = new mongoose.Schema(
   {
     // References
@@ -19,7 +27,7 @@ const examResultSchema = new mongoose.Schema(
     // Optional: a Multilevel test is not tied to a level, it determines one.
     examLevel: {
       type: String,
-      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', null]
+      enum: ['A1', 'A2', BELOW_B1, 'B1', 'B2', 'C1', 'C2', null]
     },
 
     module: {
@@ -153,9 +161,35 @@ const examResultSchema = new mongoose.Schema(
      * answers produced a band too low for anyone who could argue at C1.
      */
     overallFeedback: String,
-    overallReasoning: String,      // which rung each part demonstrated
+    overallReasoning: String,      // which part gave the evidence for each band
     overallStrengths: [String],
     overallImprovements: [String],
+
+    /**
+     * The official criterion bands, 0-6 each, and the arithmetic that turned
+     * them into a score.
+     *
+     * THE BANDS ARE STORED, NOT JUST THE SCORE, and that is the point of this
+     * block. The raw speaking total's denominator is inferred rather than
+     * documented (see services/ScoreConversion.js). The day it is confirmed,
+     * every attempt ever marked can be reconverted from these bands in a loop
+     * that costs nothing. Had only the score been kept, correcting it would
+     * mean re-marking every attempt through the API — real money, and only for
+     * attempts whose audio still exists.
+     *
+     * `denominator` records what the conversion assumed at the time, so an
+     * attempt marked under one assumption is never silently reinterpreted under
+     * another.
+     */
+    criterionBands: {
+      vocabulary: Number,
+      grammar: Number,
+      fluencyCoherence: Number,
+      communicative: Number,
+      pronunciation: Number
+    },
+    rawTotal: Number,
+    denominator: Number,
 
     // Overall Results
     overallScore: Number, // the whole-performance judgement; see above
@@ -164,7 +198,7 @@ const examResultSchema = new mongoose.Schema(
     // evaluation has run. Requiring it made starting an attempt impossible.
     overallLevel: {
       type: String,
-      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', null]
+      enum: ['A1', 'A2', BELOW_B1, 'B1', 'B2', 'C1', 'C2', null]
     },
 
     isPassed: {
@@ -233,12 +267,24 @@ examResultSchema.methods.calculateOverallScore = function () {
 /**
  * The CEFR bands, on the 75-point O'zbekiston Multilevel scale.
  *
- * These three bands are the ones that matter and were set deliberately:
+ * These are the agency's own boundaries, not ours:
  *   65-75  C1
  *   51-64  B2
- *   31-50  B1
- * A2 and A1 sit below them so a student who barely spoke is not handed a B1 —
- * the bands are a floor as well as a ceiling.
+ *   38-50  B1
+ *   0-37   B1dan quyi — "below B1"
+ *
+ * Source: "Chet tilini bilish darajasini baholash ko'p darajali test formati
+ * uchun baholash mezonlari", Bilimni baholash agentligi, 16 March 2023.
+ *
+ * THERE IS NO A2 OR A1 IN THIS SYSTEM. Everything under 38 is simply below B1.
+ * The earlier table here invented an A2 at 16 and an A1 at 0, and put B1 at 31
+ * — seven points below the real floor. That error ran in the worst direction:
+ * a candidate scoring 33 was told "B1" when the agency would not certify them
+ * at B1 at all, which is exactly the student who then pays to sit the real exam
+ * before they are ready.
+ *
+ * 'A1' and 'A2' remain permitted values in the schemas so that attempts marked
+ * under the old table still load. Nothing produces them any more.
  *
  * Exported because the number must mean the same thing everywhere it is shown.
  * Anything that reports a level reads it from here rather than repeating the
@@ -249,15 +295,14 @@ export const MAX_SCORE = 75;
 export const CEFR_BANDS = [
   { min: 65, level: 'C1' },
   { min: 51, level: 'B2' },
-  { min: 31, level: 'B1' },
-  { min: 16, level: 'A2' },
-  { min: 0, level: 'A1' }
+  { min: 38, level: 'B1' },
+  { min: 0, level: BELOW_B1 }
 ];
 
 export function levelForScore(score) {
   const value = Number(score);
-  if (!Number.isFinite(value)) return 'A1';
-  return (CEFR_BANDS.find(band => value >= band.min) || { level: 'A1' }).level;
+  if (!Number.isFinite(value)) return BELOW_B1;
+  return (CEFR_BANDS.find(band => value >= band.min) || { level: BELOW_B1 }).level;
 }
 
 examResultSchema.methods.determineCEFRLevel = function () {

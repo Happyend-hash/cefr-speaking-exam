@@ -1,6 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
-import ExamResult, { CEFR_BANDS, MAX_SCORE } from '../models/ExamResult.js';
+import ExamResult, { CEFR_BANDS, MAX_SCORE, BELOW_B1 } from '../models/ExamResult.js';
 import AuthService from '../services/AuthService.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -225,7 +225,10 @@ router.post('/change-password', async (req, res, next) => {
   }
 });
 
-const CEFR_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+// 'A1' and 'A2' are kept only so attempts marked under the old, invented band
+// table still rank. Nothing produces them now; 'B1dan quyi' is what sits below
+// B1 in this exam.
+const CEFR_ORDER = ['A1', 'A2', BELOW_B1, 'B1', 'B2', 'C1', 'C2'];
 
 function highestCEFR(levels) {
   const ranked = levels.filter(Boolean).map(l => CEFR_ORDER.indexOf(l)).filter(i => i >= 0);
