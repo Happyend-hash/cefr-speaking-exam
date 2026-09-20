@@ -195,9 +195,33 @@ app.use('/api/evaluation', authenticate, evaluationRoutes);
 app.use('/api/admin', authenticate, adminRoutes);
 
 // Health check
+/**
+ * Is the app actually able to serve a student?
+ *
+ * This used to answer OK unconditionally, which made it worse than useless:
+ * the one night the site went down — the database rejecting our credentials
+ * after a password rotation — this endpoint would have cheerfully returned
+ * status OK to any monitor watching it, while every student saw a failure. A
+ * health check that cannot fail does not report health, it reports that a
+ * process is running, and nobody needs a monitor to tell them that.
+ *
+ * So it reports the database, which is the dependency that everything a
+ * student does relies on: signing in, starting an attempt, saving an answer,
+ * reading a result. A 503 when it is unreachable is what makes an uptime
+ * monitor able to tell anyone anything.
+ *
+ * mongoose.connection.readyState: 0 disconnected, 1 connected, 2 connecting,
+ * 3 disconnecting. Only 1 is servable — 2 is honest about a server still
+ * coming up, and answering OK during it would hide a boot that never finishes.
+ */
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'OK',
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const readyState = mongoose.connection?.readyState ?? 0;
+  const healthy = readyState === 1;
+
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'OK' : 'UNHEALTHY',
+    database: states[readyState] || 'unknown',
     timestamp: new Date().toISOString(),
     version: '1.0.0'
   });
