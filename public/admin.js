@@ -40,6 +40,9 @@
     openTestId: null,
     remark: null,
     students: null,          // { students, total, shown, contact } once loaded
+    review: null,            // { results, uncorrected } once loaded
+    reviewOpen: false,
+    reviewOnly: 'uncorrected',
     studentsOpen: false,
     studentSearch: '',
     studentOnly: '',         // '', 'blocked' or 'out'
@@ -167,6 +170,7 @@
           <div class="card stat"><div class="stat-label">Attempts</div><div class="stat-value">${o.attempts}</div></div>
         </div>` : ''}
 
+        ${reviewCard()}
         ${studentsCard()}
 
         <div class="row" style="justify-content:space-between;margin-top:8px">
@@ -186,6 +190,84 @@
         ${rescueCard()}
         ${purgeCard()}
       </main>`;
+  }
+
+  /**
+   * The review queue.
+   *
+   * The marker is only as good as the standard behind it, and the standard only
+   * reaches it if somebody listens to real students and disagrees on the
+   * record. This is the door to that: every completed attempt, newest first,
+   * opening into the same result screen a student sees — recordings,
+   * transcripts, the marker's bands — with the correction panel underneath.
+   *
+   * It defaults to the unreviewed ones, because a queue that shows everything
+   * shows no work to do.
+   */
+  function reviewCard() {
+    if (!state.reviewOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Review attempts</h2>
+        <p class="muted" style="margin-top:6px">
+          Listen to what a student actually said, then record the bands you would have
+          given. Your marking becomes the standard the examiner is held to on every
+          attempt after it.
+        </p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="review-open">
+          Open review queue
+        </button>
+      </div>`;
+    }
+
+    const data = state.review;
+    const filters = [
+      ['uncorrected', 'Not yet reviewed'],
+      ['corrected', 'Reviewed'],
+      ['', 'All']
+    ].map(([value, label]) => `
+      <button class="btn btn-sm ${state.reviewOnly === value ? '' : 'btn-ghost'}"
+              data-review-filter="${value}">${label}</button>`).join('');
+
+    const rows = (data?.results || []).map(r => `
+      <div class="row" style="justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">
+        <div style="min-width:220px">
+          <strong>${esc(r.studentName || r.student)}</strong>
+          ${r.corrected ? '<span class="tag tag-live">reviewed</span>' : ''}
+          <div class="muted" style="font-size:13px">
+            ${esc(r.exam)}${r.part ? ` · Part ${esc(r.part)}` : ''} · ${r.answers} answer${r.answers === 1 ? '' : 's'}
+          </div>
+        </div>
+        <div class="muted" style="font-size:13px">
+          ${r.at ? new Date(r.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : ''}
+        </div>
+        <div class="row" style="gap:10px;align-items:center">
+          <span><strong>${r.score ?? '—'}</strong><span class="muted"> / 75</span></span>
+          <span class="tag">${esc(r.level || '')}</span>
+          <a class="btn btn-sm" href="/?result=${encodeURIComponent(r.id)}" target="_blank" rel="noopener">
+            Review
+          </a>
+        </div>
+      </div>`).join('');
+
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Review attempts</h2>
+        <button class="btn btn-ghost btn-sm" data-action="review-close">Close</button>
+      </div>
+      <p class="muted" style="margin-top:6px">
+        ${data ? `${data.uncorrected} attempt${data.uncorrected === 1 ? '' : 's'} not yet reviewed.` : ''}
+        Opening one shows the recordings and the marker's bands, with your own marking underneath.
+      </p>
+      <div class="row" style="gap:10px;margin-top:14px;flex-wrap:wrap">
+        ${filters}
+        <button class="btn btn-ghost btn-sm" data-action="review-reload" ${state.loading ? 'disabled' : ''}>
+          ${state.loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+      <div style="margin-top:12px">
+        ${rows || '<p class="muted">Nothing here.</p>'}
+      </div>
+    </div>`;
   }
 
   /**
@@ -1055,6 +1137,9 @@
     root.querySelectorAll('[data-access]').forEach(el =>
       el.addEventListener('click', () => changeAccess(el.dataset.id, el.dataset.access)));
 
+    root.querySelectorAll('[data-review-filter]').forEach(el =>
+      el.addEventListener('click', () => loadReview({ only: el.dataset.reviewFilter })));
+
     root.querySelectorAll('[data-student-filter]').forEach(el =>
       el.addEventListener('click', () => loadStudents({ only: el.dataset.studentFilter })));
 
@@ -1090,11 +1175,29 @@
     if (action === 'calibration-check') return runCalibrationCheck();
     if (action === 'sample-add') return setState({ addingSample: true, error: '' });
     if (action === 'sample-cancel') return setState({ addingSample: false });
+    if (action === 'review-open') return loadReview({ open: true });
+    if (action === 'review-close') return setState({ reviewOpen: false });
+    if (action === 'review-reload') return loadReview({});
     if (action === 'students-open') return loadStudents({ open: true });
     if (action === 'students-close') return setState({ studentsOpen: false });
     if (action === 'students-reload') return loadStudents({});
     if (action === 'block-all') return changeAccessForAll('block');
     if (action === 'unblock-all') return changeAccessForAll('unblock');
+  }
+
+  // --------------------------------------------------------------- review
+
+  async function loadReview({ open, only } = {}) {
+    const nextOnly = only === undefined ? state.reviewOnly : only;
+    setState({ reviewOpen: open || state.reviewOpen, reviewOnly: nextOnly, loading: true, error: '' });
+    try {
+      const query = new URLSearchParams();
+      if (nextOnly) query.set('only', nextOnly);
+      const data = await api(`/admin/results?${query}`);
+      setState({ review: data, loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
   }
 
   // ------------------------------------------------------------- students

@@ -16,6 +16,7 @@ import AudioStorageService, {
 import TranscriptionService from '../services/TranscriptionService.js';
 import AIEvaluationService from '../services/AIEvaluationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
+import { bandsToScore } from '../services/ScoreConversion.js';
 import { isRescuable, rescueAttempt, markAttempt } from './exam.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -1388,6 +1389,63 @@ router.post('/students/access-all', async (req, res, next) => {
 });
 
 /**
+ * @route   GET /api/admin/results
+ * @desc    Recent attempts from every student, for review
+ *
+ * The teacher's queue. Marking is only as good as the standard behind it, and
+ * the standard only reaches the marker if somebody listens to real students and
+ * disagrees on the record. This is where that starts: every attempt, newest
+ * first, with a note of which ones have already been reviewed.
+ *
+ * `only=uncorrected` is the working view — the attempts nobody has checked yet.
+ */
+router.get('/results', async (req, res, next) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 40, 200);
+
+    const filter = { status: 'completed' };
+    if (req.query.only === 'uncorrected') filter['teacherBands.correctedAt'] = { $exists: false };
+    if (req.query.only === 'corrected') filter['teacherBands.correctedAt'] = { $exists: true };
+
+    const results = await ExamResult.find(filter)
+      .sort({ completedAt: -1, createdAt: -1 })
+      .limit(limit)
+      .populate('student', 'email firstName lastName')
+      .populate('exam', 'title')
+      .select('student exam overallScore overallLevel criterionBands teacherBands completedAt createdAt mode part taskResults.taskNumber')
+      .lean();
+
+    res.json({
+      success: true,
+      data: {
+        results: results.map(r => ({
+          id: String(r._id),
+          student: r.student?.email || '—',
+          studentName: [r.student?.firstName, r.student?.lastName].filter(Boolean).join(' '),
+          exam: r.exam?.title || 'Exam',
+          mode: r.mode,
+          part: r.part || null,
+          answers: (r.taskResults || []).length,
+          score: r.overallScore ?? null,
+          level: r.overallLevel || '',
+          corrected: Boolean(r.teacherBands?.correctedAt),
+          correctedAt: r.teacherBands?.correctedAt || null,
+          at: r.completedAt || r.createdAt
+        })),
+        // So the card can say how much of the queue is still unreviewed without
+        // a second request.
+        uncorrected: await ExamResult.countDocuments({
+          status: 'completed',
+          'teacherBands.correctedAt': { $exists: false }
+        })
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * @route   POST /api/admin/results/:id/bands
  * @desc    Record the bands the teacher would have awarded this performance
  *
@@ -1442,10 +1500,23 @@ router.post('/results/:id/bands', async (req, res, next) => {
     const anchors = await ExamResult.countDocuments({ 'teacherBands.correctedAt': { $exists: true } });
     console.log(`Calibration: bands recorded for ${result._id} (${source}); ${anchors} anchor(s) now`);
 
+    // What the teacher's own bands come to on the official scale. Shown back to
+    // them because bands are easier to judge than a score but a score is what
+    // they will be compared against — and a teacher whose bands quietly add up
+    // to 72 for a candidate they think of as a 67 should see that immediately.
+    const teacherScore = bandsToScore(bands);
+
     res.json({
       success: true,
       message: `Recorded. ${anchors} corrected attempt${anchors === 1 ? '' : 's'} now teach the marker.`,
-      data: { id: String(result._id), bands, source, anchors }
+      data: {
+        id: String(result._id),
+        bands,
+        source,
+        anchors,
+        teacherScore,
+        markedScore: result.overallScore ?? null
+      }
     });
   } catch (error) {
     next(error);

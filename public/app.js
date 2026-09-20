@@ -325,7 +325,14 @@
       setState({
         result,
         loading: false,
-        notice: `Saved. ${saved.anchors} corrected attempt${saved.anchors === 1 ? '' : 's'} now teach the marker.`
+        // The teacher's own bands, converted through the official table. Shown
+        // because bands are easier to judge than a score, but a score is what
+        // the real exam reports — and a teacher whose bands quietly add up to
+        // 72 for someone they think of as a 67 should find that out here.
+        notice:
+          `Saved${Number.isFinite(saved.teacherScore) ? ` — your bands come to ${saved.teacherScore}/75` : ''}` +
+          `${Number.isFinite(saved.markedScore) ? ` against the marker's ${saved.markedScore}` : ''}. ` +
+          `${saved.anchors} corrected attempt${saved.anchors === 1 ? '' : 's'} now teach the marker.`
       });
     } catch (error) {
       setState({ loading: false, error: error.message });
@@ -2719,6 +2726,26 @@
       try {
         state.token = token;
         state.user = JSON.parse(user);
+
+        /*
+         * ?result=<id> opens one attempt directly.
+         *
+         * This is how the review queue reaches a student's work: the admin
+         * panel links here rather than rebuilding the result screen, so a
+         * teacher reviewing someone else's attempt sees exactly what the
+         * student sees — the same recordings, the same bands, the same
+         * descriptors — with the correction panel underneath. Two renderings of
+         * a result would eventually disagree, and the one the teacher marks
+         * against has to be the one the student reads.
+         *
+         * The server decides who may open it; this only asks.
+         */
+        const requested = new URLSearchParams(window.location.search).get('result');
+        if (requested) {
+          openResult(requested);
+          return;
+        }
+
         loadDashboard();
         return;
       } catch { signOut(); }
