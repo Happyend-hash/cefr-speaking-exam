@@ -829,6 +829,25 @@ router.post('/calibration/check', async (req, res, next) => {
  */
 
 /** The student whose attempts a re-mark would cover, from an email or the caller. */
+/**
+ * Which attempts "mark again" should touch.
+ *
+ * 'completed' is the obvious one: work already marked, to be marked again under
+ * changed scoring.
+ *
+ * 'submitted' is the one that was missing, and its absence left a real gap. An
+ * attempt whose marking failed drops back to 'submitted' — transcripts intact,
+ * recordings intact, simply unmarked. Rescue does not cover it either, because
+ * rescue exists for attempts whose TRANSCRIPTS are missing. So an attempt
+ * broken by a marking fault fell between the two tools and showed the student
+ * "Tekshirilmoqda..." with nothing able to reach it.
+ *
+ * 'evaluating' is deliberately excluded: an attempt in that state may be being
+ * marked right now, and marking it twice at once would have two passes writing
+ * over each other.
+ */
+const REMARKABLE = ['completed', 'submitted'];
+
 async function resolveStudent(email, fallbackId) {
   if (!email) return fallbackId;
   const user = await User.findOne({ email: String(email).toLowerCase().trim() }).select('_id');
@@ -845,7 +864,7 @@ router.get('/results/remark', async (req, res, next) => {
     const student = await resolveStudent(req.query.email, req.user.id);
     const attempts = await ExamResult.countDocuments({
       student,
-      status: 'completed'
+      status: { $in: REMARKABLE }
     });
 
     res.json({
@@ -870,7 +889,7 @@ router.get('/results/remark', async (req, res, next) => {
 router.post('/results/remark', async (req, res, next) => {
   try {
     const student = await resolveStudent(req.body?.email, req.user.id);
-    const attempts = await ExamResult.find({ student, status: 'completed' })
+    const attempts = await ExamResult.find({ student, status: { $in: REMARKABLE } })
       .select('_id')
       .lean();
 
