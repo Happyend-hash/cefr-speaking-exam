@@ -17,7 +17,7 @@ import TranscriptionService from '../services/TranscriptionService.js';
 import AIEvaluationService from '../services/AIEvaluationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
 import { bandsToScore } from '../services/ScoreConversion.js';
-import { isRescuable, rescueAttempt, markAttempt } from './exam.js';
+import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark } from './exam.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -904,18 +904,24 @@ router.post('/results/remark', async (req, res, next) => {
 
     const ids = attempts.map(a => String(a._id));
 
+    // Read the recordings again first, so hesitations ("umm", "eee") that the
+    // old transcripts dropped are counted. Costs transcription (about 2 US
+    // cents per full mock) on top of marking.
+    const retranscribe = req.body?.retranscribe === true;
+
     // One at a time, and after the response, for the same reason the rescue is:
     // marking a full attempt takes long enough that holding the request open
     // only invites closing the tab half way through.
     (async () => {
       for (const id of ids) {
         try {
-          await markAttempt(id);
+          if (retranscribe) await retranscribeAndMark(id);
+          else await markAttempt(id);
         } catch (error) {
           console.error(`Re-mark failed for ${id}:`, error.message);
         }
       }
-      console.log(`Re-marked ${ids.length} attempt(s)`);
+      console.log(`Re-marked ${ids.length} attempt(s)${retranscribe ? ', transcripts refreshed' : ''}`);
     })();
 
     res.status(202).json({

@@ -926,6 +926,47 @@ export function isRescuable(result) {
  * again, because it (correctly) refuses to score an answer with no words. The
  * words have to be recovered from the audio before there is anything to mark.
  */
+/**
+ * Transcribe every recording of an attempt again, then mark it.
+ *
+ * For attempts transcribed before hesitations were kept: their transcripts
+ * have no "umm" or "eee" in them, so re-marking alone would measure the pauses
+ * but still count zero fillers. The recordings are intact, so the words can
+ * simply be read again with the current transcription.
+ *
+ * An old transcript is only replaced by a new one that has words in it — a
+ * transcription that fails or comes back empty leaves the answer as it was,
+ * never blanker than before.
+ */
+export async function retranscribeAndMark(resultId) {
+  const result = await ExamResult.findById(resultId);
+  if (!result) return { ok: false, reason: 'not found' };
+
+  let replaced = 0;
+  for (const taskResult of result.taskResults) {
+    if (!taskResult.audioKey) continue;
+    try {
+      const audio = await AudioStorageService.readBuffer(taskResult.audioKey);
+      const { text } = await TranscriptionService.transcribe(audio, {
+        filename: `task-${taskResult.taskNumber}.webm`,
+        contentType: 'audio/webm'
+      });
+      if (String(text || '').trim()) {
+        taskResult.transcription = text;
+        if (taskResult.status === 'not_transcribed') taskResult.status = 'pending';
+        replaced += 1;
+      }
+    } catch (error) {
+      console.warn(`Re-transcribe: task ${taskResult.taskNumber} of ${resultId} — ${error.message}`);
+    }
+  }
+
+  result.markModified('taskResults');
+  await result.save();
+  await markAttempt(resultId);
+  return { ok: true, replaced };
+}
+
 export async function rescueAttempt(resultId) {
   const result = await ExamResult.findById(resultId);
   if (!result) return { ok: false, reason: 'not found' };

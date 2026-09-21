@@ -607,8 +607,8 @@
       <h2 style="font-size:18px">Mark attempts again</h2>
       <p class="muted" style="margin-top:6px">
         Runs completed attempts through the current marking. Use this after the scoring
-        changes, to see the new result on work that has already been recorded. Recordings
-        and transcripts are untouched.
+        changes, to see the new result on work that has already been recorded. Pauses are
+        measured from the saved recordings either way.
       </p>
 
       <div class="row" style="gap:12px;margin-top:14px;flex-wrap:wrap;align-items:flex-end">
@@ -630,6 +630,12 @@
              <p class="muted" style="margin-top:6px">
                Scores will change. The old ones are replaced, not kept.
              </p>
+             <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:14px">
+               <input type="checkbox" id="remark-retranscribe" ${r.retranscribe === false ? '' : 'checked'} />
+               <span>Also read the recordings again, so "umm", "eee" and "mmm" are counted.
+                 <span class="muted">Needed for attempts recorded before fillers were kept.
+                 Adds about 2 US cents of transcription per full mock.</span></span>
+             </label>
              <button class="btn btn-sm" style="margin-top:10px"
                      data-action="remark-run" ${r.running ? 'disabled' : ''}>
                ${r.running ? 'Started…' : `Mark ${r.counted} attempt${r.counted === 1 ? '' : 's'} again`}
@@ -654,11 +660,12 @@
 
   async function runRemark() {
     const r = state.remark || {};
-    setState({ remark: { ...r, running: true }, error: '' });
+    const retranscribe = document.getElementById('remark-retranscribe')?.checked !== false;
+    setState({ remark: { ...r, retranscribe, running: true }, error: '' });
     try {
       const data = await api('/admin/results/remark', {
         method: 'POST',
-        body: { email: r.email || undefined }
+        body: { email: r.email || undefined, retranscribe }
       });
       state.notice = `${data.started} attempt(s) are being marked again. Open the result in a few minutes to see the new score.`;
       setState({ remark: {} });
