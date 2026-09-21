@@ -264,6 +264,7 @@
 
   function signOut() {
     stopMicCheck();
+    stopVoice();
     stopWritingTimers();
     store.remove('token');
     store.remove('user');
@@ -1841,6 +1842,748 @@
     });
   }
 
+  // ======================================================= SPEAKING ROOMS
+  //
+  // Students talk to each other live: a partner found for them, or an open
+  // club room of up to five. Audio goes browser to browser (WebRTC); the
+  // server only introduces them, through one long-lived stream (GET
+  // /api/voice/stream) and short POSTs back.
+  //
+  // Everything live — connections, audio elements, the microphone, the
+  // recorder — lives in `vc`, outside `state`, and the audio elements sit
+  // outside #root. The page redraws often; a redraw must never cut a call.
+
+  const VC_UZ = {
+    title: 'Speaking xonalari',
+    sub: "Boshqa o'quvchilar bilan jonli ingliz tilida gaplashing. Mavzu kartasi imtihondagi haqiqiy savollardan.",
+    consentTitle: 'Boshlashdan oldin',
+    consentBody: days =>
+      `Xavfsizlik uchun barcha suhbatlar yozib olinadi. Yozuvlarni faqat ustoz eshitishi mumkin va ular ${days} kundan keyin avtomatik o'chiriladi.`,
+    consentRules: [
+      'Faqat ingliz tilida gaplashing.',
+      "Hurmat bilan gaplashing — haqorat qilgan o'quvchi bloklanadi.",
+      "Shaxsiy ma'lumot (telefon, manzil) aytmang.",
+      "Yomon xulq bo'lsa, «Shikoyat» tugmasini bosing."
+    ],
+    consentAgree: 'Roziman, davom etish',
+    connecting: 'Ulanmoqda…',
+    partnerTitle: 'Sherik topish',
+    partnerBody: "Darajangizga mos o'quvchi bilan juftlashasiz. Mavzu kartasi va 5 daqiqalik taymer beriladi.",
+    partnerFind: 'Sherik topish',
+    partnerWaiting: "Sherik qidirilmoqda…",
+    partnerWaitingNote: "Darajangizdagi sherik bo'lmasa, 20 soniyadan keyin boshqa darajadagi bilan juftlashasiz.",
+    cancel: 'Bekor qilish',
+    waiting: n => (n ? `${n} kishi kutmoqda` : "Hozir hech kim kutmayapti"),
+    clubsTitle: 'Speaking club xonalari',
+    clubsBody: "Guruh bo'lib gaplashing — 5 kishigacha. Istalgan xonaga kiring.",
+    join: 'Kirish',
+    full: "To'lgan",
+    empty: "Bo'sh — birinchi bo'ling",
+    mic: 'Mikrofonga ruxsat bering — brauzeringiz so\'raydi.',
+    micDenied: "Mikrofonga ruxsat berilmadi. Brauzer sozlamalarida shu sayt uchun mikrofonni yoqing.",
+    recording: 'Yozib olinmoqda',
+    topic: 'Mavzu',
+    newTopic: 'Yangi mavzu',
+    for: 'Tarafdor',
+    against: 'Qarshi',
+    mute: "Ovozni o'chirish",
+    unmute: 'Ovozni yoqish',
+    leave: 'Chiqish',
+    report: 'Shikoyat',
+    reportWho: 'Kim haqida?',
+    reportWhy: "Nima bo'ldi? (qisqacha)",
+    reportSend: 'Yuborish',
+    reportSent: "Shikoyat ustozga yuborildi. Rahmat.",
+    you: 'Siz',
+    connectingPeer: 'ulanmoqda…',
+    failedPeer: "ulanib bo'lmadi",
+    alone: "Hozircha xonada faqat siz. Boshqalar kirishini kuting yoki do'stingizni taklif qiling.",
+    timeUp: "Vaqt tugadi — xohlasangiz davom eting.",
+    partnerLeft: 'Sherigingiz suhbatni tugatdi.',
+    rateTitle: name => `${name} bilan suhbat qanday bo'ldi?`,
+    rateThanks: 'Rahmat!',
+    again: 'Yana sherik topish',
+    backToRooms: 'Xonalarga qaytish',
+    kicked: 'Ustoz sizni suhbatdan chiqardi.',
+    lost: "Aloqa uzildi — qayta ulanmoqda…",
+    noRelay: "Mobil internetda ba'zan ulanish qiyin bo'lishi mumkin. Wi-Fi'da yaxshiroq ishlaydi."
+  };
+
+  const PAIR_SECONDS = 5 * 60;
+  const SEGMENT_MS = 10 * 60 * 1000; // recording pieces of up to ten minutes
+
+  const vc = {
+    active: false,          // the stream should be open
+    abort: null,            // AbortController for the stream
+    connected: false,
+    iceServers: [],
+    retentionDays: 7,
+    me: null,
+    rooms: [],
+    waiting: 0,
+    queued: false,
+    room: null,             // current roomView
+    peers: new Map(),       // peerId -> { pc, audio, pendingIce, state, level }
+    local: null,            // MediaStream
+    muted: false,
+    recorder: null,
+    segmentTimer: null,
+    segmentStart: 0,
+    uploads: [],
+    audioCtx: null,
+    meters: new Map(),      // id -> AnalyserNode
+    meterTimer: null,
+    tick: null,
+    pairStart: 0,
+    after: null,            // { kind, sessionId, partner:{id,name}, rated }
+    reportOpen: false,
+    notice: '',
+    status: null            // /voice/status
+  };
+
+  const audioBox = () => {
+    let box = document.getElementById('vc-audio');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'vc-audio';
+      box.hidden = true;
+      document.body.appendChild(box);
+    }
+    return box;
+  };
+
+  // ------------------------------------------------------------ stream
+
+  async function openVoice() {
+    go('speak', { loading: true });
+    try {
+      vc.status = await api('/voice/status');
+      state.loading = false;
+      if (vc.status.blocked) return setState({ error: ACCESS_UZ.blockedTitle });
+      if (vc.status.consented) startStream();
+      render();
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  async function agreeVoice() {
+    try {
+      await api('/voice/consent', { method: 'POST' });
+      vc.status = { ...(vc.status || {}), consented: true };
+      startStream();
+      render();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  function startStream() {
+    if (vc.active) return;
+    vc.active = true;
+    readStream();
+  }
+
+  async function readStream() {
+    while (vc.active) {
+      vc.abort = new AbortController();
+      try {
+        const response = await fetch(`${API}/voice/stream`, {
+          headers: { Authorization: `Bearer ${state.token}` },
+          signal: vc.abort.signal
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          vc.active = false;
+          vc.connected = false;
+          setState({ error: payload.message || `Speaking rooms unavailable (${response.status})` });
+          return;
+        }
+        vc.connected = true;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let cut;
+          while ((cut = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, cut);
+            buffer = buffer.slice(cut + 2);
+            const event = frame.match(/^event: (.+)$/m)?.[1];
+            const data = frame.match(/^data: (.+)$/m)?.[1];
+            if (event && data) {
+              try { onVoiceEvent(event, JSON.parse(data)); } catch (error) { console.error('voice event', event, error); }
+            }
+          }
+        }
+      } catch (error) {
+        if (!vc.active) return;
+      }
+      vc.connected = false;
+      if (!vc.active) return;
+      vc.notice = VC_UZ.lost;
+      if (state.screen === 'speak') render();
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  function stopVoice() {
+    if (!vc.active && !vc.room && !vc.local) return;
+    vc.active = false;
+    if (vc.room || vc.queued) api(vc.queued ? '/voice/partner' : '/voice/leave', { method: vc.queued ? 'DELETE' : 'POST' }).catch(() => {});
+    leaveCallLocally();
+    vc.abort?.abort();
+    vc.local?.getTracks().forEach(t => t.stop());
+    vc.local = null;
+    vc.queued = false;
+    vc.connected = false;
+  }
+
+  const send = (to, payload) =>
+    api('/voice/signal', { method: 'POST', body: { to, payload } }).catch(error => console.warn('signal', error.message));
+
+  // ------------------------------------------------------------- events
+
+  function onVoiceEvent(event, data) {
+    switch (event) {
+      case 'config':
+        vc.iceServers = data.iceServers || [];
+        vc.retentionDays = data.retentionDays || vc.retentionDays;
+        return;
+      case 'hello':
+        vc.me = data.you;
+        vc.rooms = data.rooms || [];
+        vc.waiting = data.waiting || 0;
+        vc.queued = Boolean(data.queued);
+        vc.notice = '';
+        if (data.room) {
+          // Back after a dropped connection: reconnect to everyone still there.
+          enterRoom(data.room, data.room.members.map(m => m.id).filter(id => id !== vc.me));
+        }
+        break;
+      case 'rooms':
+        vc.rooms = data.rooms || [];
+        vc.waiting = data.waiting || 0;
+        break;
+      case 'matched':
+        vc.queued = false;
+        vc.after = null;
+        // Remembered now: when the partner leaves, "peer-left" removes them
+        // from the room before "ended" arrives, and the rating card still
+        // needs to know who they were.
+        vc.partner = (data.members || []).find(m => m.id !== vc.me) || null;
+        enterRoom(data, data.initiator === vc.me ? data.members.map(m => m.id).filter(id => id !== vc.me) : []);
+        vc.pairStart = Date.now();
+        break;
+      case 'joined':
+        vc.after = null;
+        vc.partner = null;
+        enterRoom(data, data.callPeers || []);
+        break;
+      case 'session':
+        if (vc.room) {
+          vc.room.sessionId = data.sessionId;
+          startRecording();
+        }
+        return;
+      case 'peer-joined':
+        if (vc.room && !vc.room.members.some(m => m.id === data.peer.id)) vc.room.members.push(data.peer);
+        break;
+      case 'peer-left':
+        if (vc.room) vc.room.members = vc.room.members.filter(m => m.id !== data.peer);
+        closePeer(data.peer);
+        break;
+      case 'topic':
+        if (vc.room) vc.room.topic = data.topic;
+        break;
+      case 'signal':
+        onSignal(data.from, data.payload);
+        return;
+      case 'ended': {
+        const partner = vc.partner || vc.room?.members.find(m => m.id !== vc.me);
+        vc.after = { kind: 'pair', sessionId: data.sessionId || vc.room?.sessionId, partner, rated: false, reason: data.reason };
+        leaveCallLocally();
+        break;
+      }
+      case 'kicked':
+        vc.active = false;
+        leaveCallLocally();
+        vc.abort?.abort();
+        state.error = data.reason || VC_UZ.kicked;
+        break;
+    }
+    if (state.screen === 'speak') render();
+  }
+
+  // ----------------------------------------------------------- the call
+
+  async function ensureMic() {
+    if (vc.local) return vc.local;
+    vc.notice = VC_UZ.mic;
+    if (state.screen === 'speak') render();
+    try {
+      vc.local = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+      vc.notice = '';
+      watchLevel(vc.me || 'me', vc.local);
+      return vc.local;
+    } catch (error) {
+      vc.notice = '';
+      throw new Error(VC_UZ.micDenied);
+    }
+  }
+
+  async function enterRoom(room, callPeers) {
+    vc.room = { ...room, members: [...(room.members || [])] };
+    vc.reportOpen = false;
+    try {
+      await ensureMic();
+    } catch (error) {
+      api('/voice/leave', { method: 'POST' }).catch(() => {});
+      vc.room = null;
+      return setState({ error: error.message });
+    }
+    applyMute();
+    startTicking();
+    if (vc.room.sessionId) startRecording();
+    for (const peerId of callPeers) callPeer(peerId, true);
+    if (state.screen === 'speak') render();
+  }
+
+  function newPeer(peerId) {
+    closePeer(peerId);
+    const pc = new RTCPeerConnection({ iceServers: vc.iceServers });
+    const peer = { pc, audio: null, pendingIce: [], state: 'connecting' };
+    vc.peers.set(peerId, peer);
+
+    vc.local?.getTracks().forEach(track => pc.addTrack(track, vc.local));
+    pc.onicecandidate = e => { if (e.candidate) send(peerId, { type: 'ice', candidate: e.candidate }); };
+    pc.ontrack = e => {
+      const stream = e.streams[0] || new MediaStream([e.track]);
+      if (!peer.audio) {
+        peer.audio = document.createElement('audio');
+        peer.audio.autoplay = true;
+        peer.audio.setAttribute('playsinline', '');
+        audioBox().appendChild(peer.audio);
+      }
+      peer.audio.srcObject = stream;
+      peer.audio.play().catch(() => {});
+      watchLevel(peerId, stream);
+    };
+    pc.onconnectionstatechange = () => {
+      peer.state = pc.connectionState;
+      paintPeerState(peerId);
+    };
+    return peer;
+  }
+
+  async function callPeer(peerId, initiator) {
+    const peer = newPeer(peerId);
+    if (!initiator) return peer;
+    const offer = await peer.pc.createOffer();
+    await peer.pc.setLocalDescription(offer);
+    send(peerId, { type: 'offer', sdp: peer.pc.localDescription });
+    return peer;
+  }
+
+  async function onSignal(from, payload) {
+    if (!vc.room || !payload) return;
+    try {
+      if (payload.type === 'offer') {
+        // A new offer always starts a fresh connection with that person — this
+        // is also how someone who dropped out and came back reconnects.
+        if (!vc.local) await ensureMic();
+        const peer = newPeer(from);
+        await peer.pc.setRemoteDescription(payload.sdp);
+        for (const c of peer.pendingIce.splice(0)) await peer.pc.addIceCandidate(c).catch(() => {});
+        const answer = await peer.pc.createAnswer();
+        await peer.pc.setLocalDescription(answer);
+        send(from, { type: 'answer', sdp: peer.pc.localDescription });
+      } else if (payload.type === 'answer') {
+        const peer = vc.peers.get(from);
+        if (!peer || peer.pc.signalingState !== 'have-local-offer') return;
+        await peer.pc.setRemoteDescription(payload.sdp);
+        for (const c of peer.pendingIce.splice(0)) await peer.pc.addIceCandidate(c).catch(() => {});
+      } else if (payload.type === 'ice') {
+        const peer = vc.peers.get(from);
+        if (!peer) return;
+        if (peer.pc.remoteDescription) await peer.pc.addIceCandidate(payload.candidate).catch(() => {});
+        else peer.pendingIce.push(payload.candidate);
+      }
+    } catch (error) {
+      console.warn('voice signal failed', error);
+    }
+  }
+
+  function closePeer(peerId) {
+    const peer = vc.peers.get(peerId);
+    if (!peer) return;
+    try { peer.pc.close(); } catch { /* already closed */ }
+    if (peer.audio) { peer.audio.srcObject = null; peer.audio.remove(); }
+    vc.peers.delete(peerId);
+    vc.meters.delete(peerId);
+  }
+
+  function leaveCallLocally() {
+    stopRecording();
+    for (const id of [...vc.peers.keys()]) closePeer(id);
+    vc.room = null;
+    vc.reportOpen = false;
+    clearInterval(vc.tick); vc.tick = null;
+  }
+
+  async function leaveRoom() {
+    const wasPair = vc.room?.kind === 'pair';
+    const partner = vc.partner || vc.room?.members.find(m => m.id !== vc.me);
+    const sessionId = vc.room?.sessionId;
+    leaveCallLocally();
+    await api('/voice/leave', { method: 'POST' }).catch(() => {});
+    vc.after = wasPair && partner ? { kind: 'pair', sessionId, partner, rated: false } : null;
+    render();
+  }
+
+  function applyMute() {
+    vc.local?.getAudioTracks().forEach(t => { t.enabled = !vc.muted; });
+  }
+
+  // ------------------------------------------------------ recording
+
+  function recorderType() {
+    const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+    return types.find(t => window.MediaRecorder?.isTypeSupported?.(t)) || '';
+  }
+
+  /** Record this student's own microphone, in pieces of up to ten minutes. */
+  function startRecording() {
+    if (!vc.local || !vc.room?.sessionId || vc.recorder || !window.MediaRecorder) return;
+    const sessionId = vc.room.sessionId;
+    const type = recorderType();
+    const chunks = [];
+    let recorder;
+    try {
+      recorder = new MediaRecorder(vc.local, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: 24000 });
+    } catch {
+      return;
+    }
+    vc.recorder = recorder;
+    vc.segmentStart = Date.now();
+    recorder.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      const seconds = Math.round((Date.now() - vc.segmentStart) / 1000);
+      const blob = new Blob(chunks, { type: recorder.mimeType || type || 'audio/webm' });
+      if (blob.size > 2000) uploadSegment(sessionId, blob, seconds);
+    };
+    recorder.start(1000);
+    clearTimeout(vc.segmentTimer);
+    vc.segmentTimer = setTimeout(() => {
+      // Start a fresh piece: each one is a complete, playable file on its own.
+      stopRecording();
+      startRecording();
+    }, SEGMENT_MS);
+  }
+
+  function stopRecording() {
+    clearTimeout(vc.segmentTimer);
+    vc.segmentTimer = null;
+    const recorder = vc.recorder;
+    vc.recorder = null;
+    if (recorder && recorder.state !== 'inactive') {
+      try { recorder.stop(); } catch { /* already stopped */ }
+    }
+  }
+
+  function uploadSegment(sessionId, blob, seconds) {
+    const form = new FormData();
+    form.append('audio', blob, `voice.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
+    form.append('seconds', String(seconds));
+    api(`/voice/sessions/${sessionId}/recording`, { method: 'POST', form })
+      .catch(error => console.warn('voice recording upload failed', error.message));
+  }
+
+  // ------------------------------------------------ levels and timer
+
+  function watchLevel(id, stream) {
+    try {
+      vc.audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+      vc.audioCtx.resume?.();
+      const source = vc.audioCtx.createMediaStreamSource(stream);
+      const analyser = vc.audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      vc.meters.set(id, analyser);
+      if (!vc.meterTimer) vc.meterTimer = setInterval(paintLevels, 120);
+    } catch { /* no meter, the call still works */ }
+  }
+
+  const levelBuf = new Uint8Array(512);
+  function paintLevels() {
+    if (state.screen !== 'speak') return;
+    for (const [id, analyser] of vc.meters) {
+      const el = document.getElementById(`vc-p-${id === 'me' ? vc.me : id}`);
+      if (!el) continue;
+      analyser.getByteTimeDomainData(levelBuf);
+      let sum = 0;
+      for (const v of levelBuf) sum += (v - 128) * (v - 128);
+      const rms = Math.sqrt(sum / levelBuf.length) / 128;
+      const talking = rms > 0.04 && !(id === vc.me && vc.muted);
+      el.classList.toggle('is-talking', talking);
+    }
+  }
+
+  function startTicking() {
+    clearInterval(vc.tick);
+    vc.tick = setInterval(() => {
+      const el = document.getElementById('vc-timer');
+      if (!el || !vc.room) return;
+      if (vc.room.kind === 'pair') {
+        const left = PAIR_SECONDS - Math.floor((Date.now() - vc.pairStart) / 1000);
+        el.textContent = left > 0 ? fmtTime(left) : VC_UZ.timeUp;
+        el.classList.toggle('is-low', left <= 30);
+      } else {
+        const since = Math.floor((Date.now() - (vc.room.startedAt || Date.now())) / 1000);
+        el.textContent = fmtTime(Math.max(0, since));
+      }
+    }, 1000);
+  }
+
+  function paintPeerState(peerId) {
+    const el = document.getElementById(`vc-s-${peerId}`);
+    const peer = vc.peers.get(peerId);
+    if (!el || !peer) return;
+    el.textContent = peer.state === 'connected' ? '' : peer.state === 'failed' ? VC_UZ.failedPeer : VC_UZ.connectingPeer;
+    el.closest('.vc-person')?.classList.toggle('is-failed', peer.state === 'failed');
+  }
+
+  // --------------------------------------------------------- screens
+
+  function speakScreen() {
+    if (state.loading || !vc.status) {
+      return `<div class="center-note"><span class="spinner"></span></div>`;
+    }
+    if (!vc.status.consented) return consentScreen();
+    if (vc.room) return roomScreen();
+    return lobbyScreen();
+  }
+
+  function consentScreen() {
+    return `<div class="card form-card vc-consent">
+      <div class="vc-consent-icon">${icon('users')}</div>
+      <h2>${VC_UZ.consentTitle}</h2>
+      <p style="margin-top:10px">${esc(VC_UZ.consentBody(vc.status.retentionDays || 7))}</p>
+      <ul class="vc-rules">${VC_UZ.consentRules.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
+      <button class="btn btn-lg btn-block" data-vc="agree">${VC_UZ.consentAgree}</button>
+    </div>`;
+  }
+
+  function lobbyScreen() {
+    const after = vc.after ? afterCard() : '';
+    const partner = vc.queued
+      ? `<div class="vc-wait"><span class="vc-pulse"></span>
+           <div><strong>${VC_UZ.partnerWaiting}</strong>
+             <p class="muted" style="font-size:13px;margin-top:2px">${VC_UZ.partnerWaitingNote}</p></div>
+           <button class="btn btn-ghost btn-sm" data-vc="cancel">${VC_UZ.cancel}</button>
+         </div>`
+      : `<button class="btn btn-lg" data-vc="find" ${vc.connected ? '' : 'disabled'}>${icon('users')} ${VC_UZ.partnerFind}</button>`;
+
+    const clubs = (vc.rooms || []).map(r => {
+      const full = r.count >= r.max;
+      const seats = Array.from({ length: r.max }, (_, i) => `<span class="vc-seat ${i < r.count ? 'is-taken' : ''}"></span>`).join('');
+      return `<div class="card vc-club">
+        <div class="row" style="justify-content:space-between;gap:10px">
+          <h3>${esc(r.name)}</h3>
+          ${r.level ? `<span class="chip chip-speaking">${esc(r.level)}</span>` : ''}
+        </div>
+        <div class="vc-seats" aria-label="${r.count} / ${r.max}">${seats}<span class="muted">${r.count}/${r.max}</span></div>
+        <p class="muted vc-club-names">${r.count ? esc(r.names.join(', ')) : VC_UZ.empty}</p>
+        <button class="btn ${full ? 'btn-ghost' : ''}" data-vc-join="${esc(r.id)}" ${full || !vc.connected ? 'disabled' : ''}>
+          ${full ? VC_UZ.full : VC_UZ.join}
+        </button>
+      </div>`;
+    }).join('');
+
+    return `
+      <div>
+        <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
+        <h1 style="font-size:26px;margin:10px 0 4px">${VC_UZ.title}</h1>
+        <p class="muted">${VC_UZ.sub}</p>
+      </div>
+      ${vc.notice ? `<div class="alert alert-warn">${esc(vc.notice)}</div>` : ''}
+      ${after}
+      <div class="card vc-partner">
+        <div class="vc-partner-text">
+          <h2>${VC_UZ.partnerTitle}</h2>
+          <p class="muted" style="margin-top:4px">${VC_UZ.partnerBody}</p>
+          <p class="muted" style="margin-top:6px;font-size:13px">${esc(VC_UZ.waiting(vc.waiting))}</p>
+        </div>
+        <div class="vc-partner-action">${partner}</div>
+      </div>
+      <div class="section-head" style="margin-top:6px"><h2>${VC_UZ.clubsTitle}</h2><p>${VC_UZ.clubsBody}</p></div>
+      <div class="vc-clubs">${clubs}</div>
+      ${vc.status.relay ? '' : `<p class="muted" style="font-size:13px">${VC_UZ.noRelay}</p>`}`;
+  }
+
+  function topicCard(topic) {
+    if (!topic) return '';
+    const text = esc(topic.text).replace(/\n/g, '<br>');
+    return `<div class="vc-topic">
+      <div class="row" style="justify-content:space-between;gap:10px;align-items:center">
+        <span class="vc-topic-label">${esc(topic.title || VC_UZ.topic)}</span>
+        <button class="btn btn-ghost btn-sm" data-vc="topic">${VC_UZ.newTopic}</button>
+      </div>
+      <p class="vc-topic-text">${text}</p>
+      ${topic.pros?.length || topic.cons?.length ? `<div class="vc-args">
+        <div><div class="section-title">${VC_UZ.for}</div><ul>${(topic.pros || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>
+        <div><div class="section-title">${VC_UZ.against}</div><ul>${(topic.cons || []).map(c => `<li>${esc(c)}</li>`).join('')}</ul></div>
+      </div>` : ''}
+    </div>`;
+  }
+
+  function roomScreen() {
+    const room = vc.room;
+    const others = room.members.filter(m => m.id !== vc.me);
+    const me = room.members.find(m => m.id === vc.me) || { id: vc.me, name: VC_UZ.you };
+    const person = (m, isMe) => {
+      const peer = vc.peers.get(m.id);
+      const status = isMe ? '' : peer?.state === 'connected' ? '' : peer?.state === 'failed' ? VC_UZ.failedPeer : VC_UZ.connectingPeer;
+      return `<div class="vc-person ${isMe ? 'is-me' : ''}" id="vc-p-${esc(m.id)}">
+        <div class="vc-avatar"><span>${esc(initialsOf(m.name))}</span></div>
+        <div class="vc-person-name">${esc(m.name)}${isMe ? ` <span class="lb-you">${VC_UZ.you}</span>` : ''}</div>
+        <div class="vc-person-meta">${m.level ? esc(m.level) : ''}${isMe && vc.muted ? ' · 🔇' : ''}</div>
+        ${isMe ? '' : `<div class="vc-person-state" id="vc-s-${esc(m.id)}">${esc(status)}</div>`}
+      </div>`;
+    };
+
+    const reportForm = vc.reportOpen ? `<div class="card vc-report">
+        <label class="field"><span class="muted" style="font-size:13px">${VC_UZ.reportWho}</span>
+          <select id="vc-report-who">${others.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('')}</select></label>
+        <label class="field" style="margin-top:8px"><span class="muted" style="font-size:13px">${VC_UZ.reportWhy}</span>
+          <textarea id="vc-report-why" class="essay" rows="2" style="min-height:0"></textarea></label>
+        <div class="row" style="gap:8px;margin-top:8px">
+          <button class="btn btn-sm" data-vc="report-send">${VC_UZ.reportSend}</button>
+          <button class="btn btn-ghost btn-sm" data-vc="report-close">${VC_UZ.cancel}</button>
+        </div>
+      </div>` : '';
+
+    return `
+      <div class="vc-room-head">
+        <div>
+          <div class="muted" style="font-size:13px">${esc(room.name)}</div>
+          <div class="vc-timer" id="vc-timer">${room.kind === 'pair' ? fmtTime(PAIR_SECONDS) : '00:00'}</div>
+        </div>
+        <span class="vc-rec"><span></span>${VC_UZ.recording}</span>
+      </div>
+      ${vc.notice ? `<div class="alert alert-warn">${esc(vc.notice)}</div>` : ''}
+      ${topicCard(room.topic)}
+      <div class="vc-people">
+        ${person(me, true)}
+        ${others.map(m => person(m, false)).join('')}
+      </div>
+      ${others.length ? '' : `<p class="muted" style="text-align:center">${VC_UZ.alone}</p>`}
+      ${reportForm}
+      <div class="vc-controls">
+        <button class="vc-btn ${vc.muted ? 'is-on' : ''}" data-vc="mute">${icon('mic')}<span>${vc.muted ? VC_UZ.unmute : VC_UZ.mute}</span></button>
+        ${others.length ? `<button class="vc-btn" data-vc="report-open">${icon('message')}<span>${VC_UZ.report}</span></button>` : ''}
+        <button class="vc-btn vc-leave" data-vc="leave">${icon('right')}<span>${VC_UZ.leave}</span></button>
+      </div>`;
+  }
+
+  function afterCard() {
+    const a = vc.after;
+    if (!a?.partner) return '';
+    return `<div class="card vc-after">
+      ${a.reason === 'partner-left' ? `<p class="muted" style="margin-bottom:6px">${VC_UZ.partnerLeft}</p>` : ''}
+      <strong>${esc(VC_UZ.rateTitle(a.partner.name))}</strong>
+      ${a.rated
+        ? `<p style="margin-top:8px">${VC_UZ.rateThanks}</p>`
+        : `<div class="vc-stars">${[1, 2, 3, 4, 5].map(n => `<button data-vc-star="${n}" aria-label="${n}">★</button>`).join('')}</div>`}
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-sm" data-vc="find">${VC_UZ.again}</button>
+        <button class="btn btn-ghost btn-sm" data-vc="after-report">${VC_UZ.report}</button>
+      </div>
+      ${a.reportOpen ? `<div style="margin-top:10px">
+        <textarea id="vc-after-why" class="essay" rows="2" style="min-height:0" placeholder="${esc(VC_UZ.reportWhy)}"></textarea>
+        <button class="btn btn-sm" style="margin-top:8px" data-vc="after-report-send">${VC_UZ.reportSend}</button>
+      </div>` : ''}
+    </div>`;
+  }
+
+  // --------------------------------------------------------- wiring
+
+  async function vcAction(action, el) {
+    try {
+      if (action === 'agree') return agreeVoice();
+      if (action === 'find') {
+        vc.after = null;
+        await ensureMic();
+        vc.queued = true; render();
+        const r = await api('/voice/partner', { method: 'POST' });
+        if (r.matched) vc.queued = false;
+        return render();
+      }
+      if (action === 'cancel') {
+        vc.queued = false; render();
+        return api('/voice/partner', { method: 'DELETE' });
+      }
+      if (action === 'leave') return leaveRoom();
+      if (action === 'mute') { vc.muted = !vc.muted; applyMute(); return render(); }
+      if (action === 'topic') return api('/voice/topic', { method: 'POST' });
+      if (action === 'report-open') { vc.reportOpen = true; return render(); }
+      if (action === 'report-close') { vc.reportOpen = false; return render(); }
+      if (action === 'report-send') {
+        const against = document.getElementById('vc-report-who')?.value;
+        const reason = document.getElementById('vc-report-why')?.value || '';
+        await api('/voice/report', { method: 'POST', body: { sessionId: vc.room?.sessionId, against, reason } });
+        vc.reportOpen = false;
+        return setState({ notice: VC_UZ.reportSent });
+      }
+      if (action === 'after-report') { vc.after.reportOpen = !vc.after.reportOpen; return render(); }
+      if (action === 'after-report-send') {
+        const reason = document.getElementById('vc-after-why')?.value || '';
+        await api('/voice/report', { method: 'POST', body: { sessionId: vc.after.sessionId, against: vc.after.partner.id, reason } });
+        vc.after.reportOpen = false;
+        return setState({ notice: VC_UZ.reportSent });
+      }
+    } catch (error) {
+      vc.queued = false;
+      setState({ error: error.message });
+    }
+  }
+
+  function wireSpeak() {
+    if (state.screen !== 'speak') {
+      // Leaving the speaking screen hangs up: a call nobody can see is a call
+      // nobody can mute or leave.
+      if (vc.active || vc.room || vc.local) stopVoice();
+      return;
+    }
+    root.querySelectorAll('[data-vc]').forEach(el =>
+      el.addEventListener('click', () => vcAction(el.dataset.vc, el)));
+    root.querySelectorAll('[data-vc-join]').forEach(el =>
+      el.addEventListener('click', async () => {
+        try {
+          vc.after = null;
+          await ensureMic();
+          await api('/voice/join', { method: 'POST', body: { roomId: el.dataset.vcJoin } });
+        } catch (error) {
+          setState({ error: error.message });
+        }
+      }));
+    root.querySelectorAll('[data-vc-star]').forEach(el =>
+      el.addEventListener('click', async () => {
+        const a = vc.after;
+        if (!a?.sessionId) return;
+        await api('/voice/rate', { method: 'POST', body: { sessionId: a.sessionId, peer: a.partner.id, stars: Number(el.dataset.vcStar) } }).catch(() => {});
+        a.rated = true;
+        render();
+      }));
+    if (vc.room) {
+      for (const id of vc.peers.keys()) paintPeerState(id);
+    }
+  }
+
   // ------------------------------------------------------------ rendering
 
   function render() {
@@ -1890,7 +2633,7 @@
       : state.user.role === 'admin'
       ? `${link('dashboard', 'Dashboard')}
          <a class="nav-link" href="/admin.html">Questions</a>`
-      : `${link('dashboard', 'Dashboard')}${link('writing', 'Writing')}${link('results', 'My results')}`;
+      : `${link('dashboard', 'Dashboard')}${link('speak', 'Speaking club')}${link('writing', 'Writing')}${link('results', 'My results')}`;
 
     const initials = String(state.user.firstName || state.user.email || '?')
       .trim().charAt(0).toUpperCase();
@@ -1929,7 +2672,8 @@
       writing: writingHomeScreen,
       'writing-exam': writingExamScreen,
       'writing-check': writingCheckScreen,
-      'writing-result': writingResultScreen
+      'writing-result': writingResultScreen,
+      speak: speakScreen
     }[state.screen] || landingScreen;
 
     return `${navMarkup()}<main class="stack">${alerts()}${body()}</main>`;
@@ -2403,6 +3147,15 @@
       </div>
     </div>`;
 
+    const speakCard = `<div class="card secondary-card card-hover vc-dash">
+      <div class="secondary-icon">${icon('users')}</div>
+      <div class="grow">
+        <div class="row" style="gap:10px"><h3>Speaking club</h3><span class="chip chip-speaking">Live</span></div>
+        <p class="mock-sub">Boshqa o'quvchilar bilan jonli gaplashing — sherik toping yoki guruh xonasiga kiring.</p>
+      </div>
+      <div><button class="btn btn-ghost" data-go="speak">Kirish ${icon('right')}</button></div>
+    </div>`;
+
     // Writing lives on its own screen with its own tests (content/writingTests.js),
     // so the card is always shown — it no longer depends on Exam documents.
     const writingCard = `<div class="card secondary-card card-hover">
@@ -2443,6 +3196,7 @@
         <p>Practise the real CEFR format and see how you perform.</p></div>
       <div class="stack" style="margin-bottom:36px">
         ${speakingCard}
+        ${speakCard}
         ${writingCard}
       </div>
       <div class="stack">${analytics}</div>`;
@@ -3495,6 +4249,7 @@
         if (state.screen === 'writing-exam') saveWritingNow();
         if (target === 'dashboard') loadDashboard();
         else if (target === 'writing') loadWritingHome();
+        else if (target === 'speak') openVoice();
         else go(target);
       });
     });
@@ -3585,6 +4340,7 @@
 
     wireWriting();
     wireLeaderboard();
+    wireSpeak();
   }
 
   function handleAction(action) {

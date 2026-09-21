@@ -172,6 +172,7 @@
 
         ${reviewCard()}
         ${studentsCard()}
+        ${voiceCard()}
 
         <div class="row" style="justify-content:space-between;margin-top:8px">
           <h2>Tests</h2>
@@ -1085,6 +1086,7 @@
   // ------------------------------------------------------------------ wiring
 
   function wire() {
+    wireVoiceAdmin();
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
     document.getElementById('new-test-form')?.addEventListener('submit', handleNewTest);
     document.getElementById('sample-form')?.addEventListener('submit', handleNewSample);
@@ -1209,8 +1211,152 @@
     if (action === 'students-open') return loadStudents({ open: true });
     if (action === 'students-close') return setState({ studentsOpen: false });
     if (action === 'students-reload') return loadStudents({});
+    if (action === 'voice-open') return loadVoice({ open: true });
+    if (action === 'voice-close') return setState({ voiceOpen: false });
+    if (action === 'voice-reload') return loadVoice({});
     if (action === 'block-all') return changeAccessForAll('block');
     if (action === 'unblock-all') return changeAccessForAll('unblock');
+  }
+
+  // ------------------------------------------------------ speaking rooms
+
+  /**
+   * Speaking rooms, from the teacher's side: who is talking right now, the
+   * sessions of the last week (reported ones first when filtered), the
+   * recordings behind them, and the two actions a teacher needs — remove a
+   * student from a call now, and delete a session.
+   *
+   * Recordings are fetched with the token and played from a blob: they sit
+   * behind authentication and a plain <audio src> cannot send it.
+   */
+  function voiceCard() {
+    if (!state.voiceOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Speaking rooms</h2>
+        <p class="muted" style="margin-top:6px">
+          Who is talking right now, reports from students, and call recordings
+          (kept ${esc(state.voice?.retentionDays || 7)} days, then deleted automatically).
+        </p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="voice-open">Open speaking rooms</button>
+      </div>`;
+    }
+
+    const live = state.voice || {};
+    const sessions = state.voiceSessions || [];
+    const reportedCount = sessions.filter(s => s.reported).length;
+
+    const liveRooms = (live.rooms || []).map(r => `
+      <div style="padding:10px 0;border-bottom:1px solid var(--line)">
+        <strong>${esc(r.name)}</strong> <span class="muted" style="font-size:13px">${esc(r.topic?.text || '')}</span>
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px">
+          ${r.members.map(m => `<span class="tag">${esc(m.name)}
+            <button class="btn btn-ghost btn-sm" style="padding:0 6px;margin-left:4px" data-voice-kick="${esc(m.id)}" title="Remove from the call now">✕</button></span>`).join('')}
+        </div>
+      </div>`).join('');
+
+    const sessionRows = sessions.map(s => `
+      <div style="padding:12px 0;border-bottom:1px solid var(--line)">
+        <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div>
+            <strong>${esc(s.kind === 'pair' ? 'Partner' : s.roomName)}</strong>
+            ${s.reported ? '<span class="tag tag-draft">reported</span>' : ''}
+            <span class="muted" style="font-size:13px"> · ${new Date(s.startedAt).toLocaleString()}</span>
+            <div class="muted" style="font-size:13px">${esc(s.participants.map(p => p.name).join(', ') || '—')}</div>
+          </div>
+          <div class="row" style="gap:6px">
+            <button class="btn btn-ghost btn-sm" data-voice-toggle="${esc(s.id)}">${state.voiceShown === s.id ? 'Hide' : 'Details'}</button>
+            <button class="btn btn-ghost btn-sm" data-voice-delete="${esc(s.id)}">Delete</button>
+          </div>
+        </div>
+        ${state.voiceShown === s.id ? `<div style="margin-top:10px">
+          ${s.topic ? `<p class="muted" style="font-size:13px">Topic: ${esc(s.topic)}</p>` : ''}
+          ${s.reports.map(r => `<div class="alert alert-error" style="margin-top:8px">
+              <strong>${esc(r.byName || 'A student')}</strong> reported <strong>${esc(r.againstName || 'someone')}</strong>:
+              ${esc(r.reason)} <span class="muted">(${new Date(r.at).toLocaleString()})</span></div>`).join('')}
+          ${s.recordings.length
+            ? s.recordings.map(rec => `<div style="margin-top:8px">
+                <div class="muted" style="font-size:13px">${esc(rec.name || 'Student')} — ${new Date(rec.at).toLocaleTimeString()}</div>
+                <audio controls preload="none" data-voice-audio="${esc(rec.audioKey)}" style="width:100%"></audio>
+              </div>`).join('')
+            : '<p class="muted" style="margin-top:8px">No recordings for this session.</p>'}
+        </div>` : ''}
+      </div>`).join('');
+
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Speaking rooms</h2>
+        <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm" data-action="voice-reload">Refresh</button>
+          <button class="btn btn-ghost btn-sm" data-action="voice-close">Close</button>
+        </div>
+      </div>
+
+      <p class="muted" style="margin-top:6px">
+        ${live.online || 0} online · ${(live.waiting || []).length} waiting for a partner.
+        ${live.relay ? '' : `<br><strong>No relay configured.</strong> Calls on mobile data may fail to connect.
+          Add <code>TURN_URLS</code>, <code>TURN_USERNAME</code> and <code>TURN_CREDENTIAL</code> in Railway when you have a relay service.`}
+      </p>
+
+      <h3 style="font-size:15px;margin-top:16px">Talking now</h3>
+      ${liveRooms || '<p class="muted" style="margin-top:6px">Nobody is in a room right now.</p>'}
+
+      <div class="row" style="justify-content:space-between;margin-top:18px;gap:10px;flex-wrap:wrap">
+        <h3 style="font-size:15px">Sessions (last ${esc(live.retentionDays || 7)} days)</h3>
+        <div class="row" style="gap:6px">
+          <button class="btn btn-sm ${state.voiceReported ? 'btn-ghost' : ''}" data-voice-filter="">All</button>
+          <button class="btn btn-sm ${state.voiceReported ? '' : 'btn-ghost'}" data-voice-filter="1">Reported${reportedCount ? ` (${reportedCount})` : ''}</button>
+        </div>
+      </div>
+      ${sessionRows || '<p class="muted" style="margin-top:6px">No sessions yet.</p>'}
+    </div>`;
+  }
+
+  async function loadVoice({ open, reported } = {}) {
+    const nextReported = reported === undefined ? state.voiceReported : reported;
+    setState({ voiceOpen: open || state.voiceOpen, voiceReported: nextReported, loading: true, error: '' });
+    try {
+      const [live, sessions] = await Promise.all([
+        api('/voice/admin/live'),
+        api(`/voice/admin/sessions${nextReported ? '?reported=1' : ''}`)
+      ]);
+      setState({ voice: live, voiceSessions: sessions, loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  function wireVoiceAdmin() {
+    root.querySelectorAll('[data-voice-filter]').forEach(el =>
+      el.addEventListener('click', () => loadVoice({ reported: el.dataset.voiceFilter === '1' })));
+    root.querySelectorAll('[data-voice-toggle]').forEach(el =>
+      el.addEventListener('click', () =>
+        setState({ voiceShown: state.voiceShown === el.dataset.voiceToggle ? null : el.dataset.voiceToggle })));
+    root.querySelectorAll('[data-voice-kick]').forEach(el =>
+      el.addEventListener('click', async () => {
+        try {
+          await api('/voice/admin/kick', { method: 'POST', body: { userId: el.dataset.voiceKick } });
+          state.notice = 'Removed from the call. To stop them joining again, block them in Students.';
+          loadVoice({});
+        } catch (error) { setState({ error: error.message }); }
+      }));
+    root.querySelectorAll('[data-voice-delete]').forEach(el =>
+      el.addEventListener('click', async () => {
+        try {
+          await api(`/voice/admin/sessions/${el.dataset.voiceDelete}`, { method: 'DELETE' });
+          loadVoice({});
+        } catch (error) { setState({ error: error.message }); }
+      }));
+    root.querySelectorAll('[data-voice-audio]').forEach(async el => {
+      try {
+        const res = await fetch(`${API}/voice/admin/recordings/${el.dataset.voiceAudio}`, {
+          headers: { Authorization: `Bearer ${state.token}` }
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        el.src = URL.createObjectURL(await res.blob());
+      } catch {
+        el.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: 'Recording unavailable.' }));
+      }
+    });
   }
 
   // --------------------------------------------------------------- review

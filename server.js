@@ -52,6 +52,7 @@ import evaluationRoutes from './routes/evaluation.js';
 import adminRoutes from './routes/admin.js';
 import writingRoutes from './routes/writing.js';
 import leaderboardRoutes from './routes/leaderboard.js';
+import voiceRoutes from './routes/voice.js';
 
 // Middleware imports
 import { errorHandler, notFound } from './middleware/errorHandler.js';
@@ -146,7 +147,10 @@ const apiLimiter = rateLimit({
   // /api/auth has its own stricter limiter below. Without this skip both would
   // run on a sign-in: it would spend two budgets and report the looser one's
   // headers, so the strict limit would be invisible to anyone checking.
-  skip: req => req.path.startsWith('/auth'),
+  // /voice/signal has its own budget below: setting up one group call is a
+  // burst of small connection messages, and counting them here would lock a
+  // student out of the rest of the site after a few calls.
+  skip: req => req.path.startsWith('/auth') || req.path.startsWith('/voice/signal'),
   message: { success: false, message: 'Too many requests — please wait a moment and try again.' }
 });
 
@@ -162,6 +166,17 @@ const authLimiter = rateLimit({
 
 app.use('/api/auth', authLimiter);
 app.use('/api/', apiLimiter);
+
+// Connection messages for speaking rooms: generous, but still a ceiling on a
+// runaway loop. A five-person room is a few hundred messages to set up.
+app.use('/api/voice/signal', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.VOICE_SIGNAL_LIMIT) || 5000,
+  keyGenerator: limitKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many connection messages — rejoin the room in a moment.' }
+}));
 
 // Body parsing
 app.use(express.json({ limit: '50mb' }));
@@ -194,6 +209,7 @@ app.use('/api/user', authenticate, userRoutes);
 app.use('/api/evaluation', authenticate, evaluationRoutes);
 app.use('/api/writing', authenticate, writingRoutes);
 app.use('/api/leaderboard', authenticate, leaderboardRoutes);
+app.use('/api/voice', authenticate, voiceRoutes);
 
 // Admin routes
 app.use('/api/admin', authenticate, adminRoutes);

@@ -934,3 +934,122 @@ audio { width: 100%; margin-top: 10px; }
   .lb-row-meta { display: none; }
   .lb-mini { width: 28px; height: 28px; }
 }
+
+/* ---------- speaking rooms ---------- */
+
+.vc-consent { max-width: 560px; text-align: left; }
+.vc-consent-icon {
+  width: 52px; height: 52px; border-radius: 14px; margin-bottom: 14px;
+  display: grid; place-items: center; background: var(--indigo-50); color: var(--indigo-600);
+}
+.vc-consent-icon svg { width: 26px; height: 26px; }
+.vc-rules { margin: 14px 0 20px; padding-left: 20px; display: grid; gap: 6px; }
+
+.vc-partner {
+  display: flex; gap: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  background: linear-gradient(135deg, var(--indigo-600), #6d5bf0);
+  color: #fff; border-color: transparent;
+}
+.vc-partner .muted { color: rgba(255,255,255,.82); }
+.vc-partner h2 { font-size: 22px; }
+.vc-partner-text { flex: 1 1 300px; }
+.vc-partner .btn { background: #fff; color: var(--indigo-700); border-color: #fff; }
+.vc-partner .btn svg { width: 18px; height: 18px; }
+.vc-partner .btn-ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.6); }
+.vc-wait { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.vc-pulse {
+  width: 14px; height: 14px; border-radius: 50%; background: #fff; flex: none;
+  box-shadow: 0 0 0 0 rgba(255,255,255,.7); animation: vc-pulse 1.4s infinite;
+}
+@keyframes vc-pulse { to { box-shadow: 0 0 0 14px rgba(255,255,255,0); } }
+
+.vc-clubs { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.vc-club { display: flex; flex-direction: column; gap: 10px; }
+.vc-club h3 { font-size: 17px; }
+.vc-seats { display: flex; align-items: center; gap: 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.vc-seat { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--indigo-200); }
+.vc-seat.is-taken { background: var(--green); border-color: var(--green); }
+.vc-club-names { font-size: 13px; min-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-club .btn { margin-top: auto; }
+
+.vc-room-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.vc-timer { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.vc-timer.is-low { color: var(--red); }
+.vc-rec {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--red);
+  padding: 6px 12px; border-radius: var(--radius-pill); background: var(--red-bg);
+}
+.vc-rec span { width: 8px; height: 8px; border-radius: 50%; background: var(--red); animation: vc-blink 1.2s infinite; }
+@keyframes vc-blink { 50% { opacity: .25; } }
+
+.vc-topic {
+  padding: 18px 20px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.vc-topic-label {
+  font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--indigo-600);
+}
+.vc-topic-text { margin-top: 10px; font-size: 18px; font-weight: 600; line-height: 1.5; }
+.vc-args { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+.vc-args ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; color: var(--ink-soft); }
+
+.vc-people { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.vc-person {
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px;
+  padding: 18px 12px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--line);
+}
+.vc-avatar {
+  width: 68px; height: 68px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 22px; color: #fff;
+  background: linear-gradient(145deg, var(--indigo-500), var(--indigo-700));
+  transition: box-shadow .12s ease;
+}
+.vc-person.is-me .vc-avatar { background: linear-gradient(145deg, #34d399, var(--green)); }
+/* The ring that shows who is speaking right now. */
+.vc-person.is-talking .vc-avatar { box-shadow: 0 0 0 4px var(--surface), 0 0 0 8px var(--green); }
+.vc-person.is-failed { opacity: .6; }
+.vc-person-name { font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-person-meta { font-size: 12px; color: var(--ink-soft); min-height: 16px; }
+.vc-person-state { font-size: 12px; color: var(--amber-text); min-height: 16px; }
+
+.vc-controls {
+  position: sticky; bottom: 12px; z-index: 5;
+  display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px; margin: 0 auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
+  box-shadow: var(--shadow-lg);
+}
+.vc-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 88px; padding: 10px 12px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--ground); color: var(--ink);
+  font-size: 12px; font-weight: 600;
+}
+.vc-btn svg { width: 22px; height: 22px; }
+.vc-btn.is-on { background: var(--amber-bg); border-color: #fde68a; color: var(--amber-text); }
+.vc-leave { background: var(--red); border-color: var(--red); color: #fff; }
+.vc-btn:focus-visible { outline: 3px solid var(--indigo-200); outline-offset: 2px; }
+
+.vc-after .vc-stars { display: flex; gap: 6px; margin-top: 8px; }
+.vc-stars button {
+  font-size: 28px; line-height: 1; padding: 2px 4px;
+  background: none; border: 0; color: var(--line);
+}
+.vc-stars button:hover, .vc-stars button:hover ~ button { color: var(--line); }
+.vc-stars:hover button { color: #f5b301; }
+.vc-stars button:hover ~ button { color: var(--line); }
+
+@media (max-width: 560px) {
+  .vc-args { grid-template-columns: 1fr; }
+  .vc-people { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vc-btn { min-width: 72px; }
+  .vc-topic-text { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vc-pulse, .vc-rec span { animation: none; }
+}

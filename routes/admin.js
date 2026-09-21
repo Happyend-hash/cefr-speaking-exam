@@ -17,6 +17,7 @@ import TranscriptionService from '../services/TranscriptionService.js';
 import AIEvaluationService from '../services/AIEvaluationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
 import { forgetScore } from '../services/Leaderboard.js';
+import { voiceHub } from '../services/VoiceRooms.js';
 import { bandsToScore } from '../services/ScoreConversion.js';
 import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark } from './exam.js';
 import { authorize } from '../middleware/auth.js';
@@ -1347,6 +1348,8 @@ router.post('/students/:id/access', async (req, res, next) => {
     } else if (action === 'block') {
       user.access.blocked = true;
       user.access.blockedAt = new Date();
+      // Out of any speaking room at once, not only out of the next one.
+      voiceHub.kick(String(user._id), 'Your teacher has paused your access.');
       outcome = `${user.email} blocked`;
     } else if (action === 'unblock') {
       user.access.blocked = false;

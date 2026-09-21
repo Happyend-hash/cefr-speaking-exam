@@ -42,6 +42,11 @@ const userSchema = new mongoose.Schema(
       index: { unique: true, sparse: true }
     },
 
+    // When the student agreed that speaking-room calls are recorded. Voice is
+    // not available until they have — being told is the point of recording
+    // being acceptable at all.
+    voiceConsentAt: Date,
+
     // Profile
     avatar: {
       type: String,
