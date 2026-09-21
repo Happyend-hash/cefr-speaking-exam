@@ -47,6 +47,12 @@ const examResultSchema = new mongoose.Schema(
     // Set only for practice attempts: which part was practised.
     part: String,
 
+    // What this attempt was charged, in twelfths of a mock (see models/User.js):
+    // 12 for a full mock, 3 for one speaking part. Recorded so a refund hands
+    // back exactly what was taken. Absent on attempts made before part pricing,
+    // all of which were charged a whole mock.
+    creditCost: Number,
+
     // Status
     status: {
       type: String,

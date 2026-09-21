@@ -256,6 +256,7 @@
 
   function signOut() {
     stopMicCheck();
+    stopWritingTimers();
     store.remove('token');
     store.remove('user');
     Object.assign(state, {
@@ -371,7 +372,7 @@
         // The balance the server has just charged, so the dashboard behind this
         // attempt is already right when the student comes back to it.
         access: typeof started.remaining === 'number'
-          ? { ...(state.access || {}), remaining: started.remaining }
+          ? { ...(state.access || {}), remaining: started.remaining, credits: started.credits, units: started.units }
           : state.access,
         mode: started.mode || mode,
         part: started.part || part,
@@ -929,6 +930,745 @@
       </div>`;
   }
 
+  // ============================================================== WRITING
+  //
+  // Two ways in, one result screen:
+  //
+  //   writing-exam   the timed mock — one 60-minute clock for all three parts,
+  //                  paste blocked, autosaved while the student types
+  //   writing-check  the student pastes writing they already have
+  //   writing-result bands on the board's scales, the script with mistakes
+  //                  crossed out and the correction beside, and the details
+  //
+  // The exam screen is drawn ONCE. Typing, the clock, the word counters and
+  // the save status all update the page directly: a full re-render on each
+  // keystroke would throw away the caret, and in a timed exam that is not an
+  // annoyance, it is lost time.
+
+  const WR_UZ = {
+    heading: 'Yozma imtihon (Writing)',
+    sub: "Rasmiy baholash shkalasi bo'yicha tekshiriladi: Part 1.1 — 0-5, Part 1.2 — 0-5, Part 2 — 0-6.",
+    mockTitle: 'Imtihon sharoitida yozish',
+    mockBody: "60 daqiqa, uchala qism uchun. Nusxa ko'chirib qo'yish (paste) o'chirilgan. Faqat uchala qism topshirilsa — to'liq mock va 75 ballik natija.",
+    mockCost: 'Narxi: 1 mock. Bo\'sh qoldirilgan har bir qism uchun ⅓ qaytariladi.',
+    start: 'Boshlash',
+    resume: 'Davom ettirish',
+    best: (s, l) => `Eng yaxshi natija: ${s}/75 · ${l}`,
+    checkTitle: 'Tayyor ishimni tekshirish',
+    checkBody: "Oldin yozgan xat yoki inshoingizni joylang. Har bir qism alohida baholanadi, xatolar ustiga chizilib, to'g'risi yonida ko'rsatiladi.",
+    checkCost: 'Narxi: har bir qism — ⅓ mock.',
+    checkOpen: 'Tekshirishga yuborish',
+    history: 'Oldingi yozma ishlarim',
+    none: "Hali yozma ish yo'q.",
+    evaluating: 'Tekshirilmoqda…',
+    failed: 'Tekshirib bo\'lmadi',
+    partial: "To'liq emas",
+    back: 'Yozma imtihonga qaytish',
+
+    timeLeft: 'Qolgan vaqt',
+    words: n => `${n} so'z`,
+    target: t => `tavsiya: ${t}`,
+    saved: t => `Saqlandi ${t}`,
+    saving: 'Saqlanmoqda…',
+    saveFailed: "Saqlab bo'lmadi — internetni tekshiring. Matningiz shu sahifada turibdi.",
+    pasteBlocked: "Imtihon sharoitida nusxa ko'chirib qo'yish mumkin emas. O'zingiz yozing.",
+    handIn: 'Topshirish',
+    handInConfirm: 'Ha, topshiraman',
+    handInCancel: 'Yozishda davom etish',
+    handInSure: 'Topshirgandan keyin o\'zgartira olmaysiz.',
+    emptyParts: list => `Bo'sh qismlar: ${list}. Ular baholanmaydi va har biri uchun ⅓ mock qaytariladi. To'liq natija (75 ballik) faqat uchala qism bilan beriladi.`,
+    timeUp: 'Vaqt tugadi — ishingiz topshirildi.',
+    message: 'Siz javob beradigan xabar',
+    task: 'Topshiriq',
+    under: (words, threshold) => `So'zlar soni ${words} ta — ${threshold} tadan kam bo'lgani uchun bu qism 0 ball oldi.`,
+    underMarker: b => `(Yozuvning o'zi ${b} ballga loyiq edi.)`,
+
+    checkIntro: 'Faqat tekshirmoqchi bo\'lgan qismlarni to\'ldiring. Topshiriq matnini ham qo\'shsangiz, mavzudan chetga chiqmaganingiz tekshiriladi.',
+    question: 'Topshiriq matni (ixtiyoriy)',
+    yourText: 'Sizning matningiz',
+    cost: n => n ? `Narxi: ${['', '⅓', '⅔', '1'][n]} mock` : 'Kamida bitta qismni to\'ldiring',
+    send: 'Tekshirishga yuborish',
+
+    resultPartialNote: "Faqat uchala qism topshirilganda to'liq mock hisoblanadi va 75 ballik natija beriladi. Bir yoki ikki qism bilan eng yuqori daraja — B1.",
+    expert: m => `Ekspert bahosi: ${m} / 16`,
+    marked: 'Tekshirilgan matn',
+    legend: "<del>qizil</del> — xato, <ins>yashil</ins> — to'g'ri varianti",
+    noErrors: 'Aniq xato topilmadi.',
+    why: 'Nima uchun bu ball',
+    toNext: 'Keyingi ballga chiqish uchun',
+    details: 'Batafsil',
+    hide: 'Yopish',
+    descriptor: 'Shkaladagi tavsif',
+    nextBand: b => `${b} ball uchun rasmiy talab`,
+    top: 'Bu qismning eng yuqori bali.',
+    emailed: 'Tekshirilgan ish emailingizga ham yuborildi.',
+    retry: 'Qayta tekshirish',
+    waiting: "Ishingiz tekshirilmoqda. Odatda bir daqiqadan kamroq vaqt oladi — sahifani yopsangiz ham natija saqlanadi.",
+    notSubmitted: 'Topshirilmagan'
+  };
+
+  const WR_PARTS = [
+    { key: 'part11', name: 'Part 1.1', what: "Norasmiy xat (do'stga)" },
+    { key: 'part12', name: 'Part 1.2', what: 'Rasmiy xat' },
+    { key: 'part2', name: 'Part 2', what: 'Blog / maqola' }
+  ];
+
+  // Live objects for the writing screens, kept out of `state` for the same
+  // reason as the recorder: they must survive re-renders.
+  const wr = {
+    attempt: null,
+    test: null,
+    texts: { part11: '', part12: '', part2: '' },
+    questions: { part11: '', part12: '', part2: '' },
+    active: 'part11',
+    offset: 0,          // server clock minus browser clock
+    tick: null,
+    saveTimer: null,
+    dirty: false,
+    saving: false,
+    pastes: 0,
+    confirming: false,
+    submitting: false,
+    poll: null
+  };
+
+  const wrWords = text => String(text || '').trim().split(/\s+/).filter(Boolean).length;
+
+  function stopWritingTimers() {
+    clearInterval(wr.tick); wr.tick = null;
+    clearTimeout(wr.saveTimer); wr.saveTimer = null;
+    clearTimeout(wr.poll); wr.poll = null;
+  }
+
+  async function loadWritingHome() {
+    stopWritingTimers();
+    go('writing', { loading: true });
+    try {
+      const [tests, attempts, profile] = await Promise.all([
+        api('/writing/tests'),
+        api('/writing/attempts'),
+        api('/user/profile').catch(() => null)
+      ]);
+      setState({
+        writingTests: tests,
+        writingHistory: attempts,
+        access: profile?.access || state.access,
+        loading: false
+      });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  /** Out of credit or blocked: the same page speaking uses. */
+  function handleAccessError(error) {
+    if (error.code === 'no_credits' || error.code === 'blocked') {
+      setState({
+        loading: false,
+        error: '',
+        access: { ...(state.access || {}), remaining: 0, blocked: error.code === 'blocked' },
+        screen: 'topup'
+      });
+      return true;
+    }
+    return false;
+  }
+
+  function adoptAttempt(data) {
+    wr.attempt = data.attempt;
+    wr.test = data.test || null;
+    wr.offset = Number(data.serverNow) ? Number(data.serverNow) - Date.now() : 0;
+    for (const p of data.attempt.parts) {
+      wr.texts[p.key] = p.text || '';
+      wr.questions[p.key] = p.question || '';
+    }
+    wr.active = 'part11';
+    wr.dirty = false;
+    wr.pastes = 0;
+    wr.confirming = false;
+    wr.submitting = false;
+  }
+
+  async function startWritingMock(testId) {
+    setState({ loading: true, error: '' });
+    try {
+      const data = await api('/writing/mock', { method: 'POST', body: { testId } });
+      adoptAttempt(data);
+      if (data.credits !== undefined && data.credits !== null) {
+        state.access = { ...(state.access || {}), credits: data.credits, units: data.units };
+      }
+      state.loading = false;
+      go('writing-exam');
+    } catch (error) {
+      if (!handleAccessError(error)) setState({ loading: false, error: error.message });
+    }
+  }
+
+  // ------------------------------------------------------------ exam: clock
+
+  const wrRemaining = () =>
+    wr.attempt?.deadline
+      ? Math.floor((new Date(wr.attempt.deadline).getTime() - (Date.now() + wr.offset)) / 1000)
+      : 0;
+
+  function startWritingClock() {
+    clearInterval(wr.tick);
+    const paint = () => {
+      const left = wrRemaining();
+      const el = document.getElementById('wr-clock');
+      if (el) {
+        el.textContent = fmtTime(Math.max(0, left));
+        el.classList.toggle('is-low', left <= 5 * 60);
+      }
+      if (left <= 0 && !wr.submitting) {
+        clearInterval(wr.tick);
+        submitWritingMock({ auto: true });
+      }
+    };
+    paint();
+    wr.tick = setInterval(paint, 1000);
+  }
+
+  // ------------------------------------------------------------- exam: save
+
+  function paintSaveStatus(text, bad = false) {
+    const el = document.getElementById('wr-save');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('is-bad', bad);
+  }
+
+  function scheduleWritingSave() {
+    wr.dirty = true;
+    clearTimeout(wr.saveTimer);
+    wr.saveTimer = setTimeout(saveWritingNow, 2500);
+  }
+
+  async function saveWritingNow() {
+    clearTimeout(wr.saveTimer);
+    if (!wr.attempt || wr.saving || !wr.dirty || wr.submitting) return;
+    wr.saving = true;
+    wr.dirty = false;
+    paintSaveStatus(WR_UZ.saving);
+    try {
+      await api(`/writing/attempts/${wr.attempt.id}`, {
+        method: 'PUT',
+        body: { parts: { ...wr.texts }, pasteBlocked: wr.pastes }
+      });
+      paintSaveStatus(WR_UZ.saved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+    } catch (error) {
+      wr.dirty = true;
+      if (error.code === 'time_up' || error.code === 'closed') {
+        stopWritingTimers();
+        return openWritingResult(wr.attempt.id, WR_UZ.timeUp);
+      }
+      paintSaveStatus(WR_UZ.saveFailed, true);
+    } finally {
+      wr.saving = false;
+      // Anything typed while this save was in flight still needs saving.
+      if (wr.dirty && !wr.submitting) wr.saveTimer = setTimeout(saveWritingNow, 2500);
+    }
+  }
+
+  async function submitWritingMock({ auto = false } = {}) {
+    if (!wr.attempt || wr.submitting) return;
+    wr.submitting = true;
+    stopWritingTimers();
+    try {
+      const data = await api(`/writing/attempts/${wr.attempt.id}/submit`, {
+        method: 'POST',
+        body: { parts: { ...wr.texts } }
+      });
+      openWritingResult(data.attempt.id, auto ? WR_UZ.timeUp : '');
+    } catch (error) {
+      wr.submitting = false;
+      // Put the clock back, or a failed hand-in would freeze the exam.
+      startWritingClock();
+      setState({ error: error.message });
+    }
+  }
+
+  // ----------------------------------------------------------- exam: screen
+
+  function wrPartMeta(key) {
+    return WR_PARTS.find(p => p.key === key);
+  }
+
+  function writingExamScreen() {
+    const a = wr.attempt;
+    const t = wr.test;
+    if (!a || !t) return `<div class="center-note"><span class="spinner"></span></div>`;
+
+    const tabs = WR_PARTS.map(p => `
+      <button class="wr-tab ${wr.active === p.key ? 'is-active' : ''}" data-wr-tab="${p.key}" type="button">
+        <span>${esc(p.name)}</span>
+        <span class="wr-tab-count" id="wr-tabcount-${p.key}">${esc(WR_UZ.words(wrWords(wr.texts[p.key])))}</span>
+      </button>`).join('');
+
+    const stimulus = `<div class="wr-stimulus">
+        <p class="muted" style="font-size:14px">${esc(t.stimulus?.intro || '')}</p>
+        <div class="wr-message">${esc(t.stimulus?.text || '').replace(/\n/g, '<br>')}</div>
+      </div>`;
+
+    const panels = WR_PARTS.map(p => {
+      const part = t.parts[p.key];
+      const words = wrWords(wr.texts[p.key]);
+      return `<section class="wr-panel ${wr.active === p.key ? 'is-active' : ''}" data-wr-panel="${p.key}">
+        ${p.key !== 'part2' ? stimulus : ''}
+        <div class="wr-task">
+          <div class="section-title">${esc(p.name)} · ${esc(WR_UZ.task)}</div>
+          <p style="margin-top:6px">${esc(part.task)}</p>
+          <p class="muted" style="margin-top:4px;font-size:14px">${esc(part.wordGuide)}</p>
+        </div>
+        <textarea class="essay wr-text" id="wr-${p.key}" data-wr-text="${p.key}"
+                  spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="sentences"
+                  aria-label="${esc(p.name)}">${esc(wr.texts[p.key])}</textarea>
+        <div class="wr-counter">
+          <span id="wr-count-${p.key}" class="${words >= (part.minWords || 0) ? 'is-met' : ''}">${esc(WR_UZ.words(words))}</span>
+          <span class="muted">· ${esc(WR_UZ.target(part.wordGuide.replace(/^Write\s*/i, '')))}</span>
+        </div>
+      </section>`;
+    }).join('');
+
+    const empty = WR_PARTS.filter(p => !wr.texts[p.key].trim()).map(p => p.name);
+
+    return `
+      <div class="wr-bar">
+        <div>
+          <div class="muted" style="font-size:13px">${esc(t.title)}</div>
+          <div class="wr-clock-wrap">${icon('clock')}
+            <span class="wr-clock" id="wr-clock">${fmtTime(Math.max(0, wrRemaining()))}</span>
+            <span class="muted" style="font-size:13px">${esc(WR_UZ.timeLeft)}</span>
+          </div>
+        </div>
+        <div class="wr-bar-right">
+          <span class="wr-save muted" id="wr-save" aria-live="polite"></span>
+          <button class="btn" data-wr="handin" type="button">${esc(WR_UZ.handIn)}</button>
+        </div>
+      </div>
+      <div class="alert alert-warn" id="wr-paste" style="display:none">${esc(WR_UZ.pasteBlocked)}</div>
+      <div class="card wr-confirm" id="wr-confirm" style="display:${wr.confirming ? 'block' : 'none'}">
+        <strong>${esc(WR_UZ.handInSure)}</strong>
+        <p class="muted" id="wr-empty-note" style="margin-top:6px">${empty.length ? esc(WR_UZ.emptyParts(empty.join(', '))) : ''}</p>
+        <div class="row" style="margin-top:12px;gap:10px;flex-wrap:wrap">
+          <button class="btn" data-wr="handin-yes" type="button">${esc(WR_UZ.handInConfirm)}</button>
+          <button class="btn btn-ghost" data-wr="handin-no" type="button">${esc(WR_UZ.handInCancel)}</button>
+        </div>
+      </div>
+      <div class="wr-tabs" role="tablist">${tabs}</div>
+      <div class="card wr-sheet">${panels}</div>`;
+  }
+
+  function wireWritingExam() {
+    if (state.screen !== 'writing-exam') return;
+    if (!wr.tick) startWritingClock();
+
+    const blockPaste = event => {
+      event.preventDefault();
+      wr.pastes += 1;
+      wr.dirty = true;
+      const note = document.getElementById('wr-paste');
+      if (note) {
+        note.style.display = 'block';
+        clearTimeout(note._hide);
+        note._hide = setTimeout(() => { note.style.display = 'none'; }, 4000);
+      }
+    };
+
+    root.querySelectorAll('[data-wr-text]').forEach(area => {
+      const key = area.dataset.wrText;
+      const target = wr.test?.parts?.[key]?.minWords || 0;
+
+      area.addEventListener('paste', blockPaste);
+      area.addEventListener('drop', blockPaste);
+      area.addEventListener('beforeinput', event => {
+        if (event.inputType === 'insertFromPaste' || event.inputType === 'insertFromDrop') blockPaste(event);
+      });
+
+      area.addEventListener('input', () => {
+        wr.texts[key] = area.value;
+        const n = wrWords(area.value);
+        const count = document.getElementById(`wr-count-${key}`);
+        if (count) {
+          count.textContent = WR_UZ.words(n);
+          count.classList.toggle('is-met', n >= target);
+        }
+        const tab = document.getElementById(`wr-tabcount-${key}`);
+        if (tab) tab.textContent = WR_UZ.words(n);
+        scheduleWritingSave();
+      });
+    });
+
+    root.querySelectorAll('[data-wr-tab]').forEach(button =>
+      button.addEventListener('click', () => {
+        wr.active = button.dataset.wrTab;
+        root.querySelectorAll('[data-wr-tab]').forEach(b =>
+          b.classList.toggle('is-active', b.dataset.wrTab === wr.active));
+        root.querySelectorAll('[data-wr-panel]').forEach(p =>
+          p.classList.toggle('is-active', p.dataset.wrPanel === wr.active));
+        document.getElementById(`wr-${wr.active}`)?.focus();
+      }));
+
+    root.querySelectorAll('[data-wr]').forEach(button =>
+      button.addEventListener('click', () => {
+        const box = document.getElementById('wr-confirm');
+        if (button.dataset.wr === 'handin') {
+          wr.confirming = true;
+          const empty = WR_PARTS.filter(p => !wr.texts[p.key].trim()).map(p => p.name);
+          const note = document.getElementById('wr-empty-note');
+          if (note) note.textContent = empty.length ? WR_UZ.emptyParts(empty.join(', ')) : '';
+          if (box) { box.style.display = 'block'; box.scrollIntoView({ block: 'nearest' }); }
+        } else if (button.dataset.wr === 'handin-no') {
+          wr.confirming = false;
+          if (box) box.style.display = 'none';
+        } else if (button.dataset.wr === 'handin-yes') {
+          button.disabled = true;
+          submitWritingMock();
+        }
+      }));
+  }
+
+  // ------------------------------------------------------------------ check
+
+  function writingCheckScreen() {
+    const filled = WR_PARTS.filter(p => wr.texts[p.key].trim()).length;
+
+    const blocks = WR_PARTS.map(p => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <h3>${esc(p.name)} <span class="muted" style="font-weight:500;font-size:15px">· ${esc(p.what)}</span></h3>
+          <span class="muted" id="wc-count-${p.key}">${esc(WR_UZ.words(wrWords(wr.texts[p.key])))}</span>
+        </div>
+        <label class="field" style="margin-top:12px">
+          <span class="muted" style="font-size:13px">${esc(WR_UZ.question)}</span>
+          <textarea class="essay wr-question" data-wc-question="${p.key}" rows="2">${esc(wr.questions[p.key])}</textarea>
+        </label>
+        <label class="field" style="margin-top:10px">
+          <span class="muted" style="font-size:13px">${esc(WR_UZ.yourText)}</span>
+          <textarea class="essay" data-wc-text="${p.key}">${esc(wr.texts[p.key])}</textarea>
+        </label>
+      </div>`).join('');
+
+    return `
+      <div>
+        <button class="crumb" data-go="writing">${icon('left')} ${esc(WR_UZ.back)}</button>
+        <h1 style="font-size:26px;margin:10px 0 4px">${esc(WR_UZ.checkTitle)}</h1>
+        <p class="muted">${esc(WR_UZ.checkIntro)}</p>
+      </div>
+      ${blocks}
+      <div class="row" style="justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <span class="muted" id="wc-cost">${esc(WR_UZ.cost(filled))}</span>
+        <button class="btn btn-lg" data-wc-send="1" ${filled && !state.loading ? '' : 'disabled'}>
+          ${state.loading ? '…' : esc(WR_UZ.send)}
+        </button>
+      </div>`;
+  }
+
+  function wireWritingCheck() {
+    if (state.screen !== 'writing-check') return;
+
+    const refresh = () => {
+      const filled = WR_PARTS.filter(p => wr.texts[p.key].trim()).length;
+      const cost = document.getElementById('wc-cost');
+      if (cost) cost.textContent = WR_UZ.cost(filled);
+      const send = root.querySelector('[data-wc-send]');
+      if (send) send.disabled = !filled;
+    };
+
+    root.querySelectorAll('[data-wc-text]').forEach(area =>
+      area.addEventListener('input', () => {
+        const key = area.dataset.wcText;
+        wr.texts[key] = area.value;
+        const count = document.getElementById(`wc-count-${key}`);
+        if (count) count.textContent = WR_UZ.words(wrWords(area.value));
+        refresh();
+      }));
+
+    root.querySelectorAll('[data-wc-question]').forEach(area =>
+      area.addEventListener('input', () => { wr.questions[area.dataset.wcQuestion] = area.value; }));
+
+    root.querySelector('[data-wc-send]')?.addEventListener('click', sendWritingCheck);
+  }
+
+  function openWritingCheck() {
+    stopWritingTimers();
+    wr.texts = { part11: '', part12: '', part2: '' };
+    wr.questions = { part11: '', part12: '', part2: '' };
+    go('writing-check');
+  }
+
+  async function sendWritingCheck() {
+    const parts = {};
+    for (const p of WR_PARTS) {
+      if (wr.texts[p.key].trim()) parts[p.key] = { text: wr.texts[p.key], question: wr.questions[p.key] };
+    }
+    if (!Object.keys(parts).length) return;
+
+    setState({ loading: true, error: '' });
+    try {
+      const data = await api('/writing/check', { method: 'POST', body: { parts } });
+      if (data.credits !== undefined && data.credits !== null) {
+        state.access = { ...(state.access || {}), credits: data.credits, units: data.units };
+      }
+      state.loading = false;
+      openWritingResult(data.attempt.id);
+    } catch (error) {
+      if (!handleAccessError(error)) setState({ loading: false, error: error.message });
+    }
+  }
+
+  // ----------------------------------------------------------------- result
+
+  async function openWritingResult(id, notice = '') {
+    stopWritingTimers();
+    go('writing-result', { loading: true, writingResult: null, writingDetails: {}, notice });
+    await refreshWritingResult(id);
+  }
+
+  async function refreshWritingResult(id) {
+    try {
+      const data = await api(`/writing/attempts/${id}`);
+      // Still being written (a deep link to a running mock): go back to it.
+      if (data.attempt.status === 'in_progress' && data.attempt.mode === 'mock') {
+        adoptAttempt(data);
+        state.loading = false;
+        return go('writing-exam');
+      }
+      setState({ writingResult: data.attempt, loading: false });
+      if (data.attempt.status === 'evaluating' && state.screen === 'writing-result') {
+        clearTimeout(wr.poll);
+        wr.poll = setTimeout(() => {
+          if (state.screen === 'writing-result' && state.writingResult?.id === id) refreshWritingResult(id);
+        }, 4000);
+      }
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  function markedScript(segments) {
+    return segments.map(seg =>
+      seg.wrong !== undefined
+        ? `<span class="wr-fix"${seg.why ? ` title="${esc(seg.why)}"` : ''}><del>${esc(seg.wrong)}</del> <ins>${esc(seg.right)}</ins></span>`
+        : esc(seg.text)
+    ).join('').replace(/\n/g, '<br>');
+  }
+
+  function writingPartCard(p) {
+    if (!p.submitted) {
+      return `<div class="card wr-part is-skipped">
+        <div class="row" style="justify-content:space-between"><h3>${esc(p.name)}</h3>
+          <span class="badge">${esc(WR_UZ.notSubmitted)}</span></div>
+      </div>`;
+    }
+    if (p.band === null) return '';
+
+    const open = Boolean(state.writingDetails?.[p.key]);
+
+    return `<div class="card wr-part">
+      <div class="row" style="justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <div>
+          <h3>${esc(p.name)}</h3>
+          <div class="muted" style="font-size:13px">${esc(p.description)} · ${esc(WR_UZ.words(p.words))}</div>
+        </div>
+        <div class="wr-band"><strong>${p.band}</strong><span class="muted"> / ${p.max}</span>
+          <div class="muted" style="font-size:13px;text-align:right">${esc(p.label)}</div></div>
+      </div>
+
+      ${p.underLength
+        ? `<div class="alert alert-error" style="margin-top:12px">${esc(WR_UZ.under(p.words, p.underLength.threshold))}
+             ${Number.isFinite(p.underLength.markerBand) ? ` ${esc(WR_UZ.underMarker(p.underLength.markerBand))}` : ''}</div>`
+        : ''}
+
+      ${p.task ? `<p class="muted" style="margin-top:12px;font-size:14px"><strong>${esc(WR_UZ.task)}:</strong> ${esc(p.task)}</p>` : ''}
+
+      <div style="margin-top:14px">
+        <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div class="section-title">${esc(WR_UZ.marked)}</div>
+          <span class="muted wr-legend">${WR_UZ.legend}</span>
+        </div>
+        <div class="wr-script">${markedScript(p.segments)}</div>
+        ${p.corrections.length
+          ? `<ol class="wr-fixes">${p.corrections.map(c =>
+              `<li><del>${esc(c.wrong)}</del> → <ins>${esc(c.right)}</ins>${c.why ? `<span class="muted"> — ${esc(c.why)}</span>` : ''}</li>`).join('')}</ol>`
+          : `<p class="muted" style="margin-top:8px">${esc(WR_UZ.noErrors)}</p>`}
+      </div>
+
+      ${p.reasoning ? `<div style="margin-top:14px"><div class="section-title">${esc(WR_UZ.why)}</div><p style="margin-top:4px">${esc(p.reasoning)}</p></div>` : ''}
+      ${p.feedback ? `<div style="margin-top:12px"><div class="section-title">${esc(WR_UZ.toNext)}</div><p style="margin-top:4px">${esc(p.feedback)}</p></div>` : ''}
+
+      <button class="btn btn-ghost btn-sm" style="margin-top:14px" data-wr-details="${p.key}">
+        ${esc(open ? WR_UZ.hide : WR_UZ.details)}
+      </button>
+      ${open ? `<div class="wr-details">
+          <div class="section-title">${esc(WR_UZ.descriptor)} — ${p.band} (${esc(p.label)})</div>
+          <ul class="pill-list">${p.descriptor.map(d => `<li>${esc(d)}</li>`).join('')}</ul>
+          ${p.next
+            ? `<div class="section-title" style="margin-top:12px">${esc(WR_UZ.nextBand(p.next.band))} (${esc(p.next.label)})</div>
+               <ul class="pill-list">${p.next.descriptor.map(d => `<li>${esc(d)}</li>`).join('')}</ul>`
+            : `<p class="muted" style="margin-top:10px">${esc(WR_UZ.top)}</p>`}
+        </div>` : ''}
+    </div>`;
+  }
+
+  function writingResultScreen() {
+    const r = state.writingResult;
+    if (state.loading || !r) {
+      return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">Loading…</p></div>`;
+    }
+
+    const crumb = `<button class="crumb" data-go="writing">${icon('left')} ${esc(WR_UZ.back)}</button>`;
+
+    if (r.status === 'evaluating') {
+      return `${crumb}
+        <div class="card score-hero">
+          <div class="muted">${esc(r.title)}</div>
+          <span class="spinner" style="margin-top:16px"></span>
+          <p style="margin-top:12px">${esc(WR_UZ.waiting)}</p>
+        </div>`;
+    }
+
+    if (r.status === 'failed') {
+      return `${crumb}
+        <div class="card score-hero">
+          <div class="muted">${esc(r.title)}</div>
+          <h2 style="margin-top:10px">${esc(WR_UZ.failed)}</h2>
+          <p class="muted" style="margin-top:8px">${esc(r.failureReason)}</p>
+          <button class="btn" style="margin-top:16px" data-wr-remark="${esc(r.id)}">${esc(WR_UZ.retry)}</button>
+        </div>`;
+    }
+
+    const hero = r.complete
+      ? `<div class="score-value">${r.score}</div>
+         <div class="score-level">${esc(r.level || '')}</div>
+         <p class="muted" style="margin-top:6px">${esc(WR_UZ.expert(r.expertMark))}</p>`
+      : `<div class="score-value" style="font-size:44px">${esc(r.level || '')}</div>
+         <div class="badge" style="margin-top:8px">${esc(WR_UZ.partial)}</div>
+         <p class="muted" style="margin-top:10px;max-width:520px;margin-inline:auto">${esc(WR_UZ.resultPartialNote)}</p>`;
+
+    return `
+      ${crumb}
+      <div class="card score-hero">
+        <div class="muted">${esc(r.title)}</div>
+        ${hero}
+        ${r.emailed ? `<p class="muted" style="margin-top:10px;font-size:13px">${esc(WR_UZ.emailed)}</p>` : ''}
+      </div>
+
+      ${r.overallFeedback ? `<div class="card">
+        <p>${esc(r.overallFeedback)}</p>
+        ${r.strengths?.length ? `<div style="margin-top:12px"><div class="section-title">${esc(UI_TEXT.strengths)}</div>
+          <ul class="pill-list">${r.strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
+        ${r.areasForImprovement?.length ? `<div style="margin-top:12px"><div class="section-title">${esc(UI_TEXT.improvements)}</div>
+          <ul class="pill-list">${r.areasForImprovement.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
+      </div>` : ''}
+
+      ${r.parts.map(p => writingPartCard(p)).join('')}
+
+      <div class="row"><button class="btn" data-go="writing">${esc(WR_UZ.back)}</button></div>`;
+  }
+
+  function wireWritingResult() {
+    if (state.screen !== 'writing-result') return;
+    root.querySelectorAll('[data-wr-details]').forEach(button =>
+      button.addEventListener('click', () => {
+        const key = button.dataset.wrDetails;
+        setState({ writingDetails: { ...(state.writingDetails || {}), [key]: !state.writingDetails?.[key] } });
+      }));
+    root.querySelectorAll('[data-wr-remark]').forEach(button =>
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await api(`/writing/attempts/${button.dataset.wrRemark}/remark`, { method: 'POST' });
+          refreshWritingResult(button.dataset.wrRemark);
+        } catch (error) {
+          setState({ error: error.message });
+        }
+      }));
+  }
+
+  // ------------------------------------------------------------------- home
+
+  function writingHomeScreen() {
+    if (state.loading && !state.writingTests) {
+      return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">Loading…</p></div>`;
+    }
+
+    const tests = (state.writingTests || []).map(t => `
+      <div class="card mock-card card-hover">
+        <div class="mock-top"><h3>${esc(t.title)}</h3>
+          ${t.inProgress ? '<span class="chip chip-progress">In progress</span>' : t.best ? `<span class="chip chip-done">${icon('check')} ${t.best.score}/75</span>` : ''}
+        </div>
+        <p class="mock-sub">${esc(WR_UZ.mockBody)}</p>
+        <p class="mock-meta">${icon('clock')} 60 min · Part 1.1 · 1.2 · 2</p>
+        ${t.best ? `<p class="muted" style="margin-top:6px;font-size:14px">${esc(WR_UZ.best(t.best.score, t.best.level))}</p>` : ''}
+        <p class="muted" style="margin-top:6px;font-size:13px">${esc(WR_UZ.mockCost)}</p>
+        <div class="spacer"></div>
+        <div class="row" style="margin-top:14px;gap:10px;flex-wrap:wrap">
+          <button class="btn" data-wr-start="${esc(t.id)}" ${state.loading ? 'disabled' : ''}>
+            ${esc(t.inProgress ? WR_UZ.resume : WR_UZ.start)} ${icon('right')}</button>
+          ${t.best ? `<button class="btn btn-ghost" data-wr-open="${esc(t.best.id)}">View result</button>` : ''}
+        </div>
+      </div>`).join('');
+
+    const check = `<div class="card secondary-card card-hover">
+      <div class="secondary-icon">${icon('pen')}</div>
+      <div class="grow">
+        <h3>${esc(WR_UZ.checkTitle)}</h3>
+        <p class="mock-sub">${esc(WR_UZ.checkBody)}</p>
+        <p class="muted" style="font-size:13px;margin-top:4px">${esc(WR_UZ.checkCost)}</p>
+      </div>
+      <div><button class="btn btn-ghost" data-wr-check="1">${esc(WR_UZ.checkOpen)} ${icon('right')}</button></div>
+    </div>`;
+
+    const history = (state.writingHistory || []).length
+      ? `<div class="card"><div class="section-head"><h2>${esc(WR_UZ.history)}</h2></div>
+          <div class="wr-history">${state.writingHistory.map(h => `
+            <button class="wr-history-row" data-wr-open="${esc(h.id)}">
+              <span><strong>${esc(h.title)}</strong>
+                <span class="muted" style="font-size:13px"> · ${esc((h.parts || []).join(', '))} · ${esc(fmtDate(h.date))}</span></span>
+              <span>${
+                h.status === 'evaluating' ? `<span class="muted">${esc(WR_UZ.evaluating)}</span>`
+                : h.status === 'failed' ? `<span class="badge badge-fail">${esc(WR_UZ.failed)}</span>`
+                : h.status === 'in_progress' ? '<span class="chip chip-progress">In progress</span>'
+                : h.complete ? `<strong>${h.score}/75</strong> · ${esc(h.level || '')}`
+                : `${esc(h.level || '')} <span class="muted">(${esc(WR_UZ.partial)})</span>`
+              }</span>
+            </button>`).join('')}</div></div>`
+      : `<p class="muted">${esc(WR_UZ.none)}</p>`;
+
+    const credits = state.access?.credits;
+
+    return `
+      <div>
+        <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
+        <h1 style="font-size:26px;margin:10px 0 4px">${esc(WR_UZ.heading)}</h1>
+        <p class="muted">${esc(WR_UZ.sub)}${credits ? ` · ${esc(ACCESS_UZ.remaining(credits))}` : ''}</p>
+      </div>
+      <div class="section-head" style="margin-top:8px"><h2>${esc(WR_UZ.mockTitle)}</h2></div>
+      <div class="mock-grid">${tests}</div>
+      ${check}
+      ${history}`;
+  }
+
+  function wireWritingHome() {
+    if (state.screen !== 'writing') return;
+    root.querySelectorAll('[data-wr-start]').forEach(b =>
+      b.addEventListener('click', () => startWritingMock(b.dataset.wrStart)));
+    root.querySelectorAll('[data-wr-open]').forEach(b =>
+      b.addEventListener('click', () => openWritingResult(b.dataset.wrOpen)));
+    root.querySelector('[data-wr-check]')?.addEventListener('click', openWritingCheck);
+  }
+
+  function wireWriting() {
+    // Timers belong to their screens; leaving one stops them.
+    if (state.screen !== 'writing-exam') { clearInterval(wr.tick); wr.tick = null; clearTimeout(wr.saveTimer); }
+    if (state.screen !== 'writing-result') { clearTimeout(wr.poll); wr.poll = null; }
+    wireWritingHome();
+    wireWritingExam();
+    wireWritingCheck();
+    wireWritingResult();
+  }
+
   // ------------------------------------------------------------ rendering
 
   function render() {
@@ -978,7 +1718,7 @@
       : state.user.role === 'admin'
       ? `${link('dashboard', 'Dashboard')}
          <a class="nav-link" href="/admin.html">Questions</a>`
-      : `${link('dashboard', 'Dashboard')}${link('results', 'My results')}`;
+      : `${link('dashboard', 'Dashboard')}${link('writing', 'Writing')}${link('results', 'My results')}`;
 
     const initials = String(state.user.firstName || state.user.email || '?')
       .trim().charAt(0).toUpperCase();
@@ -1013,7 +1753,11 @@
       topup: topupScreen,
       exam: examScreen,
       submitted: submittedScreen,
-      result: resultScreen
+      result: resultScreen,
+      writing: writingHomeScreen,
+      'writing-exam': writingExamScreen,
+      'writing-check': writingCheckScreen,
+      'writing-result': writingResultScreen
     }[state.screen] || landingScreen;
 
     return `${navMarkup()}<main class="stack">${alerts()}${body()}</main>`;
@@ -1425,7 +2169,6 @@
     const pos = best !== null ? cefrPosition(best) : null;
 
     const speaking = (state.exams || []).filter(e => (e.module || 'speaking') === 'speaking');
-    const writing = (state.exams || []).filter(e => e.module === 'writing');
 
     const name = state.user?.firstName || '';
 
@@ -1436,8 +2179,8 @@
       ? `<p class="muted" style="margin-top:8px;text-align:center">${
           state.access?.blocked
             ? esc(ACCESS_UZ.blockedTitle)
-            : remaining > 0
-            ? esc(ACCESS_UZ.remaining(remaining))
+            : remaining > 0 || state.access?.units > 0
+            ? esc(ACCESS_UZ.remaining(state.access?.credits ?? remaining))
             : `${esc(ACCESS_UZ.remainingNone)} · <button class="link-more" data-go="topup">${esc(ACCESS_UZ.how)}</button>`
         }</p>`
       : '';
@@ -1485,21 +2228,23 @@
       </div>
     </div>`;
 
-    const writingCard = writing.length ? `<div class="card secondary-card card-hover">
+    // Writing lives on its own screen with its own tests (content/writingTests.js),
+    // so the card is always shown — it no longer depends on Exam documents.
+    const writingCard = `<div class="card secondary-card card-hover">
       <div class="secondary-icon">${icon('pen')}</div>
       <div class="grow">
         <div class="row" style="gap:10px"><h3>Writing mock</h3><span class="chip chip-writing">Writing</span></div>
-        <p class="mock-sub">Task 1 and Task 2 — written and evaluated.</p>
+        <p class="mock-sub">Part 1.1, 1.2 va 2 — 60 daqiqa, rasmiy shkala bo'yicha tekshiriladi. Tayyor ishingizni ham tekshirtirishingiz mumkin.</p>
         <div class="meta-row">
+          <span>${icon('clock')} 60 min</span>
           <span>${icon('pen')} Written</span>
           <span>${icon('check')} Evaluated</span>
         </div>
       </div>
       <div>
-        <button class="btn btn-ghost" data-folder="writing">Start writing ${icon('right')}</button>
-        <p class="muted" style="margin-top:8px;text-align:center">${writing.length} mock${writing.length === 1 ? '' : 's'} available</p>
+        <button class="btn btn-ghost" data-go="writing">Start writing ${icon('right')}</button>
       </div>
-    </div>` : '';
+    </div>`;
 
     // A student who has just handed in their first mock has no completed
     // attempt yet, but they were sent here to watch for it — so the recent list
@@ -1603,7 +2348,7 @@
 
     const partChips = exam => (exam.parts || []).length
       ? `<div class="practise-row">
-           <span class="label">Practise:</span>
+           <span class="label" title="Har bir qism — mockning ¼ qismi">Practise (¼ mock):</span>
            ${exam.parts.map(p =>
              `<button class="chip-btn" data-start="${esc(exam.id)}" data-mode="practice" data-part="${esc(p)}">${esc(p)}</button>`).join('')}
          </div>`
@@ -2552,7 +3297,11 @@
       el.addEventListener('click', event => {
         event.preventDefault();
         const target = el.dataset.go;
+        // Leaving a writing mock mid-way keeps what was typed: the clock keeps
+        // running on the server and the student can come back to it.
+        if (state.screen === 'writing-exam') saveWritingNow();
         if (target === 'dashboard') loadDashboard();
+        else if (target === 'writing') loadWritingHome();
         else go(target);
       });
     });
@@ -2640,6 +3389,8 @@
       rec.isRecording ? endRecording() : beginRecording());
 
     document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit);
+
+    wireWriting();
   }
 
   function handleAction(action) {
@@ -2717,6 +3468,12 @@
       event.preventDefault();
       event.returnValue = '';
     }
+    // Last words not yet autosaved: try once, and ask the browser to hold on.
+    if (state.screen === 'writing-exam' && wr.dirty && !wr.submitting) {
+      saveWritingNow();
+      event.preventDefault();
+      event.returnValue = '';
+    }
   });
 
   (function boot() {
@@ -2743,6 +3500,13 @@
         const requested = new URLSearchParams(window.location.search).get('result');
         if (requested) {
           openResult(requested);
+          return;
+        }
+
+        // ?writing=<id> — the link in the marked-writing email.
+        const writingId = new URLSearchParams(window.location.search).get('writing');
+        if (writingId) {
+          openWritingResult(writingId);
           return;
         }
 

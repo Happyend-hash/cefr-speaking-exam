@@ -107,6 +107,10 @@ router.get('/profile', async (req, res, next) => {
           remaining: user.examAccess().code === 'staff'
             ? null
             : user.subscription?.examsRemaining ?? 0,
+          // The balance as it is said — "4⅓". A single part costs a share of
+          // a mock (¼ speaking, ⅓ writing), so the whole count alone under-reports.
+          credits: user.examAccess().code === 'staff' ? null : user.creditLabel(),
+          units: user.examAccess().code === 'staff' ? null : user.creditUnits(),
           blocked: Boolean(user.access?.blocked),
           // Where to reach the teacher about paying. Configured once, in the
           // environment, so the contact can change without a deploy of the app

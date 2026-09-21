@@ -380,8 +380,8 @@
           ${s.attempts} attempt${s.attempts === 1 ? '' : 's'} · last ${last}
         </div>
         <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
-          <span style="font-weight:600;${s.remaining > 0 ? '' : 'color:var(--red)'}">
-            ${s.remaining} left
+          <span style="font-weight:600;${s.remaining > 0 || s.partCredits > 0 ? '' : 'color:var(--red)'}">
+            ${esc(s.credits ?? String(s.remaining))} left
           </span>
           <input id="amt-${esc(s.id)}" type="number" min="0" max="100" value="5"
                  style="width:64px" aria-label="Number of mocks" />
@@ -1250,8 +1250,8 @@
       await loadStudents({});
       setState({
         notice: action === 'grant'
-          ? `${data.email} now has ${data.remaining} mock(s). They will see the confirmation on their dashboard.`
-          : `${data.email}: ${data.blocked ? 'blocked' : 'allowed'}, ${data.remaining} mock(s) left.`
+          ? `${data.email} now has ${data.credits ?? data.remaining} mock(s). They will see the confirmation on their dashboard.`
+          : `${data.email}: ${data.blocked ? 'blocked' : 'allowed'}, ${data.credits ?? data.remaining} mock(s) left.`
       });
     } catch (error) {
       setState({ loading: false, error: error.message });

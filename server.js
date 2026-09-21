@@ -50,6 +50,7 @@ import paymentRoutes from './routes/payment.js';
 import userRoutes from './routes/user.js';
 import evaluationRoutes from './routes/evaluation.js';
 import adminRoutes from './routes/admin.js';
+import writingRoutes from './routes/writing.js';
 
 // Middleware imports
 import { errorHandler, notFound } from './middleware/errorHandler.js';
@@ -190,6 +191,7 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/exam', authenticate, examRoutes);
 app.use('/api/user', authenticate, userRoutes);
 app.use('/api/evaluation', authenticate, evaluationRoutes);
+app.use('/api/writing', authenticate, writingRoutes);
 
 // Admin routes
 app.use('/api/admin', authenticate, adminRoutes);

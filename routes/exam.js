@@ -12,7 +12,7 @@ import AudioStorageService, {
   MAX_AUDIO_BYTES
 } from '../services/AudioStorageService.js';
 import ImageStorageService from '../services/ImageStorageService.js';
-import User from '../models/User.js';
+import User, { UNITS_PER_MOCK, PART_COST } from '../models/User.js';
 import PronunciationService from '../services/PronunciationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
 import { RAW_MAX, BAND_MAX } from '../services/ScoreConversion.js';
@@ -179,10 +179,16 @@ router.delete('/results/:resultId', async (req, res, next) => {
     }
 
     if (refundable) {
-      await User.updateOne(
-        { _id: result.student },
-        { $inc: { 'subscription.examsRemaining': 1, 'stats.totalExamsTaken': -1 } }
-      );
+      // Hand back exactly what was charged: a quarter for one part, a whole
+      // mock for a mock. Attempts from before part pricing have no creditCost
+      // and were all charged a whole mock.
+      const units = Number.isFinite(result.creditCost) ? result.creditCost : UNITS_PER_MOCK;
+      const owner = await User.findById(result.student);
+      if (owner && units > 0) {
+        owner.refundCredits(units);
+        owner.stats.totalExamsTaken = Math.max(0, (owner.stats.totalExamsTaken || 0) - 1);
+        await owner.save();
+      }
     }
 
     res.json({
@@ -482,8 +488,21 @@ router.post('/:id/start', async (req, res, next) => {
     const student = await User.findById(req.user.id);
     if (!student) throw new APIError('User not found', 404);
 
+    // 'mock' runs the whole test under exam conditions — no skipping, timers
+    // enforced. 'practice' lets the student work through one part at a time.
+    const mode = req.body.mode === 'practice' ? 'practice' : 'mock';
+    const part = mode === 'practice' && req.body.part ? String(req.body.part) : null;
+
+    /*
+     * What this attempt costs, in twelfths of a mock. A speaking test has four
+     * parts (1.1, 1.2, 2, 3), so one part practised on its own is a quarter of
+     * a mock; the full mock is a whole one. Practising all four parts one by
+     * one therefore costs exactly what the mock does.
+     */
+    const cost = part ? PART_COST.speaking : UNITS_PER_MOCK;
+
     // One decision, read once, used by both branches below.
-    const gate = student.examAccess();
+    const gate = student.examAccess(cost);
 
     // A block stops even a resume: it is a decision about the person, and
     // letting a blocked student carry on with an attempt they already opened
@@ -494,11 +513,6 @@ router.post('/:id/start', async (req, res, next) => {
     if (!exam || !exam.isPublished || !exam.isActive) {
       throw new APIError('Exam not found', 404);
     }
-
-    // 'mock' runs the whole test under exam conditions — no skipping, timers
-    // enforced. 'practice' lets the student work through one part at a time.
-    const mode = req.body.mode === 'practice' ? 'practice' : 'mock';
-    const part = mode === 'practice' && req.body.part ? String(req.body.part) : null;
 
     if (part && !(exam.sections || []).some(s => s.part === part)) {
       throw new APIError(`This test has no Part ${part}`, 400);
@@ -524,6 +538,8 @@ router.post('/:id/start', async (req, res, next) => {
           resultId: existing._id,
           resumed: true,
           remaining: gate.code === 'staff' ? null : student.subscription.examsRemaining,
+          credits: gate.code === 'staff' ? null : student.creditLabel(),
+          units: gate.code === 'staff' ? null : student.creditUnits(),
           serverTranscription: TranscriptionService.isServerTranscriptionAvailable(),
           mode: existing.mode,
           part: existing.part || null,
@@ -542,6 +558,7 @@ router.post('/:id/start', async (req, res, next) => {
       module: exam.module || 'speaking',
       mode,
       part,
+      creditCost: gate.code === 'staff' ? 0 : cost,
       // overallLevel is the outcome of the test, so it stays unset until evaluated.
       status: 'in_progress',
       startedAt: new Date(),
@@ -553,7 +570,7 @@ router.post('/:id/start', async (req, res, next) => {
     // Charged only after the attempt exists. Charging first would take a mock
     // off a student whose attempt then failed to save. Staff run free — the
     // teacher checking a test is not a customer.
-    if (gate.code !== 'staff') student.useExamCredit();
+    if (gate.code !== 'staff') student.spendCredits(cost);
     student.stats.totalExamsTaken = (student.stats.totalExamsTaken || 0) + 1;
     await student.save();
 
@@ -569,6 +586,8 @@ router.post('/:id/start', async (req, res, next) => {
         resultId: result._id,
         resumed: false,
         remaining: gate.code === 'staff' ? null : student.subscription.examsRemaining,
+          credits: gate.code === 'staff' ? null : student.creditLabel(),
+          units: gate.code === 'staff' ? null : student.creditUnits(),
         mode,
         part,
         questions: flattenExam(exam.toObject(), part)

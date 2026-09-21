@@ -723,3 +723,80 @@ audio { width: 100%; margin-top: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .pulse { animation: none; opacity: .8; }
 }
+
+/* ---------- writing ---------- */
+
+/* The exam bar stays in reach while the student scrolls a long answer: the
+   clock and the hand-in button are the two things they must never hunt for. */
+.wr-bar {
+  position: sticky; top: 72px; z-index: 20;
+  display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 18px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.wr-bar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.wr-clock-wrap { display: flex; align-items: center; gap: 8px; }
+.wr-clock-wrap svg { width: 18px; height: 18px; color: var(--ink-soft); }
+.wr-clock { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.wr-clock.is-low { color: var(--red); }
+.wr-save { font-size: 13px; }
+.wr-save.is-bad { color: var(--red); }
+
+.wr-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.wr-tab {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 10px 16px; min-width: 120px;
+  border: 1px solid var(--line); border-radius: var(--radius-btn);
+  background: var(--surface); color: var(--ink); font-weight: 600;
+}
+.wr-tab.is-active { border-color: var(--indigo-500); background: var(--indigo-50); color: var(--indigo-700); }
+.wr-tab:focus-visible { outline: 3px solid var(--indigo-200); outline-offset: 2px; }
+.wr-tab-count { font-size: 12px; font-weight: 500; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+.wr-panel { display: none; }
+.wr-panel.is-active { display: flex; flex-direction: column; gap: 14px; }
+.wr-stimulus { display: flex; flex-direction: column; gap: 8px; }
+.wr-message {
+  padding: 14px 16px; border-left: 3px solid var(--indigo-200);
+  background: var(--ground); border-radius: 0 10px 10px 0; line-height: 1.65;
+}
+.wr-text { min-height: 320px; line-height: 1.7; }
+.wr-counter { display: flex; gap: 6px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.wr-counter .is-met { color: var(--green); font-weight: 600; }
+.wr-question { min-height: 0; }
+
+.wr-band { text-align: right; }
+.wr-band strong { font-size: 30px; font-variant-numeric: tabular-nums; }
+
+/* In-line corrections: the mistake struck through, the correction beside it,
+   exactly as a teacher marks a paper script. */
+.wr-script {
+  margin-top: 8px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  line-height: 1.9; overflow-wrap: anywhere;
+}
+.wr-script del, .wr-fixes del, .wr-legend del { color: var(--red); text-decoration: line-through; }
+.wr-script ins, .wr-fixes ins, .wr-legend ins { color: var(--green); text-decoration: none; font-weight: 600; }
+.wr-fix { white-space: normal; }
+.wr-fixes { margin: 10px 0 0; padding-left: 22px; font-size: 14px; }
+.wr-fixes li { margin-bottom: 4px; }
+.wr-legend { font-size: 12px; }
+.wr-details { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--ground); }
+.wr-part.is-skipped { opacity: .7; }
+
+.wr-history { display: flex; flex-direction: column; margin-top: 8px; }
+.wr-history-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 4px; text-align: left;
+  background: none; border: 0; border-bottom: 1px solid var(--line); color: var(--ink);
+}
+.wr-history-row:hover { background: var(--ground); }
+.wr-history-row:last-child { border-bottom: 0; }
+
+@media (max-width: 700px) {
+  .wr-bar { top: 64px; }
+  .wr-tab { min-width: 0; flex: 1; }
+  .wr-text { min-height: 260px; }
+}
+.mock-meta svg { width: 14px; height: 14px; vertical-align: -2px; }

@@ -4,6 +4,7 @@ import axios from 'axios';
 import { CEFR_BANDS, levelForScore, MAX_SCORE } from '../models/ExamResult.js';
 import { CRITERIA_PROMPT_BLOCK, CRITERION_KEYS, BAND_LABELS } from '../content/speakingCriteria.js';
 import { bandsToRaw, rawToScore, BAND_MAX } from './ScoreConversion.js';
+import { WRITING_PARTS, WRITING_PROMPT_BLOCK } from '../content/writingCriteria.js';
 
 /**
  * AI Evaluation Service - Integrates with Claude Opus for CEFR assessment
@@ -342,6 +343,186 @@ ${transcript}${measured}`;
   }
 
   /**
+   * Mark a writing attempt: one band per part, on the board's own scales.
+   *
+   * One call for all submitted parts. The parts are judged separately — each
+   * has its own scale and its own descriptors — but reading them together lets
+   * the marker write one summary, and one call on three short texts costs a
+   * fraction of three.
+   *
+   * The marker returns bands and corrections. It does NOT return a score or a
+   * level: the sum, the conversion and the level all come from the agency's
+   * tables in WritingScoring.js, for the same reason as speaking — the model's
+   * arithmetic is never trusted with a published table.
+   *
+   * @param {Array} parts  [{ key, text, words, task, stimulus, wordGuide,
+   *                          minWords, underLength }]
+   * @param {string} mode  'mock' | 'check'
+   */
+  async evaluateWriting({ parts, mode = 'mock' }) {
+    const cached = `You are an expert examiner for the O'zbekiston Multilevel English WRITING exam.
+You award each part ONE holistic band on that part's official scale, and you
+mark the student's mistakes in-line so they can learn from them.
+
+THE OFFICIAL RATING SCALES — award bands against these words exactly:
+
+${WRITING_PROMPT_BLOCK}
+
+HOW TO AWARD A BAND:
+- Each part is judged on its OWN scale, against its OWN task. Parts 1.1 and
+  1.2 are 0-5; Part 2 is 0-6. Never compare one part with another.
+- The band is HOLISTIC. Each descriptor names task fulfilment, register or
+  genre, grammar, vocabulary, cohesion, and spelling/punctuation. Weigh them
+  together into the one band whose description fits the text best overall.
+  Do not score them separately and average.
+- DO NOT OVER-ASSESS GRAMMAR. Grammar is one dimension of six. A text that
+  fulfils the task clearly, in the right register, with good organisation and
+  range, is not pulled down a band by a handful of errors that do not affect
+  communication. Grammar-focused marking is the most common rater mistake;
+  do not make it.
+- Register matters: Part 1.1 is informal (to a friend), Part 1.2 is formal (to
+  a manager or official), Part 2 is a blog post, article or forum post whose
+  tone should suit publication.
+- A text that is memorised, largely off-topic, or mostly in another language
+  is band 0 or 1, as the scales say.
+- Use the whole scale. A text that matches the top descriptor gets the top
+  band; hedging toward the middle for safety is a marking error.
+
+LENGTH:
+Each part tells you its word count and recommended length. Where a part is
+marked "UNDER-LENGTH RULE APPLIES", the school scores it 0 whatever its
+quality — still award the band the writing itself deserves and still correct
+it; the rule is applied afterwards, not by you.
+
+IN-LINE CORRECTIONS:
+For each part, list the clear mistakes: grammar, word choice, spelling, and
+punctuation that changes meaning or reads as an error.
+- "wrong" MUST be copied EXACTLY from the student's text — same letters, same
+  case, same punctuation — and be the SMALLEST span that contains the mistake
+  (usually one to four words). It is located by exact search; anything not
+  copied exactly is thrown away.
+- "right" is the corrected English for exactly that span.
+- "why" is a short reason, a few words.
+- List corrections in the order they appear in the text.
+- Correct ERRORS only. Do not rewrite correct sentences into your preferred
+  style, and accept both British and American spelling.
+- At most 12 corrections per part; if there are more, keep the most important.
+- Corrections are teaching feedback. They must NOT decide the band — the band
+  comes from the descriptors, holistically, as above.
+
+${mode === 'check'
+  ? `THIS IS A CHECK OF WORK THE STUDENT WROTE IN ADVANCE.
+If a part comes with its task, judge whether the text answers that task. If no
+task is given, judge the language, organisation and register for the kind of
+text it is, do not lower the band for task fulfilment you cannot check, and
+say in "reasoning" that task fulfilment could not be judged.`
+  : 'THIS IS A TIMED MOCK: 60 minutes for all parts, typed, paste disabled.'}
+
+Reply with JSON only, in exactly this shape, including only the parts supplied:
+{
+  "parts": {
+    "part11": {
+      "band": 0-5,
+      "reasoning": "Why this band, naming the evidence — one or two sentences",
+      "feedback": "What to do to reach the next band — one or two sentences, to the student",
+      "corrections": [ { "wrong": "exact words from the text", "right": "corrected words", "why": "short reason" } ]
+    },
+    "part12": { "band": 0-5, "reasoning": "...", "feedback": "...", "corrections": [] },
+    "part2":  { "band": 0-6, "reasoning": "...", "feedback": "...", "corrections": [] }
+  },
+  "overallFeedback": "Two or three sentences on the writing as a whole, to the student",
+  "strengths": ["...", "..."],
+  "areasForImprovement": ["...", "..."]
+}
+${this.languageInstruction}
+In this reply that means "reasoning", "feedback", "why", "overallFeedback",
+"strengths" and "areasForImprovement" are in that language, while "wrong" and
+"right" are ALWAYS English — they are the student's English and its correction.`;
+
+    const byKey = Object.fromEntries(WRITING_PARTS.map(p => [p.key, p]));
+    const fence = '"""';
+
+    const user = parts.map(part => {
+      const meta = byKey[part.key];
+      const lines = [`=== ${meta.name} — ${meta.description} [${part.key}], scale 0-${meta.max} ===`];
+      if (part.stimulus) lines.push(`The message the candidate is replying to:\n${fence}\n${part.stimulus}\n${fence}`);
+      lines.push(part.task ? `TASK: ${part.task}` : 'TASK: not given by the student.');
+      if (part.wordGuide) lines.push(`Recommended length: ${part.wordGuide}`);
+      lines.push(`Word count: ${part.words}`);
+      if (part.underLength?.applied) {
+        lines.push(`UNDER-LENGTH RULE APPLIES: under ${part.underLength.threshold} words scores 0 at this school.`);
+      }
+      lines.push(`THE CANDIDATE'S TEXT:\n${fence}\n${part.text}\n${fence}`);
+      return lines.join('\n');
+    }).join('\n\n');
+
+    const response = await this.callClaudeAPI({
+      cached,
+      user,
+      maxTokens: Math.max(this.maxTokens, 6000)
+    });
+    return this.parseWritingEvaluation(response, parts.map(p => p.key));
+  }
+
+  /**
+   * Read the writing marker's reply.
+   *
+   * A band outside a part's scale is clamped rather than rejected — 6 on a
+   * 0-5 part is the marker saying "the top", and the top is what it means.
+   * A part with no numeric band is an error: a part that was handed in and
+   * not marked must fail loudly, never quietly become a zero.
+   */
+  parseWritingEvaluation(responseText, expectedKeys = []) {
+    if (typeof responseText !== 'string' || !responseText.trim()) {
+      throw new Error('Failed to parse writing evaluation: the model returned no text');
+    }
+    const match = responseText.match(/\{[\s\S]*\}/);
+    if (!match) {
+      throw new Error(
+        `Failed to parse writing evaluation: no JSON in the reply (starts: "${responseText.slice(0, 120)}…")`
+      );
+    }
+
+    let data;
+    try {
+      data = JSON.parse(match[0]);
+    } catch (error) {
+      throw new Error(`Failed to parse writing evaluation: ${error.message}`);
+    }
+
+    const maxFor = Object.fromEntries(WRITING_PARTS.map(p => [p.key, p.max]));
+    const parts = {};
+
+    for (const key of expectedKeys) {
+      const raw = data?.parts?.[key];
+      const awarded = raw?.band;
+      if (awarded === null || awarded === undefined || awarded === '' || !Number.isFinite(Number(awarded))) {
+        throw new Error(`Failed to parse writing evaluation: no band for ${key}`);
+      }
+      parts[key] = {
+        band: Math.max(0, Math.min(maxFor[key], Math.round(Number(awarded)))),
+        reasoning: String(raw.reasoning || ''),
+        feedback: String(raw.feedback || ''),
+        corrections: Array.isArray(raw.corrections) ? raw.corrections.slice(0, 12) : []
+      };
+    }
+
+    const list = value => (Array.isArray(value) ? value.map(String).filter(Boolean).slice(0, 5) : []);
+
+    return {
+      parts,
+      overallFeedback: String(data?.overallFeedback || ''),
+      strengths: list(data?.strengths),
+      areasForImprovement: list(data?.areasForImprovement)
+    };
+  }
+
+  /**
+   * LEGACY — the old flat writing module (Exam documents with module
+   * 'writing'), which scored each criterion 0-75 and is not the official
+   * method. Superseded by evaluateWriting above; kept only so attempts made
+   * through the old path can still be re-marked.
+   *
    * Build the evaluation prompt for a written answer.
    *
    * Mirrors the speaking prompt's JSON contract exactly, so the same parser and
@@ -608,7 +789,10 @@ THE STUDENT'S ANSWER (transcribed):
       // Per-call model override, so the cheap model can be tried on per-answer
       // feedback while the level itself stays on the better one.
       model: (isSplit && prompt.model) || this.model,
-      max_tokens: this.maxTokens,
+      // A call may need more room than the default — writing marking returns
+      // three parts' corrections in one reply, and a reply cut off mid-JSON
+      // is a reply with nothing in it.
+      max_tokens: (isSplit && prompt.maxTokens) || this.maxTokens,
       messages: [
         {
           role: 'user',

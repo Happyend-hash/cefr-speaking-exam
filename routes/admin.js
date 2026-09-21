@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import Exam from '../models/Exam.js';
 import ExamResult from '../models/ExamResult.js';
 import CalibrationSample from '../models/CalibrationSample.js';
-import User from '../models/User.js';
+import User, { formatCredits } from '../models/User.js';
 import ImageStorageService, {
   ALLOWED_IMAGE_TYPES,
   MAX_IMAGE_BYTES
@@ -1180,6 +1180,9 @@ function studentRow(user, activity) {
     status: user.status,
     blocked: Boolean(user.access?.blocked),
     remaining: user.subscription?.examsRemaining ?? 0,
+    // Change left over from single parts, in twelfths of a mock.
+    partCredits: user.subscription?.partCredits ?? 0,
+    credits: formatCredits(user.subscription?.examsRemaining, user.subscription?.partCredits),
     granted: user.access?.totalGranted || 0,
     note: user.access?.note || '',
     pendingMessage: user.access?.message || '',
@@ -1280,8 +1283,12 @@ router.post('/students/:id/access', async (req, res, next) => {
         throw new APIError(`Give a whole number of mocks between 0 and ${MAX_GRANT}.`, 400);
       }
 
-      const before = user.subscription.examsRemaining || 0;
-      user.subscription.examsRemaining = action === 'grant' ? before + value : value;
+      const before = formatCredits(user.subscription.examsRemaining, user.subscription.partCredits);
+      user.subscription.examsRemaining =
+        action === 'grant' ? (user.subscription.examsRemaining || 0) + value : value;
+      // "Set to 5" means exactly 5: any leftover third from a writing part goes.
+      // "Add 5" keeps it — the student already paid for that third.
+      if (action === 'set') user.subscription.partCredits = 0;
 
       if (action === 'grant' && value > 0) {
         user.access.totalGranted = (user.access.totalGranted || 0) + value;
@@ -1295,7 +1302,7 @@ router.post('/students/:id/access', async (req, res, next) => {
         user.access.messageAt = new Date();
       }
 
-      outcome = `${user.email}: ${before} → ${user.subscription.examsRemaining} mock(s)`;
+      outcome = `${user.email}: ${before} → ${formatCredits(user.subscription.examsRemaining, user.subscription.partCredits)} mock(s)`;
     } else if (action === 'block') {
       user.access.blocked = true;
       user.access.blockedAt = new Date();
@@ -1321,6 +1328,7 @@ router.post('/students/:id/access', async (req, res, next) => {
         email: user.email,
         blocked: Boolean(user.access.blocked),
         remaining: user.subscription.examsRemaining,
+        credits: formatCredits(user.subscription.examsRemaining, user.subscription.partCredits),
         pendingMessage: user.access.message || ''
       }
     });
@@ -1369,7 +1377,7 @@ router.post('/students/access-all', async (req, res, next) => {
       if (!Number.isInteger(value) || value < 0 || value > MAX_GRANT) {
         throw new APIError(`Give a whole number of mocks between 0 and ${MAX_GRANT}.`, 400);
       }
-      update = { $set: { 'subscription.examsRemaining': value } };
+      update = { $set: { 'subscription.examsRemaining': value, 'subscription.partCredits': 0 } };
     } else {
       throw new APIError('Unknown action. Use block, unblock or set.', 400);
     }
