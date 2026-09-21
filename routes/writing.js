@@ -228,7 +228,7 @@ router.post('/mock', async (req, res, next) => {
     // Resume rather than charge again: a reload or a lost connection must not
     // cost a second mock, and the clock keeps running from the first start.
     const open = await WritingAttempt.findOne({
-      student: student._id,
+      student: first._id,
       mode: 'mock',
       testId: test.id,
       status: 'in_progress'
