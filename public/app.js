@@ -285,7 +285,8 @@
       const [exams, history, profile] = await Promise.all([
         api('/exam'),
         api('/exam/results'),
-        api('/user/profile').catch(() => null)
+        api('/user/profile').catch(() => null),
+        loadLeaderboard()
       ]);
       setState({
         exams,
@@ -1683,6 +1684,163 @@
     wireWritingResult();
   }
 
+  // =========================================================== LEADERBOARD
+  //
+  // The ten best AVERAGE full speaking mock scores on the site. Computed on
+  // the server (services/Leaderboard.js); this only draws it. Scores survive a
+  // student deleting an attempt, and a student needs a few full mocks before
+  // they appear — both decided server-side, so nothing here can be gamed.
+
+  const LB_UZ = {
+    title: 'Reyting',
+    sub: "Eng yuqori o'rtacha speaking bali — faqat to'liq mocklar hisoblanadi",
+    you: 'Siz',
+    mocks: n => `${n} ta mock`,
+    avg: "o'rtacha",
+    best: 'eng yaxshi',
+    empty: min => `Hali hech kim reytingga kirmagan. Kamida ${min} ta to'liq speaking mock topshirgan birinchi o'quvchi bo'ling!`,
+    yourRank: (rank, avg, mocks) => `Sizning o'rningiz: #${rank} · o'rtacha ${avg} · ${mocks} ta mock`,
+    needMore: n => `Reytingga kirish uchun yana ${n} ta to'liq speaking mock topshiring.`,
+    staff: "O'qituvchilar reytingda ko'rsatilmaydi.",
+    nickLabel: 'Reytingdagi ismingiz',
+    nickNone: 'taxallus tanlanmagan',
+    nickEdit: "O'zgartirish",
+    nickSet: 'Taxallus tanlash',
+    nickPlaceholder: '3–20 belgi',
+    nickSave: 'Saqlash',
+    nickCancel: 'Bekor qilish',
+    nickHint: "Taxallus tanlamasangiz, ismingiz va familiyangizning bosh harfi ko'rinadi.",
+    nickSaved: 'Taxallus saqlandi.'
+  };
+
+  const MEDAL = { 1: 'gold', 2: 'silver', 3: 'bronze' };
+
+  const initialsOf = name =>
+    String(name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
+
+  async function loadLeaderboard() {
+    try {
+      state.leaderboard = await api('/leaderboard');
+    } catch {
+      state.leaderboard = null; // the card simply does not show
+    }
+  }
+
+  function podiumSpot(entry) {
+    if (!entry) return '<div class="lb-spot is-empty"></div>';
+    const medal = MEDAL[entry.rank];
+    return `<div class="lb-spot lb-${medal} ${entry.you ? 'is-you' : ''}">
+      <div class="lb-avatar"><span>${esc(initialsOf(entry.name))}</span><b class="lb-medal">${entry.rank}</b></div>
+      <div class="lb-name" title="${esc(entry.name)}">${esc(entry.name)}${entry.you ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</div>
+      <div class="lb-score">${entry.average.toFixed(1)}</div>
+      <div class="lb-meta">${esc(entry.level)} · ${esc(LB_UZ.mocks(entry.mocks))}</div>
+      <div class="lb-step"><span>${entry.rank}</span></div>
+    </div>`;
+  }
+
+  function nicknameRow() {
+    const nick = state.user?.nickname || '';
+    if (state.user?.role !== 'student') return '';
+    if (state.nickEditing) {
+      return `<div class="lb-nick is-editing">
+        <label for="nick-input" class="lb-nick-label">${LB_UZ.nickLabel}</label>
+        <div class="lb-nick-form">
+          <input id="nick-input" maxlength="20" autocomplete="off" placeholder="${LB_UZ.nickPlaceholder}" value="${esc(nick)}" />
+          <button class="btn btn-sm" data-lb="nick-save" ${state.nickSaving ? 'disabled' : ''}>${state.nickSaving ? '…' : LB_UZ.nickSave}</button>
+          <button class="btn btn-ghost btn-sm" data-lb="nick-cancel">${LB_UZ.nickCancel}</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin-top:6px">${LB_UZ.nickHint}</p>
+      </div>`;
+    }
+    return `<div class="lb-nick">
+      <span class="lb-nick-label">${LB_UZ.nickLabel}:</span>
+      <strong>${nick ? esc(nick) : `<span class="muted" style="font-weight:500">${LB_UZ.nickNone}</span>`}</strong>
+      <button class="link-more" style="margin-top:0" data-lb="nick-edit">${nick ? LB_UZ.nickEdit : LB_UZ.nickSet}</button>
+    </div>`;
+  }
+
+  function leaderboardCard() {
+    const lb = state.leaderboard;
+    if (!lb) return '';
+
+    const top = lb.top || [];
+    const byRank = r => top.find(e => e.rank === r);
+    const rest = top.filter(e => e.rank > 3);
+
+    const podium = top.length
+      ? `<div class="lb-podium">${podiumSpot(byRank(2))}${podiumSpot(byRank(1))}${podiumSpot(byRank(3))}</div>`
+      : `<div class="lb-empty">${icon('trophy')}<p>${esc(LB_UZ.empty(lb.minMocks))}</p></div>`;
+
+    const list = rest.length
+      ? `<ol class="lb-list" start="4">${rest.map(e => `
+          <li class="${e.you ? 'is-you' : ''}">
+            <span class="lb-rank">${e.rank}</span>
+            <span class="lb-mini">${esc(initialsOf(e.name))}</span>
+            <span class="lb-row-name">${esc(e.name)}${e.you ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</span>
+            <span class="lb-row-meta">${esc(e.level)} · ${esc(LB_UZ.mocks(e.mocks))}</span>
+            <span class="lb-row-score">${e.average.toFixed(1)}</span>
+          </li>`).join('')}</ol>`
+      : '';
+
+    const me = lb.you || {};
+    const standing = state.user?.role !== 'student'
+      ? LB_UZ.staff
+      : me.rank
+      ? LB_UZ.yourRank(me.rank, me.average.toFixed(1), me.mocks)
+      : LB_UZ.needMore(me.needed || lb.minMocks);
+
+    return `<section class="card lb-card" aria-labelledby="lb-title">
+      <div class="lb-head">
+        <div class="lb-head-icon">${icon('trophy')}</div>
+        <div>
+          <h2 id="lb-title">${LB_UZ.title} <span class="lb-top10">TOP 10</span></h2>
+          <p class="muted">${LB_UZ.sub}</p>
+        </div>
+      </div>
+      ${podium}
+      ${list}
+      <div class="lb-foot">
+        <p class="lb-standing">${esc(standing)}</p>
+        ${nicknameRow()}
+      </div>
+    </section>`;
+  }
+
+  async function saveNickname() {
+    const value = document.getElementById('nick-input')?.value ?? '';
+    setState({ nickSaving: true, error: '' });
+    try {
+      const data = await api('/user/nickname', { method: 'PUT', body: { nickname: value } });
+      state.user = { ...(state.user || {}), nickname: data.nickname || undefined };
+      store.set('user', JSON.stringify(state.user));
+      await loadLeaderboard();
+      setState({ nickSaving: false, nickEditing: false, notice: LB_UZ.nickSaved });
+    } catch (error) {
+      setState({ nickSaving: false, error: error.message });
+    }
+  }
+
+  function wireLeaderboard() {
+    root.querySelectorAll('[data-lb]').forEach(el =>
+      el.addEventListener('click', () => {
+        const action = el.dataset.lb;
+        if (action === 'nick-edit') {
+          setState({ nickEditing: true });
+          const input = document.getElementById('nick-input');
+          input?.focus();
+          input?.select();
+        } else if (action === 'nick-cancel') {
+          setState({ nickEditing: false });
+        } else if (action === 'nick-save') {
+          saveNickname();
+        }
+      }));
+    document.getElementById('nick-input')?.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { event.preventDefault(); saveNickname(); }
+      if (event.key === 'Escape') setState({ nickEditing: false });
+    });
+  }
+
   // ------------------------------------------------------------ rendering
 
   function render() {
@@ -2280,6 +2438,7 @@
       ${accessNotice()}
       ${welcome}
       ${statsRow}
+      ${leaderboardCard()}
       <div class="section-head" style="margin-top:8px"><h2>Ready for your next test?</h2>
         <p>Practise the real CEFR format and see how you perform.</p></div>
       <div class="stack" style="margin-bottom:36px">
@@ -3425,6 +3584,7 @@
     document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit);
 
     wireWriting();
+    wireLeaderboard();
   }
 
   function handleAction(action) {

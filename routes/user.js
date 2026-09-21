@@ -1,5 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
+import { invalidate as invalidateLeaderboard } from '../services/Leaderboard.js';
 import ExamResult, { CEFR_BANDS, MAX_SCORE, BELOW_B1 } from '../models/ExamResult.js';
 import AuthService from '../services/AuthService.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -28,7 +29,11 @@ function averageSkills(results) {
       const criteria = task.aiEvaluation?.criteria;
       if (!criteria || task.status !== 'evaluated') continue;
       for (const [name, value] of Object.entries(criteria)) {
-        const score = Number(value?.score);
+        // Tested for absence before converting: Number(null) is 0, and the
+        // measured fluency facts carry no score by design — read as a zero,
+        // they would have shown every student a fluency skill of 0.
+        if (value?.score === null || value?.score === undefined || value?.score === '') continue;
+        const score = Number(value.score);
         if (!Number.isFinite(score)) continue;
         totals[name] = (totals[name] || 0) + score;
         counts[name] = (counts[name] || 0) + 1;
@@ -149,6 +154,51 @@ router.post('/access/seen', async (req, res, next) => {
     );
     res.json({ success: true, message: 'Notice dismissed' });
   } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/user/nickname
+ * @desc    Choose the name shown on the leaderboard
+ * @access  Private
+ *
+ * 3-20 characters: letters in any alphabet, digits, spaces, dot, dash and
+ * underscore. Unique regardless of case. An empty value clears it, and the
+ * student shows as first name and last initial again.
+ */
+router.put('/nickname', async (req, res, next) => {
+  try {
+    const raw = String(req.body?.nickname ?? '').replace(/\s+/g, ' ').trim();
+    const user = await User.findById(req.user.id);
+    if (!user) throw new APIError('User not found', 404);
+
+    if (!raw) {
+      user.nickname = undefined;
+      user.nicknameLower = undefined;
+    } else {
+      if (raw.length < 3 || raw.length > 20) {
+        throw new APIError("Taxallus 3 tadan 20 tagacha belgidan iborat bo'lsin.", 400, 'nickname_length');
+      }
+      if (!/^[\p{L}\p{N} ._-]+$/u.test(raw)) {
+        throw new APIError("Faqat harf, raqam, bo'sh joy, nuqta, chiziqcha va _ ishlatish mumkin.", 400, 'nickname_chars');
+      }
+      const lower = raw.toLowerCase();
+      const taken = await User.exists({ nicknameLower: lower, _id: { $ne: user._id } });
+      if (taken) throw new APIError('Bu taxallus band. Boshqasini tanlang.', 409, 'nickname_taken');
+      user.nickname = raw;
+      user.nicknameLower = lower;
+    }
+
+    await user.save();
+    invalidateLeaderboard();
+    res.json({ success: true, data: { nickname: user.nickname || null } });
+  } catch (error) {
+    // Two students choosing the same name at the same moment: the unique index
+    // catches what the check above could not.
+    if (error?.code === 11000) {
+      return next(new APIError('Bu taxallus band. Boshqasini tanlang.', 409, 'nickname_taken'));
+    }
     next(error);
   }
 });

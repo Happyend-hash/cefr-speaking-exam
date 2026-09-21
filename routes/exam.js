@@ -15,6 +15,7 @@ import ImageStorageService from '../services/ImageStorageService.js';
 import User, { UNITS_PER_MOCK, PART_COST } from '../models/User.js';
 import PronunciationService from '../services/PronunciationService.js';
 import FluencyService from '../services/FluencyService.js';
+import { recordScore } from '../services/Leaderboard.js';
 import { removeResult } from '../services/AttemptCleanup.js';
 import { RAW_MAX, BAND_MAX } from '../services/ScoreConversion.js';
 import {
@@ -1318,6 +1319,10 @@ export async function markAttempt(resultId) {
 
   if (result.isPassed) result.generateCertificate();
   await result.save();
+
+  // Kept for the leaderboard, separately from the attempt, so the score
+  // survives the student deleting it. Only full speaking mocks are recorded.
+  await recordScore(result);
 
   await Exam.findByIdAndUpdate(result.exam, { $inc: { 'statistics.timesUsed': 1 } });
 }

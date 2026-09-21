@@ -16,6 +16,7 @@ import AudioStorageService, {
 import TranscriptionService from '../services/TranscriptionService.js';
 import AIEvaluationService from '../services/AIEvaluationService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
+import { forgetScore } from '../services/Leaderboard.js';
 import { bandsToScore } from '../services/ScoreConversion.js';
 import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark } from './exam.js';
 import { authorize } from '../middleware/auth.js';
@@ -1138,6 +1139,9 @@ router.post('/results/purge', authorize('admin'), async (req, res, next) => {
       // something is gone while a student's voice is still stored.
       const outcome = await removeResult(result);
       if (outcome.ok) {
+        // A teacher clearing an attempt means it should never have counted —
+        // unlike a student deleting their own, which keeps the score.
+        await forgetScore(result._id);
         deleted += 1;
         recordings += outcome.recordingsDeleted;
       } else {

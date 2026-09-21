@@ -800,3 +800,137 @@ audio { width: 100%; margin-top: 10px; }
   .wr-text { min-height: 260px; }
 }
 .mock-meta svg { width: 14px; height: 14px; vertical-align: -2px; }
+
+/* ---------- leaderboard ---------- */
+
+/* Medal metals, used only here. Each has a solid tone for the medal and a pale
+   tint for the podium step, so the three places read at a glance without
+   shouting over the rest of the dashboard. */
+.lb-card {
+  --gold: #e3a008;  --gold-tint: #fef6d8;
+  --silver: #8a94a6; --silver-tint: #eef1f5;
+  --bronze: #c2703a; --bronze-tint: #fbeee4;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+.lb-head { display: flex; gap: 14px; align-items: center; }
+.lb-head h2 { font-size: 20px; display: flex; align-items: center; gap: 10px; }
+.lb-head p { font-size: 14px; margin-top: 2px; }
+.lb-head-icon {
+  flex: none; width: 44px; height: 44px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: var(--gold-tint); color: var(--gold);
+}
+.lb-head-icon svg { width: 22px; height: 22px; }
+.lb-top10 {
+  font-size: 11px; font-weight: 800; letter-spacing: .08em;
+  padding: 3px 8px; border-radius: var(--radius-pill);
+  background: var(--indigo-50); color: var(--indigo-600);
+}
+
+/* Podium: second, first, third — the winner in the middle and highest. */
+.lb-podium {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px; align-items: end;
+  margin-top: 22px;
+}
+.lb-spot { display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; }
+.lb-spot.is-empty { visibility: hidden; }
+.lb-avatar {
+  position: relative; width: 60px; height: 60px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 19px; color: #fff;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .12);
+}
+.lb-gold   .lb-avatar { width: 74px; height: 74px; font-size: 23px; background: linear-gradient(145deg, #f7c948, var(--gold)); }
+.lb-silver .lb-avatar { background: linear-gradient(145deg, #c3cad6, var(--silver)); }
+.lb-bronze .lb-avatar { background: linear-gradient(145deg, #e0a178, var(--bronze)); }
+.lb-medal {
+  position: absolute; right: -4px; bottom: -4px;
+  width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 800; color: var(--ink);
+  background: var(--surface); border: 2px solid currentColor;
+}
+.lb-gold .lb-medal { color: var(--gold); }
+.lb-silver .lb-medal { color: var(--silver); }
+.lb-bronze .lb-medal { color: var(--bronze); }
+.lb-name {
+  margin-top: 10px; max-width: 100%;
+  font-weight: 700; font-size: 15px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lb-score { font-size: 26px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.lb-gold .lb-score { font-size: 32px; }
+.lb-meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+.lb-step {
+  width: 100%; margin-top: 12px;
+  border-radius: 12px 12px 0 0;
+  display: grid; place-items: start center;
+  font-weight: 800; font-size: 22px; padding-top: 10px;
+}
+.lb-step span { opacity: .55; }
+.lb-gold   .lb-step { height: 76px; background: var(--gold-tint);   color: var(--gold); }
+.lb-silver .lb-step { height: 56px; background: var(--silver-tint); color: var(--silver); }
+.lb-bronze .lb-step { height: 42px; background: var(--bronze-tint); color: var(--bronze); }
+.lb-spot.is-you .lb-avatar { outline: 3px solid var(--indigo-500); outline-offset: 3px; }
+
+.lb-you {
+  display: inline-block; vertical-align: 2px;
+  font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: var(--radius-pill);
+  background: var(--indigo-600); color: #fff;
+}
+
+/* Places 4-10 sit directly under the podium, on the same ground. */
+.lb-list { list-style: none; margin: 0 -24px; padding: 6px 24px; border-top: 1px solid var(--line); }
+.lb-list li {
+  display: grid; grid-template-columns: 28px 32px minmax(0, 1fr) auto auto;
+  align-items: center; gap: 12px;
+  padding: 10px 8px; border-radius: 10px;
+}
+.lb-list li + li { border-top: 1px solid var(--line); }
+.lb-list li.is-you { background: var(--indigo-50); border-top-color: transparent; }
+.lb-rank { font-weight: 800; color: var(--ink-faint); font-variant-numeric: tabular-nums; text-align: center; }
+.lb-mini {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 800;
+  background: var(--indigo-100); color: var(--indigo-700);
+}
+.lb-row-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-row-meta { font-size: 13px; color: var(--ink-soft); white-space: nowrap; }
+.lb-row-score { font-weight: 800; font-size: 17px; font-variant-numeric: tabular-nums; min-width: 42px; text-align: right; }
+
+.lb-empty {
+  margin-top: 18px; padding: 22px; border-radius: 12px;
+  display: flex; gap: 14px; align-items: center;
+  background: var(--ground); color: var(--ink-soft);
+}
+.lb-empty svg { flex: none; width: 28px; height: 28px; color: var(--gold); }
+
+.lb-foot {
+  margin: 0 -24px; padding: 14px 24px 18px;
+  border-top: 1px solid var(--line); background: var(--ground);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.lb-standing { font-weight: 600; font-size: 14px; }
+.lb-nick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.lb-nick-label { color: var(--ink-soft); font-size: 13px; }
+.lb-nick.is-editing { display: block; }
+.lb-nick-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.lb-nick-form input { flex: 1 1 180px; min-width: 0; }
+
+@media (max-width: 560px) {
+  .lb-podium { gap: 6px; }
+  .lb-avatar { width: 48px; height: 48px; font-size: 16px; }
+  .lb-gold .lb-avatar { width: 58px; height: 58px; font-size: 19px; }
+  .lb-score { font-size: 21px; }
+  .lb-gold .lb-score { font-size: 25px; }
+  .lb-name { font-size: 13px; }
+  .lb-meta { font-size: 11px; }
+  .lb-list, .lb-foot { margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+  .lb-list li { grid-template-columns: 22px 28px minmax(0, 1fr) auto; gap: 8px; }
+  .lb-row-meta { display: none; }
+  .lb-mini { width: 28px; height: 28px; }
+}

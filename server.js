@@ -51,6 +51,7 @@ import userRoutes from './routes/user.js';
 import evaluationRoutes from './routes/evaluation.js';
 import adminRoutes from './routes/admin.js';
 import writingRoutes from './routes/writing.js';
+import leaderboardRoutes from './routes/leaderboard.js';
 
 // Middleware imports
 import { errorHandler, notFound } from './middleware/errorHandler.js';
@@ -192,6 +193,7 @@ app.use('/api/exam', authenticate, examRoutes);
 app.use('/api/user', authenticate, userRoutes);
 app.use('/api/evaluation', authenticate, evaluationRoutes);
 app.use('/api/writing', authenticate, writingRoutes);
+app.use('/api/leaderboard', authenticate, leaderboardRoutes);
 
 // Admin routes
 app.use('/api/admin', authenticate, adminRoutes);

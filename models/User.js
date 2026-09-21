@@ -29,6 +29,19 @@ const userSchema = new mongoose.Schema(
       select: false
     },
 
+    // Shown on the leaderboard instead of the real name. Unique regardless of
+    // case, so nobody can appear as someone else; the lower-cased copy is what
+    // the uniqueness is enforced on.
+    nickname: {
+      type: String,
+      trim: true,
+      maxlength: 20
+    },
+    nicknameLower: {
+      type: String,
+      index: { unique: true, sparse: true }
+    },
+
     // Profile
     avatar: {
       type: String,
