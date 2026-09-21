@@ -1720,6 +1720,26 @@
   const initialsOf = name =>
     String(name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
 
+  // ---------------------------------------------------------------- premium
+  //
+  // Premium students (services/Premium.js) show a crown, a gold name, a
+  // glowing ring and their own picture wherever a name appears in the
+  // speaking club, the chat and the leaderboard.
+
+  const CROWN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7l4.5 4L12 4l4.5 7L21 7l-2 12H5L3 7z" fill="currentColor"/></svg>';
+  // Only ever an address this server made — never whatever a field contains.
+  const safePic = url => (/^\/api\/avatars\/[a-f0-9]{32}$/.test(String(url || '')) ? url : null);
+
+  /** What goes inside an avatar circle: the picture, or initials. */
+  const picInner = person => safePic(person?.avatar)
+    ? `<img class="av-pic" src="${esc(person.avatar)}" alt="" loading="lazy" decoding="async">`
+    : `<span>${esc(initialsOf(person?.name))}</span>`;
+  const premiumClass = person => (person?.premium ? ' is-premium' : '');
+  const crownMark = person =>
+    person?.premium ? `<span class="crown" title="Premium" aria-label="Premium" role="img">${CROWN}</span>` : '';
+  const nameMarkup = person =>
+    `<span class="${person?.premium ? 'gold-name' : ''}">${esc(person?.name || '')}</span>${crownMark(person)}`;
+
   async function loadLeaderboard() {
     try {
       state.leaderboard = await api('/leaderboard');
@@ -1732,8 +1752,8 @@
     if (!entry) return '<div class="lb-spot is-empty"></div>';
     const medal = MEDAL[entry.rank];
     return `<div class="lb-spot lb-${medal} ${entry.you ? 'is-you' : ''}">
-      <div class="lb-avatar"><span>${esc(initialsOf(entry.name))}</span><b class="lb-medal">${entry.rank}</b></div>
-      <div class="lb-name" title="${esc(entry.name)}">${esc(entry.name)}${entry.you ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</div>
+      <div class="lb-avatar${premiumClass(entry)}">${picInner(entry)}<b class="lb-medal">${entry.rank}</b></div>
+      <div class="lb-name" title="${esc(entry.name)}">${nameMarkup(entry)}${entry.you ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</div>
       <div class="lb-score">${entry.average.toFixed(1)}</div>
       <div class="lb-meta">${esc(entry.level)} · ${esc(LB_UZ.mocks(entry.mocks))}</div>
       <div class="lb-step"><span>${entry.rank}</span></div>
@@ -1777,8 +1797,8 @@
       ? `<ol class="lb-list" start="4">${rest.map(e => `
           <li class="${e.you ? 'is-you' : ''}">
             <span class="lb-rank">${e.rank}</span>
-            <span class="lb-mini">${esc(initialsOf(e.name))}</span>
-            <span class="lb-row-name">${esc(e.name)}${e.you ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</span>
+            <span class="lb-mini${premiumClass(e)}">${picInner(e)}</span>
+            <span class="lb-row-name">${nameMarkup(e)}${e.you ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</span>
             <span class="lb-row-meta">${esc(e.level)} · ${esc(LB_UZ.mocks(e.mocks))}</span>
             <span class="lb-row-score">${e.average.toFixed(1)}</span>
           </li>`).join('')}</ol>`
@@ -1966,7 +1986,12 @@
     ch.tab = tab;
     go('speak', { loading: true });
     try {
-      vc.status = await api('/voice/status');
+      const [status, premium] = await Promise.all([
+        api('/voice/status'),
+        api('/user/premium').catch(() => null)
+      ]);
+      vc.status = status;
+      pr.state = premium;
       state.loading = false;
       if (vc.status.blocked) return setState({ error: ACCESS_UZ.blockedTitle });
       if (tab === 'chat') {
@@ -2103,6 +2128,10 @@
           startRecording();
         }
         return;
+      case 'peer-updated':
+        // A crown or picture changed while in the call.
+        if (vc.room) vc.room.members = vc.room.members.map(m => (m.id === data.peer.id ? { ...m, ...data.peer } : m));
+        break;
       case 'peer-joined':
         if (vc.room && !vc.room.members.some(m => m.id === data.peer.id)) vc.room.members.push(data.peer);
         break;
@@ -2161,7 +2190,8 @@
     vc.room = { ...room, members: [...(room.members || [])] };
     // A new call starts with an empty chat; coming back to the same call
     // after a dropped connection keeps what was already typed.
-    if (vc.chatRoom !== room.id) { vc.chat = []; vc.chatRoom = room.id; }
+    const callId = room.roomId || room.id;
+    if (vc.chatRoom !== callId) { vc.chat = []; vc.chatRoom = callId; }
     vc.reportOpen = false;
     try {
       await ensureMic();
@@ -2398,6 +2428,7 @@
         <h1 style="font-size:26px;margin:10px 0 4px">${VC_UZ.title}</h1>
         <p class="muted">${tab === 'chat' ? CH_UZ.sub : VC_UZ.sub}</p>
       </div>
+      ${premiumStrip()}
       <div class="ch-tabs" role="group">
         ${tabBtn('voice', CH_UZ.tabVoice, 'mic')}
         ${tabBtn('chat', CH_UZ.tabChat, 'message')}
@@ -2425,18 +2456,27 @@
          </div>`
       : `<button class="btn btn-lg" data-vc="find" ${vc.connected ? '' : 'disabled'}>${icon('users')} ${VC_UZ.partnerFind}</button>`;
 
+    const iAmPremium = Boolean(vc.status?.premium);
     const clubs = (vc.rooms || []).map(r => {
-      const full = r.count >= r.max;
-      const seats = Array.from({ length: r.max }, (_, i) => `<span class="vc-seat ${i < r.count ? 'is-taken' : ''}"></span>`).join('');
+      const extra = r.premiumSeats || 0;
+      // Full for everyone else; a Premium student still has the gold seat.
+      const premiumSeat = r.count >= r.max && r.count < r.max + extra && iAmPremium;
+      const full = r.count >= r.max && !premiumSeat;
+      const seats = Array.from({ length: r.max }, (_, i) => `<span class="vc-seat ${i < r.count ? 'is-taken' : ''}"></span>`).join('')
+        + (extra ? `<span class="vc-seat is-gold ${r.count > r.max ? 'is-taken' : ''}" title="${esc(PR_UZ.goldSeat)}"></span>` : '');
+      const faces = (r.people || []).map(p =>
+        `<span class="vc-face${premiumClass(p)}" title="${esc(p.name)}">${picInner(p)}</span>`).join('');
       return `<div class="card vc-club">
         <div class="row" style="justify-content:space-between;gap:10px">
           <h3>${esc(r.name)}</h3>
           ${r.level ? `<span class="chip chip-speaking">${esc(r.level)}</span>` : ''}
         </div>
-        <div class="vc-seats" aria-label="${r.count} / ${r.max}">${seats}<span class="muted">${r.count}/${r.max}</span></div>
-        <p class="muted vc-club-names">${r.count ? esc(r.names.join(', ')) : VC_UZ.empty}</p>
-        <button class="btn ${full ? 'btn-ghost' : ''}" data-vc-join="${esc(r.id)}" ${full || !vc.connected ? 'disabled' : ''}>
-          ${full ? VC_UZ.full : VC_UZ.join}
+        <div class="vc-seats" aria-label="${r.count} / ${r.max}">${seats}<span class="muted">${Math.min(r.count, r.max)}/${r.max}${r.count > r.max ? ' +👑' : ''}</span></div>
+        ${r.count
+          ? `<div class="vc-faces">${faces}</div><p class="muted vc-club-names">${esc(r.names.join(', '))}</p>`
+          : `<p class="muted vc-club-names">${VC_UZ.empty}</p>`}
+        <button class="btn ${full ? 'btn-ghost' : ''}${premiumSeat ? ' btn-gold' : ''}" data-vc-join="${esc(r.id)}" ${full || !vc.connected ? 'disabled' : ''}>
+          ${full ? VC_UZ.full : premiumSeat ? `${CROWN} ${PR_UZ.goldSeat}` : VC_UZ.join}
         </button>
       </div>`;
     }).join('');
@@ -2481,8 +2521,8 @@
       const peer = vc.peers.get(m.id);
       const status = isMe ? '' : peer?.state === 'connected' ? '' : peer?.state === 'failed' ? VC_UZ.failedPeer : VC_UZ.connectingPeer;
       return `<div class="vc-person ${isMe ? 'is-me' : ''}" id="vc-p-${esc(m.id)}">
-        <div class="vc-avatar"><span>${esc(initialsOf(m.name))}</span></div>
-        <div class="vc-person-name">${esc(m.name)}${isMe ? ` <span class="lb-you">${VC_UZ.you}</span>` : ''}</div>
+        <div class="vc-avatar${premiumClass(m)}">${picInner(m)}</div>
+        <div class="vc-person-name">${nameMarkup(m)}${isMe ? ` <span class="lb-you">${VC_UZ.you}</span>` : ''}</div>
         <div class="vc-person-meta">${m.level ? esc(m.level) : ''}${isMe && vc.muted ? ' · 🔇' : ''}</div>
         ${isMe ? '' : `<div class="vc-person-state" id="vc-s-${esc(m.id)}">${esc(status)}</div>`}
       </div>`;
@@ -2600,6 +2640,7 @@
       return;
     }
     wireChat();
+    wirePremium();
     root.querySelectorAll('[data-vc]').forEach(el =>
       el.addEventListener('click', () => vcAction(el.dataset.vc, el)));
     root.querySelectorAll('[data-vc-join]').forEach(el =>
@@ -2625,6 +2666,122 @@
     }
   }
 
+
+
+  // ------------------------------------------------------------ premium strip
+
+  const PR_UZ = {
+    title: 'Premium',
+    active: days => `Premium faol · ${days} kun qoldi`,
+    until: d => `${d} gacha`,
+    upload: "Rasm yoki GIF qo'yish",
+    change: "Rasmni o'zgartirish",
+    remove: 'Olib tashlash',
+    uploading: 'Yuklanmoqda…',
+    hint: "GIF, PNG, JPG yoki WEBP · 2 MB gacha. Hurmatli rasm tanlang — ustoz noo'rin rasmni o'chiradi.",
+    blocked: "Ustoz sizga rasm qo'yishni to'xtatgan.",
+    kept: "Rasmingiz saqlangan — Premium yangilanganda yana ko'rinadi.",
+    upsellTitle: "Premium bo'ling 👑",
+    upsell: days => `Paket sotib olsangiz, ${days} kun Premium sovg'a:`,
+    perks: [
+      "Ismingiz yonida toj belgisi",
+      "O'z rasmingiz yoki animatsiyali GIF avatar",
+      "Oltin rangli ism va avatar atrofida nur",
+      "To'la xonada siz uchun qo'shimcha joy",
+      "Sherik qidirganda birinchi bo'lib topiladi"
+    ],
+    buy: 'Paket olish',
+    goldSeat: 'Premium joy',
+    tooBig: "Rasm 2 MB dan katta — kichikroq rasm tanlang."
+  };
+
+  const pr = { state: null, busy: false, error: '' };
+
+  // Written out by hand: browsers have no Uzbek month names and show "M10".
+  const UZ_MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+  const shortDate = d => {
+    const x = new Date(d);
+    return Number.isNaN(x.getTime()) ? '' : `${x.getDate()}-${UZ_MONTHS[x.getMonth()]}`;
+  };
+
+  function premiumStrip() {
+    const p = pr.state;
+    if (!p || state.user?.role !== 'student') return '';
+    const me = { name: p.name, premium: p.active, avatar: p.avatar };
+    const avatar = `<div class="pr-avatar${premiumClass(me)}">${picInner(me)}</div>`;
+    const error = pr.error ? `<p class="pr-error" role="alert">${esc(pr.error)}</p>` : '';
+
+    if (!p.active) {
+      return `<section class="card pr-strip is-free">
+        ${avatar}
+        <div class="pr-body">
+          <h3>${PR_UZ.upsellTitle}</h3>
+          <p class="muted">${esc(PR_UZ.upsell(p.days))}</p>
+          <ul class="pr-perks">${PR_UZ.perks.map(t => `<li>${CROWN}<span>${esc(t)}</span></li>`).join('')}</ul>
+          ${p.hasPicture ? `<p class="muted pr-note">${PR_UZ.kept}</p>` : ''}
+        </div>
+        <button class="btn btn-gold" data-pr="buy">${PR_UZ.buy}</button>
+      </section>`;
+    }
+
+    const actions = p.pictureBlocked
+      ? `<p class="muted pr-note">${PR_UZ.blocked}</p>`
+      : `<div class="pr-actions">
+          <label class="btn btn-sm btn-gold pr-upload ${pr.busy ? 'is-busy' : ''}">
+            <input type="file" id="pr-file" accept="image/gif,image/png,image/jpeg,image/webp" ${pr.busy ? 'disabled' : ''}>
+            ${pr.busy ? PR_UZ.uploading : p.avatar ? PR_UZ.change : PR_UZ.upload}
+          </label>
+          ${p.avatar ? `<button class="btn btn-ghost btn-sm" data-pr="remove" ${pr.busy ? 'disabled' : ''}>${PR_UZ.remove}</button>` : ''}
+        </div>
+        <p class="muted pr-note">${PR_UZ.hint}</p>`;
+
+    return `<section class="card pr-strip is-premium">
+      ${avatar}
+      <div class="pr-body">
+        <div class="pr-name">${nameMarkup(me)}</div>
+        <p class="pr-status">${esc(PR_UZ.active(p.daysLeft))} <span class="muted">· ${esc(PR_UZ.until(shortDate(p.until)))}</span></p>
+        ${actions}
+        ${error}
+      </div>
+    </section>`;
+  }
+
+  async function uploadPicture(file) {
+    if (!file) return;
+    if (pr.state && file.size > pr.state.maxBytes) {
+      pr.error = PR_UZ.tooBig;
+      return render();
+    }
+    pr.busy = true; pr.error = ''; render();
+    try {
+      const form = new FormData();
+      form.append('picture', file);
+      pr.state = await api('/user/avatar', { method: 'POST', form });
+      // The leaderboard shows the picture too.
+      loadLeaderboard();
+    } catch (error) {
+      pr.error = error.message;
+    }
+    pr.busy = false;
+    render();
+  }
+
+  async function removePicture() {
+    pr.busy = true; pr.error = ''; render();
+    try {
+      pr.state = await api('/user/avatar', { method: 'DELETE' });
+    } catch (error) {
+      pr.error = error.message;
+    }
+    pr.busy = false;
+    render();
+  }
+
+  function wirePremium() {
+    document.getElementById('pr-file')?.addEventListener('change', event => uploadPicture(event.target.files?.[0]));
+    root.querySelectorAll('[data-pr="remove"]').forEach(el => el.addEventListener('click', removePicture));
+    root.querySelectorAll('[data-pr="buy"]').forEach(el => el.addEventListener('click', () => go('topup', { topupReason: 'premium' })));
+  }
 
   // ============================================================ text chat
   //
@@ -2821,15 +2978,18 @@
            <button class="btn btn-ghost btn-sm" data-ch-report-close>${CH_UZ.cancel}</button>
          </div>`
       : '';
-    return `<div class="ch-msg ${mine ? 'is-mine' : ''}" data-msg="${esc(m.id)}">
+    return `<div class="ch-row ${mine ? 'is-mine' : ''}">
+      ${mine ? '' : `<span class="ch-av${premiumClass(m)}">${picInner(m)}</span>`}
+      <div class="ch-msg ${mine ? 'is-mine' : ''}${m.premium ? ' is-premium' : ''}" data-msg="${esc(m.id)}">
       <div class="ch-meta">
-        <span class="ch-name">${esc(m.name)}${mine ? ` <span class="lb-you">${CH_UZ.you}</span>` : ''}</span>
+        <span class="ch-name">${nameMarkup(m)}${mine ? ` <span class="lb-you">${CH_UZ.you}</span>` : ''}</span>
         ${m.level ? `<span class="ch-level">${esc(m.level)}</span>` : ''}
         <span class="ch-time">${esc(clock(m.at))}</span>
         ${!mine && !m.deleted ? `<button class="ch-flag" data-ch-report="${esc(m.id)}" title="${CH_UZ.report}" aria-label="${CH_UZ.report}">⚑</button>` : ''}
       </div>
       <div class="ch-text">${body}</div>
       ${reportForm}
+      </div>
     </div>`;
   }
 
@@ -3391,6 +3551,9 @@
       "shuning uchun birinchi bepul mockdan keyin ustoz ruxsat beradi.",
 
     packageLine: "Bitta paket: 4 ta speaking va 3 ta writing mock.",
+    premiumLine: "Har bir paket bilan 30 kun Premium: toj belgisi, GIF avatar, oltin ism va xonalarda ustunlik.",
+    premiumTitle: "Premium olish",
+    premiumBody: "Premium paket bilan birga beriladi. To'lovdan keyin ustoz paketni qo'shadi va Premium darhol yoqiladi.",
 
     blockedTitle: 'Ruxsat vaqtincha to\'xtatilgan',
     blockedBody:
@@ -3440,6 +3603,9 @@
     const access = state.access || {};
     const blocked = Boolean(access.blocked);
     const contact = access.contact || '';
+    // Arrived from "Premium bo'ling", not from running out of mocks.
+    const forPremium = state.topupReason === 'premium' && !blocked;
+    state.topupReason = '';
 
     const contactBlock = contact
       ? `<a class="btn btn-lg" href="${esc(
@@ -3449,9 +3615,10 @@
 
     return `
       <div class="card form-card" style="max-width:560px">
-        <h2 style="margin-bottom:8px">${blocked ? ACCESS_UZ.blockedTitle : ACCESS_UZ.outTitle}</h2>
-        <p class="muted">${blocked ? ACCESS_UZ.blockedBody : ACCESS_UZ.outBody}</p>
-        ${blocked ? '' : `<p style="margin-top:10px;font-weight:600">${ACCESS_UZ.packageLine}</p>`}
+        <h2 style="margin-bottom:8px">${blocked ? ACCESS_UZ.blockedTitle : forPremium ? ACCESS_UZ.premiumTitle : ACCESS_UZ.outTitle}</h2>
+        <p class="muted">${blocked ? ACCESS_UZ.blockedBody : forPremium ? ACCESS_UZ.premiumBody : ACCESS_UZ.outBody}</p>
+        ${blocked ? '' : `<p style="margin-top:10px;font-weight:600">${ACCESS_UZ.packageLine}</p>
+          <p class="pr-topup">${CROWN} ${ACCESS_UZ.premiumLine}</p>`}
 
         <h3 style="font-size:15px;margin-top:22px">${ACCESS_UZ.how}</h3>
         <ol style="margin:10px 0 0 18px;line-height:1.7">

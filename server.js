@@ -54,6 +54,7 @@ import writingRoutes from './routes/writing.js';
 import leaderboardRoutes from './routes/leaderboard.js';
 import voiceRoutes from './routes/voice.js';
 import chatRoutes from './routes/chat.js';
+import avatarRoutes from './routes/avatars.js';
 
 // Middleware imports
 import { errorHandler, notFound } from './middleware/errorHandler.js';
@@ -151,7 +152,10 @@ const apiLimiter = rateLimit({
   // /voice/signal has its own budget below: setting up one group call is a
   // burst of small connection messages, and counting them here would lock a
   // student out of the rest of the site after a few calls.
-  skip: req => req.path.startsWith('/auth') || req.path.startsWith('/voice/signal'),
+  // /avatars are pictures in <img> tags: they carry no token, so they would
+  // be counted per address, and a whole class behind one school connection
+  // would share one budget. They have their own below.
+  skip: req => req.path.startsWith('/auth') || req.path.startsWith('/voice/signal') || req.path.startsWith('/avatars'),
   message: { success: false, message: 'Too many requests — please wait a moment and try again.' }
 });
 
@@ -167,6 +171,13 @@ const authLimiter = rateLimit({
 
 app.use('/api/auth', authLimiter);
 app.use('/api/', apiLimiter);
+
+app.use('/api/avatars', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.AVATAR_RATE_LIMIT_MAX) || 5000,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
 
 // Connection messages for speaking rooms: generous, but still a ceiling on a
 // runaway loop. A five-person room is a few hundred messages to set up.
@@ -203,6 +214,8 @@ mongoose.connect(MONGODB_URI)
 // Public routes
 app.use('/api/auth', authRoutes);
 app.use('/api/payment', paymentRoutes);
+// Students' pictures: public by unguessable address (see routes/avatars.js).
+app.use('/api/avatars', avatarRoutes);
 
 // Protected routes (require authentication)
 app.use('/api/exam', authenticate, examRoutes);

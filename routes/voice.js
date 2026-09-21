@@ -7,6 +7,7 @@ import VoiceSession from '../models/VoiceSession.js';
 import AudioStorageService, { MAX_AUDIO_BYTES } from '../services/AudioStorageService.js';
 import { voiceHub, iceServers, relayConfigured, RETENTION_DAYS } from '../services/VoiceRooms.js';
 import { fallbackName } from '../services/Leaderboard.js';
+import { badgeOf, BADGE_FIELDS, isPremium } from '../services/Premium.js';
 import { APIError } from '../middleware/errorHandler.js';
 
 /**
@@ -34,7 +35,7 @@ const upload = multer({
 
 /** Who this student is in the rooms: nickname, and level for pairing. */
 async function roomIdentity(userId) {
-  const user = await User.findById(userId).select('firstName lastName nickname role access voiceConsentAt');
+  const user = await User.findById(userId).select(`firstName lastName nickname access voiceConsentAt ${BADGE_FIELDS}`);
   if (!user) throw new APIError('User not found', 404);
 
   const latest = await ExamResult.findOne({
@@ -52,7 +53,8 @@ async function roomIdentity(userId) {
       id: String(user._id),
       name: user.nickname || fallbackName(user),
       level: latest?.overallLevel && /^(B1|B2|C1)$/.test(latest.overallLevel) ? latest.overallLevel : null,
-      staff: isStaff(user)
+      staff: isStaff(user),
+      ...badgeOf(user)
     }
   };
 }
@@ -67,14 +69,15 @@ function refuseIfBlocked(user) {
 
 router.get('/status', async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id).select('voiceConsentAt access role');
+    const user = await User.findById(req.user.id).select('voiceConsentAt access role premiumUntil');
     res.json({
       success: true,
       data: {
         consented: Boolean(user?.voiceConsentAt),
         blocked: Boolean(user?.access?.blocked) && !isStaff(user),
         retentionDays: RETENTION_DAYS,
-        relay: relayConfigured()
+        relay: relayConfigured(),
+        premium: isPremium(user)
       }
     });
   } catch (error) {

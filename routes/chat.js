@@ -8,6 +8,7 @@ import { TEXT_ROOMS, isTextRoom } from '../services/ChatHub.js';
 import { voiceHub } from '../services/VoiceRooms.js';
 import { cleanMessage, allowMessage, MAX_LENGTH } from '../services/ChatFilter.js';
 import { fallbackName } from '../services/Leaderboard.js';
+import { badgeOf, BADGE_FIELDS } from '../services/Premium.js';
 import { APIError } from '../middleware/errorHandler.js';
 
 /**
@@ -23,7 +24,7 @@ const isValidId = id => mongoose.Types.ObjectId.isValid(id);
 const isStaff = user => user?.role === 'admin' || user?.role === 'teacher';
 
 async function chatIdentity(userId) {
-  const user = await User.findById(userId).select('firstName lastName nickname role access');
+  const user = await User.findById(userId).select(`firstName lastName nickname access ${BADGE_FIELDS}`);
   if (!user) throw new APIError('User not found', 404);
   if (user.access?.blocked && !isStaff(user)) {
     throw new APIError('Your teacher has paused your access.', 403, 'blocked');
@@ -36,7 +37,8 @@ async function chatIdentity(userId) {
       id: String(user._id),
       name: user.nickname || fallbackName(user),
       level: /^(B1|B2|C1)$/.test(latest?.overallLevel || '') ? latest.overallLevel : null,
-      staff: isStaff(user)
+      staff: isStaff(user),
+      ...badgeOf(user)
     }
   };
 }
@@ -55,6 +57,8 @@ async function storeMessage(identity, room, raw) {
     user: identity.id,
     name: identity.name,
     level: identity.level,
+    premium: identity.premium,
+    avatar: identity.avatar,
     text: cleaned.text,
     filtered: cleaned.changed,
     original: cleaned.changed ? String(raw).replace(/\s+/g, ' ').trim().slice(0, MAX_LENGTH) : undefined

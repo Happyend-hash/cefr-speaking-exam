@@ -47,6 +47,23 @@ const userSchema = new mongoose.Schema(
     // being acceptable at all.
     voiceConsentAt: Date,
 
+    // Premium runs until this moment (services/Premium.js). Set from each
+    // payment and by the teacher; null or past means a free account.
+    premiumUntil: { type: Date, default: null },
+
+    // The student's own picture or GIF, shown while they are Premium. The
+    // token is the unguessable part of its public address and changes with
+    // every upload, so browsers can cache each picture for good.
+    picture: {
+      key: String,          // file in the "avatars" GridFS bucket
+      token: { type: String, index: { sparse: true } },
+      contentType: String,
+      bytes: Number,
+      at: Date
+    },
+    // The teacher removed a picture and stopped this student uploading more.
+    pictureBlocked: { type: Boolean, default: false },
+
     // Profile
     avatar: {
       type: String,

@@ -19,6 +19,10 @@ import { removeResult } from '../services/AttemptCleanup.js';
 import { forgetScore } from '../services/Leaderboard.js';
 import { voiceHub } from '../services/VoiceRooms.js';
 import { chatHub } from '../services/ChatRooms.js';
+import {
+  extendPremium, endPremium, isPremium, avatarUrl, avatarStorage, PREMIUM_DAYS, announceBadge
+} from '../services/Premium.js';
+import { invalidate as invalidateLeaderboard } from '../services/Leaderboard.js';
 import { bandsToScore } from '../services/ScoreConversion.js';
 import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark } from './exam.js';
 import { authorize } from '../middleware/auth.js';
@@ -1182,6 +1186,81 @@ router.post('/results/purge', authorize('admin'), async (req, res, next) => {
 const MAX_GRANT = 100;
 
 /** One row of the students table, from a lean user document. */
+/** "21.10.2026" — how the date is written in the student's notice. */
+function premiumDate(user) {
+  const d = new Date(user.premiumUntil);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
+// ------------------------------------------------------------- pictures
+
+/**
+ * @route   GET /api/admin/avatars
+ * @desc    Every student picture, newest first, for the teacher to look over
+ */
+router.get('/avatars', async (req, res, next) => {
+  try {
+    const users = await User.find({ 'picture.token': { $exists: true } })
+      .select('email firstName lastName nickname picture premiumUntil pictureBlocked')
+      .lean();
+    const blocked = await User.find({ pictureBlocked: true })
+      .select('email firstName lastName nickname').lean();
+    const name = u => u.nickname || [u.firstName, u.lastName].filter(Boolean).join(' ');
+    users.sort((a, b) => new Date(b.picture?.at || 0) - new Date(a.picture?.at || 0));
+    res.json({
+      success: true,
+      data: {
+        pictures: users.map(u => ({
+          id: String(u._id),
+          name: name(u),
+          email: u.email,
+          // Shown to the teacher even when Premium has lapsed and students no
+          // longer see it: it is still stored, and will be shown on renewal.
+          url: `/api/avatars/${u.picture.token}`,
+          live: isPremium(u),
+          bytes: u.picture.bytes || 0,
+          at: u.picture.at || null
+        })),
+        blocked: blocked.map(u => ({ id: String(u._id), name: name(u), email: u.email }))
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/avatars/:id/remove   { block?: boolean }
+ * @desc    Delete a student's picture; with block, stop them uploading another
+ * @route   POST /api/admin/avatars/:id/allow
+ * @desc    Let a blocked student upload pictures again
+ */
+const pictureAction = action => async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid student id', 400);
+    const user = await User.findById(req.params.id);
+    if (!user) throw new APIError('Student not found', 404);
+    if (action === 'allow') {
+      user.pictureBlocked = false;
+    } else {
+      const old = user.picture?.key;
+      user.picture = undefined;
+      if (req.body?.block) user.pictureBlocked = true;
+      if (old) await avatarStorage.delete(old);
+    }
+    await user.save();
+    invalidateLeaderboard();
+    announceBadge(user, [voiceHub, chatHub]);
+    console.log(`Admin picture ${action}${req.body?.block ? ' + block' : ''} — ${user.email}`);
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+router.post('/avatars/:id/remove', pictureAction('remove'));
+router.post('/avatars/:id/allow', pictureAction('allow'));
+
 function studentRow(user, activity) {
   const stats = activity.get(String(user._id)) || {};
   return {
@@ -1200,6 +1279,9 @@ function studentRow(user, activity) {
     writingPartCredits: user.subscription?.writingPartCredits ?? 0,
     writingCredits: balanceLabel(user, 'writing'),
     granted: user.access?.totalGranted || 0,
+    premiumUntil: isPremium(user) ? user.premiumUntil : null,
+    avatar: avatarUrl(user),
+    pictureBlocked: Boolean(user.pictureBlocked),
     note: user.access?.note || '',
     pendingMessage: user.access?.message || '',
     attempts: stats.attempts || 0,
@@ -1233,7 +1315,7 @@ router.get('/students', async (req, res, next) => {
     if (req.query.only === 'out') filter['subscription.examsRemaining'] = { $lte: 0 };
 
     const users = await User.find(filter)
-      .select('email firstName lastName role status access subscription createdAt')
+      .select('email firstName lastName role status access subscription createdAt premiumUntil picture pictureBlocked')
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
@@ -1319,8 +1401,11 @@ router.post('/students/:id/access', async (req, res, next) => {
       user.subscription.writingRemaining = (user.subscription.writingRemaining || 0) + PACKAGE.writing;
       user.access.totalGranted = (user.access.totalGranted || 0) + PACKAGE.speaking;
       user.access.totalWritingGranted = (user.access.totalWritingGranted || 0) + PACKAGE.writing;
+      // A payment brings PREMIUM_DAYS of Premium, added to the end of any left.
+      extendPremium(user, PREMIUM_DAYS);
       confirmPayment(
-        `To'lovingiz tasdiqlandi. Hisobingizga ${PACKAGE.speaking} ta speaking va ${PACKAGE.writing} ta writing mock qo'shildi.`
+        `To'lovingiz tasdiqlandi. Hisobingizga ${PACKAGE.speaking} ta speaking va ${PACKAGE.writing} ta writing mock qo'shildi. ` +
+        `Premium ${premiumDate(user)} gacha faol 👑`
       );
       outcome = `${user.email}: package added — ${before} → ${both()}`;
     } else if (action === 'grant' || action === 'set') {
@@ -1342,7 +1427,10 @@ router.post('/students/:id/access', async (req, res, next) => {
         } else {
           user.access.totalGranted = (user.access.totalGranted || 0) + value;
         }
-        confirmPayment(`To'lovingiz tasdiqlandi. Hisobingizga ${value} ta ${module} mock qo'shildi.`);
+        extendPremium(user, PREMIUM_DAYS);
+        confirmPayment(
+          `To'lovingiz tasdiqlandi. Hisobingizga ${value} ta ${module} mock qo'shildi. Premium ${premiumDate(user)} gacha faol 👑`
+        );
       }
 
       outcome = `${user.email}: ${module} ${before} → ${balanceLabel(user, module)} mock(s)`;
@@ -1357,13 +1445,30 @@ router.post('/students/:id/access', async (req, res, next) => {
       user.access.blocked = false;
       user.access.blockedAt = null;
       outcome = `${user.email} unblocked`;
+    } else if (action === 'premium') {
+      // By hand: add days of Premium without granting mocks (a gift, a prize,
+      // a payment taken some other way). Silent — no notice to the student.
+      const days = Number(amount) || PREMIUM_DAYS;
+      if (!Number.isInteger(days) || days < 1 || days > 366) {
+        throw new APIError('Give a whole number of days between 1 and 366.', 400);
+      }
+      extendPremium(user, days);
+      outcome = `${user.email}: Premium until ${premiumDate(user)}`;
+    } else if (action === 'premium-off') {
+      endPremium(user);
+      outcome = `${user.email}: Premium ended`;
     } else {
-      throw new APIError('Unknown action. Use package, grant, set, block or unblock.', 400);
+      throw new APIError('Unknown action. Use package, grant, set, block, unblock, premium or premium-off.', 400);
     }
 
     if (note !== undefined) user.access.note = String(note).slice(0, 500);
 
     await user.save();
+    // Crowns and pictures on the leaderboard follow Premium.
+    if (['package', 'grant', 'premium', 'premium-off'].includes(action)) {
+      invalidateLeaderboard();
+      announceBadge(user, [voiceHub, chatHub]);
+    }
     console.log(`Admin access change — ${outcome}`);
 
     res.json({
@@ -1377,6 +1482,7 @@ router.post('/students/:id/access', async (req, res, next) => {
         credits: formatCredits(user.subscription.examsRemaining, user.subscription.partCredits),
         writingRemaining: user.subscription.writingRemaining ?? 0,
         writingCredits: balanceLabel(user, 'writing'),
+        premiumUntil: isPremium(user) ? user.premiumUntil : null,
         pendingMessage: user.access.message || ''
       }
     });

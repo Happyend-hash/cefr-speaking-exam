@@ -1,6 +1,7 @@
 import ScoreRecord from '../models/ScoreRecord.js';
 import ExamResult, { levelForScore } from '../models/ExamResult.js';
 import User from '../models/User.js';
+import { badgeOf, BADGE_FIELDS } from './Premium.js';
 
 /**
  * The site-wide speaking leaderboard: the ten best AVERAGE full-mock scores.
@@ -141,7 +142,7 @@ async function computeRanking() {
   ]);
 
   const users = await User.find({ _id: { $in: groups.map(g => g._id) } })
-    .select('firstName lastName nickname role deletedAt')
+    .select(`firstName lastName nickname deletedAt ${BADGE_FIELDS}`)
     .lean();
   const byId = new Map(users.map(u => [String(u._id), u]));
 
@@ -152,6 +153,7 @@ async function computeRanking() {
       id: String(g._id),
       name: g.user.nickname || fallbackName(g.user),
       hasNickname: Boolean(g.user.nickname),
+      ...badgeOf(g.user),
       average: Math.round(g.average * 10) / 10,
       mocks: g.mocks,
       best: g.best,
@@ -190,6 +192,8 @@ export async function leaderboardFor(viewerId) {
     level: levelForScore(Math.round(r.average)),
     mocks: r.mocks,
     best: r.best,
+    premium: r.premium,
+    avatar: r.avatar,
     you: r.id === String(viewerId)
   }));
 

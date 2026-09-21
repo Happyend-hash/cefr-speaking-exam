@@ -1,11 +1,24 @@
 import express from 'express';
+import multer from 'multer';
 import User from '../models/User.js';
-import { invalidate as invalidateLeaderboard } from '../services/Leaderboard.js';
+import {
+  isPremium, premiumDaysLeft, avatarUrl, sniffImage, newAvatarToken,
+  avatarStorage, MAX_AVATAR_BYTES, PREMIUM_DAYS,
+  announceBadge
+} from '../services/Premium.js';
+import { voiceHub } from '../services/VoiceRooms.js';
+import { chatHub } from '../services/ChatRooms.js';
+import { invalidate as invalidateLeaderboard, fallbackName } from '../services/Leaderboard.js';
 import ExamResult, { CEFR_BANDS, MAX_SCORE, BELOW_B1 } from '../models/ExamResult.js';
 import AuthService from '../services/AuthService.js';
 import { APIError } from '../middleware/errorHandler.js';
 
 const router = express.Router();
+
+const pictureUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_AVATAR_BYTES, files: 1 }
+});
 
 /**
  * @route   GET /api/user/profile
@@ -133,7 +146,9 @@ router.get('/profile', async (req, res, next) => {
           // A one-off note from the teacher — normally the confirmation that a
           // payment landed. Cleared by the student dismissing it.
           message: user.access?.message || ''
-        }
+        },
+        // Premium and the picture, for the speaking club's profile strip.
+        premium: premiumState(user)
       }
     });
   } catch (error) {
@@ -203,6 +218,91 @@ router.put('/nickname', async (req, res, next) => {
   }
 });
 
+// ------------------------------------------------------------- premium
+
+function premiumState(user) {
+  return {
+    name: user.nickname || fallbackName(user),
+    active: isPremium(user),
+    until: user.premiumUntil || null,
+    daysLeft: premiumDaysLeft(user),
+    days: PREMIUM_DAYS,
+    // The picture even while Premium has lapsed, so the student sees that it
+    // is kept and comes back when they renew.
+    avatar: avatarUrl(user),
+    hasPicture: Boolean(user.picture?.token),
+    pictureBlocked: Boolean(user.pictureBlocked),
+    maxBytes: MAX_AVATAR_BYTES
+  };
+}
+
+router.get('/premium', async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) throw new APIError('User not found', 404);
+    res.json({ success: true, data: premiumState(user) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/user/avatar
+ * @desc    Upload a picture or animated GIF (Premium only, 2 MB)
+ */
+router.post('/avatar', (req, res, next) => {
+  pictureUpload.single('picture')(req, res, async error => {
+    try {
+      if (error?.code === 'LIMIT_FILE_SIZE') {
+        throw new APIError('Rasm 2 MB dan katta bo\'lmasligi kerak.', 413, 'too_big');
+      }
+      if (error) throw error;
+
+      const user = await User.findById(req.user.id);
+      if (!user) throw new APIError('User not found', 404);
+      if (!isPremium(user)) {
+        throw new APIError("Rasm qo'yish faqat Premium o'quvchilar uchun.", 403, 'premium_only');
+      }
+      if (user.pictureBlocked) {
+        throw new APIError("Ustoz sizga rasm qo'yishni to'xtatgan.", 403, 'picture_blocked');
+      }
+      const buffer = req.file?.buffer;
+      const contentType = sniffImage(buffer);
+      if (!contentType) {
+        throw new APIError('Faqat GIF, PNG, JPG yoki WEBP rasm yuklang.', 415, 'bad_type');
+      }
+
+      const key = await avatarStorage.store(buffer, { contentType, userId: user._id });
+      const old = user.picture?.key;
+      user.picture = { key, token: newAvatarToken(), contentType, bytes: buffer.length, at: new Date() };
+      await user.save();
+      if (old) await avatarStorage.delete(old);
+      invalidateLeaderboard();
+      announceBadge(user, [voiceHub, chatHub]);
+
+      res.status(201).json({ success: true, data: premiumState(user) });
+    } catch (err) {
+      next(err);
+    }
+  });
+});
+
+router.delete('/avatar', async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) throw new APIError('User not found', 404);
+    const old = user.picture?.key;
+    user.picture = undefined;
+    await user.save();
+    if (old) await avatarStorage.delete(old);
+    invalidateLeaderboard();
+    announceBadge(user, [voiceHub, chatHub]);
+    res.json({ success: true, data: premiumState(user) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 /**
  * @route   PUT /api/user/profile
  * @desc    Update the editable parts of a profile
@@ -210,7 +310,10 @@ router.put('/nickname', async (req, res, next) => {
  */
 router.put('/profile', async (req, res, next) => {
   try {
-    const allowed = ['firstName', 'lastName', 'nativeLanguage', 'bio', 'avatar'];
+    // Not 'avatar': pictures go through POST /avatar, which checks the file
+    // and that the student is Premium. A free-text avatar field would let
+    // anyone point their avatar at any address.
+    const allowed = ['firstName', 'lastName', 'nativeLanguage', 'bio'];
     const updates = {};
     for (const field of allowed) {
       if (req.body[field] !== undefined) updates[field] = req.body[field];

@@ -25,6 +25,8 @@
 import { randomUUID } from 'crypto';
 
 export const CLUB_MAX = Number(process.env.VOICE_CLUB_MAX) || 5;
+/** Extra seats in a full club that only Premium students can take. */
+export const PREMIUM_SEATS = 1;
 /** After this long waiting, a student is paired with anyone, not only their level. */
 export const ANY_LEVEL_AFTER_MS = 20 * 1000;
 /** A dropped connection keeps its place this long, so a network blip is not a hang-up. */
@@ -149,10 +151,12 @@ export class VoiceHub {
     const now = this.hooks.now();
     // Same level first. Anyone who has already waited long enough — on either
     // side — takes whoever is there: a B2 student waiting alone for a minute is
-    // worse served than one paired with a B1.
+    // worse served than one paired with a B1. Premium students waiting are
+    // looked at before everyone else, so they are paired first.
+    const waiting = this.byPriority(this.queue);
     const partnerId =
-      this.queue.find(other => this.clients.get(other)?.user.level === me.user.level && me.user.level) ||
-      this.queue.find(other => now - (this.clients.get(other)?.queuedAt || now) >= ANY_LEVEL_AFTER_MS);
+      waiting.find(other => this.clients.get(other)?.user.level === me.user.level && me.user.level) ||
+      waiting.find(other => now - (this.clients.get(other)?.queuedAt || now) >= ANY_LEVEL_AFTER_MS);
 
     if (!partnerId) {
       me.queuedAt = now;
@@ -168,7 +172,7 @@ export class VoiceHub {
   /** Re-check the queue: pairs anyone who has now waited long enough. Called on a timer. */
   sweepQueue() {
     const now = this.hooks.now();
-    const ready = this.queue.filter(id => now - (this.clients.get(id)?.queuedAt || now) >= ANY_LEVEL_AFTER_MS);
+    const ready = this.byPriority(this.queue.filter(id => now - (this.clients.get(id)?.queuedAt || now) >= ANY_LEVEL_AFTER_MS));
     while (ready.length >= 2) {
       const a = ready.shift();
       const b = ready.shift();
@@ -178,13 +182,19 @@ export class VoiceHub {
     }
     // One long-waiter plus anyone newer is also a pair.
     if (ready.length === 1) {
-      const other = this.queue.find(id => id !== ready[0]);
+      const other = this.byPriority(this.queue).find(id => id !== ready[0]);
       if (other) {
         this.cancelQueue(ready[0]);
         this.cancelQueue(other);
         this.pair(ready[0], other);
       }
     }
+  }
+
+  /** Premium first, otherwise in the order they arrived. */
+  byPriority(ids) {
+    const premium = id => (this.clients.get(id)?.user.premium ? 1 : 0);
+    return ids.map((id, i) => ({ id, i })).sort((a, b) => premium(b.id) - premium(a.id) || a.i - b.i).map(x => x.id);
   }
 
   cancelQueue(userId) {
@@ -227,7 +237,9 @@ export class VoiceHub {
     if (!this.clients.has(id)) return { ok: false, reason: 'not connected' };
     if (!room || room.kind !== 'club') return { ok: false, reason: 'no such room' };
     if (room.members.has(id)) return { ok: true, roomId };
-    if (room.members.size >= room.max) return { ok: false, reason: 'room is full' };
+    // A full club still has PREMIUM_SEATS more seats, for Premium students only.
+    const seats = room.max + (this.clients.get(id).user.premium ? PREMIUM_SEATS : 0);
+    if (room.members.size >= seats) return { ok: false, reason: 'room is full' };
 
     this.cancelQueue(id);
     this.leave(id);
@@ -323,6 +335,20 @@ export class VoiceHub {
     return { ok: true, roomId: room.id };
   }
 
+  /**
+   * A student's crown or picture changed (new picture, payment, teacher).
+   * Everyone who can see them is told, so nobody has to rejoin to see it.
+   */
+  updateUser(userId, patch) {
+    const id = String(userId);
+    const client = this.clients.get(id);
+    if (!client) return;
+    client.user = { ...client.user, ...patch, id };
+    const room = this.roomOf(id);
+    if (room) for (const other of room.members) this.send(other, 'peer-updated', { peer: this.memberView(id) });
+    this.broadcastLobby();
+  }
+
   /** Teacher removes someone from voice immediately. */
   kick(userId, reason = 'removed by the teacher') {
     const id = String(userId);
@@ -358,7 +384,13 @@ export class VoiceHub {
 
   memberView(userId) {
     const u = this.clients.get(String(userId))?.user || {};
-    return { id: String(userId), name: u.name || "O'quvchi", level: u.level || null };
+    return {
+      id: String(userId),
+      name: u.name || "O'quvchi",
+      level: u.level || null,
+      premium: Boolean(u.premium),
+      avatar: u.avatar || null
+    };
   }
 
   roomView(room) {
@@ -378,8 +410,10 @@ export class VoiceHub {
       .filter(r => r.kind === 'club')
       .map(r => ({
         id: r.id, name: r.name, level: r.level, max: r.max,
+        premiumSeats: PREMIUM_SEATS,
         count: r.members.size,
-        names: [...r.members].map(id => this.nameOf(id))
+        names: [...r.members].map(id => this.nameOf(id)),
+        people: [...r.members].map(id => this.memberView(id))
       }));
   }
 

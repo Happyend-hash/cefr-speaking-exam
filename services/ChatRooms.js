@@ -34,6 +34,8 @@ export function publicMessage(m) {
     user: String(m.user),
     name: m.name,
     level: m.level || null,
+    premium: Boolean(m.premium),
+    avatar: m.avatar || null,
     text: m.deletedAt ? '' : m.text,
     deleted: Boolean(m.deletedAt),
     at: m.createdAt

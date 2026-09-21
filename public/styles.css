@@ -30,6 +30,13 @@
   --amber-text: #b45309;
   --amber-bg: #fffbeb;
 
+  /* Premium: a warm gold, used only for Premium students' crown, name and
+     ring. --premium-text is the readable one on white. */
+  --premium: #f0b100;
+  --premium-text: #a86400;
+  --premium-tint: #fff6da;
+  --premium-glow: rgba(240, 177, 0, .45);
+
   --radius: 16px;        /* cards */
   --radius-btn: 10px;    /* buttons */
   --radius-pill: 999px;  /* badges, bars */
@@ -1132,4 +1139,98 @@ audio { width: 100%; margin-top: 10px; }
   .ch-room { flex: 0 0 auto; }
   .ch-list { height: 52vh; }
   .ch-msg { max-width: 92%; }
+}
+
+/* -------------------------------------------------------------- premium */
+
+.crown { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--premium); }
+.crown svg { width: 15px; height: 15px; filter: drop-shadow(0 1px 1px rgba(168, 100, 0, .35)); }
+.gold-name {
+  font-weight: 700;
+  background: linear-gradient(100deg, #b86e00, #e8a300 45%, #b86e00);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+@supports not ((-webkit-background-clip: text) or (background-clip: text)) {
+  .gold-name { color: var(--premium-text); background: none; }
+}
+
+/* Any avatar circle can hold a picture instead of initials. */
+.vc-avatar, .lb-avatar, .lb-mini, .ch-av, .vc-face, .pr-avatar { position: relative; overflow: visible; }
+.av-pic {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; border-radius: 50%; display: block;
+}
+/* The glowing gold ring. */
+.vc-avatar.is-premium, .lb-avatar.is-premium, .lb-mini.is-premium, .ch-av.is-premium,
+.vc-face.is-premium, .pr-avatar.is-premium {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--premium), 0 0 16px 3px var(--premium-glow);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .vc-avatar.is-premium, .pr-avatar.is-premium { animation: pr-glow 2.8s ease-in-out infinite; }
+}
+@keyframes pr-glow {
+  50% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--premium), 0 0 24px 7px var(--premium-glow); }
+}
+/* Speaking still wins: the green ring says who is talking. */
+.vc-person.is-talking .vc-avatar.is-premium { animation: none; box-shadow: 0 0 0 4px var(--surface), 0 0 0 8px var(--green); }
+.lb-mini .av-pic, .lb-avatar .av-pic { z-index: 0; }
+.lb-medal { z-index: 1; }
+
+/* Chat: a small face beside other people's messages. */
+.ch-row { display: flex; align-items: flex-end; gap: 8px; max-width: 85%; align-self: flex-start; }
+.ch-row.is-mine { align-self: flex-end; }
+.ch-row .ch-msg { max-width: 100%; min-width: 0; }
+.ch-msg.is-premium:not(.is-mine) { background: var(--premium-tint); border-color: #f3dc94; }
+.ch-av {
+  flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 800;
+  background: var(--indigo-100); color: var(--indigo-700);
+}
+@media (max-width: 640px) { .ch-row { max-width: 94%; } }
+
+/* Clubs: who is inside, and the Premium seat. */
+.vc-faces { display: flex; gap: 6px; flex-wrap: wrap; }
+.vc-face {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 800;
+  background: var(--indigo-100); color: var(--indigo-700);
+}
+.vc-seat.is-gold { border-color: var(--premium); border-style: dashed; }
+.vc-seat.is-gold.is-taken { background: var(--premium); border-style: solid; }
+
+.btn-gold {
+  background: linear-gradient(135deg, #f7c948, #e39b00); color: #3b2500;
+  border-color: #d99000;
+}
+.btn-gold:hover:not(:disabled) { background: linear-gradient(135deg, #f9d263, #eaa40a); }
+.btn-gold svg { width: 15px; height: 15px; vertical-align: -2px; }
+
+/* The strip at the top of the speaking club. */
+.pr-strip { display: flex; align-items: center; gap: 18px; padding: 18px 20px; }
+.pr-strip.is-premium { background: linear-gradient(120deg, var(--premium-tint), var(--surface) 60%); border-color: #f3dc94; }
+.pr-strip.is-free { align-items: flex-start; }
+.pr-avatar {
+  flex: 0 0 64px; width: 64px; height: 64px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 22px; font-weight: 800; color: #fff;
+  background: linear-gradient(145deg, var(--indigo-500), var(--indigo-700));
+}
+.pr-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.pr-body h3 { font-size: 17px; }
+.pr-name { font-size: 18px; }
+.pr-status { font-weight: 600; color: var(--premium-text); font-size: 14px; }
+.pr-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.pr-upload { position: relative; cursor: pointer; }
+.pr-upload input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.pr-upload:focus-within { outline: 2px solid var(--premium-text); outline-offset: 2px; }
+.pr-upload.is-busy { opacity: .7; cursor: progress; }
+.pr-note { font-size: 12px; }
+.pr-error { font-size: 13px; color: var(--red); }
+.pr-perks { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 16px; margin: 2px 0 0; padding: 0; }
+.pr-perks li { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.pr-perks svg { flex: 0 0 14px; width: 14px; height: 14px; color: var(--premium); }
+.pr-topup { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--premium-text); font-weight: 600; font-size: 14px; }
+.pr-topup svg { flex: 0 0 16px; width: 16px; height: 16px; color: var(--premium); }
+@media (max-width: 640px) {
+  .pr-strip { flex-wrap: wrap; gap: 14px; }
+  .pr-strip.is-free .btn-gold { width: 100%; }
 }

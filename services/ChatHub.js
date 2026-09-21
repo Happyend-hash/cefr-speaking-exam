@@ -76,6 +76,12 @@ export class ChatHub {
     }
   }
 
+  /** A crown or picture changed: used for this student's next messages. */
+  updateUser(userId, patch) {
+    const client = this.clients.get(String(userId));
+    if (client) client.user = { ...client.user, ...patch };
+  }
+
   kick(userId, reason = 'removed by the teacher') {
     this.send(userId, 'kicked', { reason });
     const client = this.clients.get(String(userId));

@@ -174,6 +174,7 @@
         ${studentsCard()}
         ${voiceCard()}
         ${chatCard()}
+        ${picturesCard()}
 
         <div class="row" style="justify-content:space-between;margin-top:8px">
           <h2>Tests</h2>
@@ -320,6 +321,8 @@
         A new account gets one free speaking mock and one free writing mock. After that,
         when someone pays, press <strong>Add package</strong> (${packageLabel()}) — or add
         speaking or writing mocks by hand for special cases.
+        Every package, and every mock you add, also gives <strong>30 days of Premium</strong> 👑
+        (added to any days left); <strong>+30 days</strong> gives Premium on its own.
         ${data?.contact
           ? `Students are told to contact <strong>${esc(data.contact)}</strong>.`
           : `<strong>Students are not shown anywhere to pay yet.</strong> Set
@@ -379,7 +382,10 @@
     const tags =
       (s.blocked ? '<span class="tag tag-draft">blocked</span>' : '') +
       (s.role !== 'student' ? `<span class="tag">${esc(s.role)}</span>` : '') +
-      (s.pendingMessage ? '<span class="tag tag-live">notice waiting</span>' : '');
+      (s.pendingMessage ? '<span class="tag tag-live">notice waiting</span>' : '') +
+      (s.premiumUntil
+        ? `<span class="tag" style="background:#fff6da;color:#a86400">👑 Premium to ${esc(new Date(s.premiumUntil).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }))}</span>`
+        : '');
 
     const last = s.lastAttemptAt
       ? new Date(s.lastAttemptAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
@@ -413,6 +419,9 @@
         </select>
         <button class="btn btn-ghost btn-sm" data-access="grant" data-id="${esc(s.id)}">Add</button>
         <button class="btn btn-ghost btn-sm" data-access="set" data-id="${esc(s.id)}">Set to</button>
+        <span class="muted" style="font-size:13px;margin-left:8px">Premium:</span>
+        <button class="btn btn-ghost btn-sm" data-access="premium" data-id="${esc(s.id)}" title="30 more days of Premium, without adding mocks">+30 days</button>
+        ${s.premiumUntil ? `<button class="btn btn-ghost btn-sm" data-access="premium-off" data-id="${esc(s.id)}">End</button>` : ''}
       </div>
     </div>`;
   }
@@ -1089,6 +1098,7 @@
   function wire() {
     wireVoiceAdmin();
     wireChatAdmin();
+    wirePicturesAdmin();
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
     document.getElementById('new-test-form')?.addEventListener('submit', handleNewTest);
     document.getElementById('sample-form')?.addEventListener('submit', handleNewSample);
@@ -1219,6 +1229,9 @@
     if (action === 'chat-open') return loadChat({ open: true });
     if (action === 'chat-close') return setState({ chatOpen: false });
     if (action === 'chat-reload') return loadChat({});
+    if (action === 'pictures-open') return loadPictures({ open: true });
+    if (action === 'pictures-close') return setState({ picturesOpen: false });
+    if (action === 'pictures-reload') return loadPictures({});
     if (action === 'block-all') return changeAccessForAll('block');
     if (action === 'unblock-all') return changeAccessForAll('unblock');
   }
@@ -1328,6 +1341,82 @@
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
+  }
+
+  // ------------------------------------------------------------ pictures
+
+  /**
+   * Every Premium picture, newest first. Pictures go live as soon as they are
+   * uploaded, so this is where the teacher looks them over: Remove deletes
+   * one; Remove + stop uploads also stops that student putting up another.
+   */
+  function picturesCard() {
+    if (!state.picturesOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Student pictures</h2>
+        <p class="muted" style="margin-top:6px">
+          Premium students can put up a picture or animated GIF. They appear at once;
+          look them over here and remove anything unsuitable.
+        </p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="pictures-open">Open pictures</button>
+      </div>`;
+    }
+    const data = state.pictures || { pictures: [], blocked: [] };
+    const tiles = data.pictures.map(p => `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:10px;border:1px solid var(--line);border-radius:12px">
+        <img src="${esc(p.url)}" alt="" loading="lazy" style="width:88px;height:88px;border-radius:50%;object-fit:cover;background:var(--ground)">
+        <strong style="font-size:14px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</strong>
+        <span class="muted" style="font-size:12px;max-width:100%;overflow-wrap:anywhere">${esc(p.email)}</span>
+        <span class="muted" style="font-size:12px">${p.at ? new Date(p.at).toLocaleDateString() : ''}${p.live ? '' : ' · hidden (Premium ended)'}</span>
+        <div class="row" style="gap:4px;flex-wrap:wrap;justify-content:center">
+          <button class="btn btn-ghost btn-sm" data-pic-remove="${esc(p.id)}">Remove</button>
+          <button class="btn btn-ghost btn-sm" data-pic-block="${esc(p.id)}" title="Remove and stop this student uploading another">Remove + stop</button>
+        </div>
+      </div>`).join('');
+    const blocked = data.blocked.length
+      ? `<h3 style="font-size:15px;margin-top:18px">Stopped from uploading</h3>
+         ${data.blocked.map(b => `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)">
+            <span>${esc(b.name)} <span class="muted" style="font-size:13px">${esc(b.email)}</span></span>
+            <button class="btn btn-ghost btn-sm" data-pic-allow="${esc(b.id)}">Allow again</button></div>`).join('')}`
+      : '';
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Student pictures</h2>
+        <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm" data-action="pictures-reload">Refresh</button>
+          <button class="btn btn-ghost btn-sm" data-action="pictures-close">Close</button>
+        </div>
+      </div>
+      ${tiles
+        ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-top:12px">${tiles}</div>`
+        : '<p class="muted" style="margin-top:10px">No pictures yet.</p>'}
+      ${blocked}
+    </div>`;
+  }
+
+  async function loadPictures({ open } = {}) {
+    setState({ picturesOpen: open || state.picturesOpen, loading: true, error: '' });
+    try {
+      setState({ pictures: await api('/admin/avatars'), loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  function wirePicturesAdmin() {
+    const act = (selector, path, body, confirmText) =>
+      root.querySelectorAll(selector).forEach(el =>
+        el.addEventListener('click', async () => {
+          const id = el.getAttribute(selector.slice(1, -1));
+          if (confirmText && !window.confirm(confirmText)) return;
+          try {
+            await api(`/admin/avatars/${id}/${path}`, { method: 'POST', body });
+            loadPictures({});
+          } catch (error) { setState({ error: error.message }); }
+        }));
+    act('[data-pic-remove]', 'remove', { block: false });
+    act('[data-pic-block]', 'remove', { block: true }, 'Remove this picture and stop this student uploading another?');
+    act('[data-pic-allow]', 'allow', {});
   }
 
   // ---------------------------------------------------------------- chat
@@ -1515,7 +1604,8 @@
 
   async function changeAccess(id, action) {
     const input = document.getElementById(`amt-${id}`);
-    const amount = Number(input?.value ?? 0);
+    // For Premium the amount is days, not mocks.
+    const amount = action === 'premium' ? 30 : Number(input?.value ?? 0);
     const module = document.getElementById(`mod-${id}`)?.value || 'speaking';
 
     if ((action === 'grant' || action === 'set') && !Number.isInteger(amount)) {
@@ -1534,7 +1624,11 @@
       // is worse than a second of loading.
       await loadStudents({});
       setState({
-        notice: action === 'grant' || action === 'package'
+        notice: action === 'premium' || action === 'premium-off'
+          ? data.premiumUntil
+            ? `${data.email}: Premium until ${new Date(data.premiumUntil).toLocaleDateString()}.`
+            : `${data.email}: Premium ended.`
+          : action === 'grant' || action === 'package'
           ? `${data.email} now has speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'}. They will see the confirmation on their dashboard.`
           : `${data.email}: ${data.blocked ? 'blocked' : 'allowed'} — speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'} left.`
       });

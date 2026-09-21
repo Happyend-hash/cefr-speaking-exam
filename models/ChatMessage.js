@@ -15,6 +15,9 @@ const chatMessageSchema = new mongoose.Schema(
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     name: String,
     level: String,
+    // As they were when the message was sent (services/Premium.js).
+    premium: { type: Boolean, default: false },
+    avatar: String,
     text: { type: String, required: true, maxlength: 600 },
     // The filter changed something (masked a word, removed a link) — worth a
     // glance from the teacher even without a report.
