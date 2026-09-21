@@ -19,6 +19,7 @@ import { removeResult } from '../services/AttemptCleanup.js';
 import { forgetScore } from '../services/Leaderboard.js';
 import { voiceHub } from '../services/VoiceRooms.js';
 import { chatHub } from '../services/ChatRooms.js';
+import { duelHub } from '../services/GameRooms.js';
 import {
   extendPremium, endPremium, isPremium, avatarUrl, avatarStorage, PREMIUM_DAYS, announceBadge
 } from '../services/Premium.js';
@@ -1440,6 +1441,7 @@ router.post('/students/:id/access', async (req, res, next) => {
       // Out of any speaking room at once, not only out of the next one.
       voiceHub.kick(String(user._id), 'Your teacher has paused your access.');
       chatHub.kick(String(user._id), 'Your teacher has paused your access.');
+      duelHub.kick(String(user._id));
       outcome = `${user.email} blocked`;
     } else if (action === 'unblock') {
       user.access.blocked = false;

@@ -7,6 +7,7 @@ import VoiceSession from '../models/VoiceSession.js';
 import AudioStorageService, { MAX_AUDIO_BYTES } from '../services/AudioStorageService.js';
 import { voiceHub, iceServers, relayConfigured, RETENTION_DAYS } from '../services/VoiceRooms.js';
 import { fallbackName } from '../services/Leaderboard.js';
+import { taboo } from '../services/GameRooms.js';
 import { badgeOf, BADGE_FIELDS, isPremium } from '../services/Premium.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -115,6 +116,7 @@ router.get('/stream', async (req, res, next) => {
     res.write(`event: config\ndata: ${JSON.stringify({ iceServers: iceServers(), retentionDays: RETENTION_DAYS })}\n\n`);
 
     voiceHub.connect(identity, res);
+    tellTaboo(identity.id);
 
     // Idle connections are closed by proxies; a comment every 15s keeps it open.
     const heartbeat = setInterval(() => res.write(': ping\n\n'), 15000);
@@ -129,6 +131,17 @@ router.get('/stream', async (req, res, next) => {
 
 // ------------------------------------------------------------- actions
 
+/** Someone arriving in a room where Taboo is being played sees the game. */
+function tellTaboo(userId) {
+  const game = taboo.gameOf(userId);
+  if (!game) return;
+  voiceHub.send(userId, 'taboo', taboo.state(game));
+  // Back after a dropped connection while describing: the card again.
+  if (game.describer === String(userId) && game.card) {
+    voiceHub.send(userId, 'taboo-card', { word: game.card.word, taboo: game.card.taboo, skipsLeft: 3 - (game.skips || 0) });
+  }
+}
+
 const act = handler => async (req, res, next) => {
   try {
     const outcome = await handler(req);
@@ -141,7 +154,11 @@ const act = handler => async (req, res, next) => {
 
 router.post('/partner', act(req => voiceHub.findPartner(req.user.id)));
 router.delete('/partner', act(req => { voiceHub.cancelQueue(req.user.id); return { ok: true }; }));
-router.post('/join', act(req => voiceHub.join(req.user.id, String(req.body?.roomId || ''))));
+router.post('/join', act(req => {
+  const out = voiceHub.join(req.user.id, String(req.body?.roomId || ''));
+  if (out.ok) tellTaboo(req.user.id);
+  return out;
+}));
 router.post('/leave', act(req => { voiceHub.leave(req.user.id); return { ok: true }; }));
 router.post('/topic', act(req => voiceHub.nextTopic(req.user.id)));
 

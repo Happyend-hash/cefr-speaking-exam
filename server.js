@@ -55,6 +55,7 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import voiceRoutes from './routes/voice.js';
 import chatRoutes from './routes/chat.js';
 import avatarRoutes from './routes/avatars.js';
+import gameRoutes from './routes/games.js';
 import { publicRouter as sponsorRoutes, adminRouter as sponsorAdminRoutes } from './routes/sponsors.js';
 
 // Middleware imports
@@ -234,6 +235,7 @@ app.use('/api/writing', authenticate, writingRoutes);
 app.use('/api/leaderboard', authenticate, leaderboardRoutes);
 app.use('/api/voice', authenticate, voiceRoutes);
 app.use('/api/chat', authenticate, chatRoutes);
+app.use('/api/games', authenticate, gameRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);

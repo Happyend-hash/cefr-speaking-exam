@@ -6,6 +6,7 @@ import ChatMessage from '../models/ChatMessage.js';
 import { chatHub, publicMessage, CHAT_RETENTION_DAYS } from '../services/ChatRooms.js';
 import { TEXT_ROOMS, isTextRoom } from '../services/ChatHub.js';
 import { voiceHub } from '../services/VoiceRooms.js';
+import { taboo } from '../services/GameRooms.js';
 import { cleanMessage, allowMessage, MAX_LENGTH } from '../services/ChatFilter.js';
 import { fallbackName } from '../services/Leaderboard.js';
 import { badgeOf, BADGE_FIELDS } from '../services/Premium.js';
@@ -131,8 +132,14 @@ router.post('/call', async (req, res, next) => {
     const { identity } = await chatIdentity(req.user.id);
     const room = voiceHub.roomOf(identity.id);
     if (!room) throw new APIError('You are not in a call.', 409);
+    // Playing Taboo: the one describing may not type the answer or a forbidden word.
+    if (taboo.describerLeaks(identity.id, req.body?.text)) {
+      throw new APIError("Taboo! Bu so'zni yozish mumkin emas — tushuntirib bering.", 400, 'taboo');
+    }
     const message = await storeMessage(identity, `voice:${room.id}`, req.body?.text);
     voiceHub.roomChat(identity.id, message);
+    // …and everyone else's messages are guesses.
+    taboo.guess(identity.id, message.text);
     res.status(201).json({ success: true, data: message });
   } catch (error) {
     next(error);

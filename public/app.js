@@ -266,6 +266,7 @@
     stopMicCheck();
     stopVoice();
     stopChat();
+    stopDuel();
     stopWritingTimers();
     store.remove('token');
     store.remove('user');
@@ -1994,6 +1995,10 @@
       if (tab === 'chat') {
         stopVoice();
         startChat();
+      } else if (tab === 'games') {
+        stopVoice();
+        stopChat();
+        loadGamesHub();
       } else {
         stopChat();
         if (vc.status.consented) startStream();
@@ -2084,6 +2089,10 @@
   // ------------------------------------------------------------- events
 
   function onVoiceEvent(event, data) {
+    if (onTabooEvent(event, data)) {
+      if (state.screen === 'speak') render();
+      return;
+    }
     switch (event) {
       case 'config':
         vc.iceServers = data.iceServers || [];
@@ -2283,6 +2292,8 @@
     for (const id of [...vc.peers.keys()]) closePeer(id);
     vc.room = null;
     vc.reportOpen = false;
+    vc.taboo = null;
+    vc.tabooCard = null;
     clearInterval(vc.tick); vc.tick = null;
   }
 
@@ -2387,6 +2398,8 @@
   function startTicking() {
     clearInterval(vc.tick);
     vc.tick = setInterval(() => {
+      const clockEl = document.getElementById('tb-clock');
+      if (clockEl && vc.taboo) clockEl.textContent = Math.max(0, Math.ceil((vc.taboo.deadline - Date.now()) / 1000));
       const el = document.getElementById('vc-timer');
       if (!el || !vc.room) return;
       if (vc.room.kind === 'pair') {
@@ -2416,19 +2429,20 @@
     }
     // In a call the call is the whole screen; its own chat is inside it.
     if (vc.room) return roomScreen();
-    const tab = ch.tab === 'chat' ? 'chat' : 'voice';
+    const tab = ['chat', 'games'].includes(ch.tab) ? ch.tab : 'voice';
     const tabBtn = (id, label, iconName) =>
       `<button class="ch-tab ${tab === id ? 'is-current' : ''}" data-ch-tab="${id}" aria-pressed="${tab === id}">${icon(iconName)} ${label}</button>`;
     return `
       <div class="page-head">
         <h1>Klub</h1>
-        <p class="muted">${tab === 'chat' ? CH_UZ.sub : VC_UZ.sub}</p>
+        <p class="muted">${tab === 'chat' ? CH_UZ.sub : tab === 'games' ? GM_UZ.sub : VC_UZ.sub}</p>
       </div>
-      <div class="ch-tabs" role="group">
+      <div class="ch-tabs is-three" role="group">
         ${tabBtn('voice', CH_UZ.tabVoice, 'mic')}
         ${tabBtn('chat', CH_UZ.tabChat, 'message')}
+        ${tabBtn('games', GM_UZ.tab, 'target')}
       </div>
-      ${tab === 'chat' ? chatScreen() : !vc.status.consented ? consentScreen() : lobbyScreen()}`;
+      ${tab === 'chat' ? chatScreen() : tab === 'games' ? gamesHubScreen() : !vc.status.consented ? consentScreen() : lobbyScreen()}`;
   }
 
   function consentScreen() {
@@ -2545,7 +2559,8 @@
         <span class="vc-rec"><span></span>${VC_UZ.recording}</span>
       </div>
       ${vc.notice ? `<div class="alert alert-warn">${esc(vc.notice)}</div>` : ''}
-      ${topicCard(room.topic)}
+      ${vc.taboo ? '' : topicCard(room.topic)}
+      ${tabooPanel()}
       <div class="vc-people">
         ${person(me, true)}
         ${others.map(m => person(m, false)).join('')}
@@ -2964,6 +2979,7 @@
 
   /** One message. `where` is 'room' or 'call' — both can be reported. */
   function messageMarkup(m, where) {
+    if (m.system) return `<div class="ch-system">${esc(m.text)}</div>`;
     const mine = m.user === (where === 'call' ? vc.me : ch.me);
     const body = m.deleted
       ? `<span class="ch-deleted">${CH_UZ.deleted}</span>`
@@ -3095,6 +3111,516 @@
       }));
   }
 
+  // ================================================================ GAMES
+  //
+  // Error Hunter (solo), Word Duel (1 v 1, live) and Taboo (in group voice
+  // rooms). Every score is decided on the server; these screens only show
+  // and ask. Points go to the games ranking on the Reyting page.
+
+  const GM_UZ = {
+    tab: "O'yinlar",
+    sub: "Ingliz tilini o'yin orqali mashq qiling — har bir o'yin reytingga ball beradi.",
+    today: (p, cap) => `Bugun: ${p} / ${cap} ball`,
+    ehTitle: 'Error Hunter',
+    ehBody: "10 ta gap, har birida bitta xato. Xato so'zni bosing, keyin to'g'risini tanlang. Har gapga 20 soniya.",
+    play: "O'ynash",
+    duelTitle: 'Word Duel',
+    duelBody: "Boshqa o'quvchi bilan bir xil 10 ta savol: tezroq va to'g'ri javob bergan yutadi. Raqib 15 soniyada topilmasa — mashq boti.",
+    findOpponent: 'Raqib topish',
+    tabooTitle: 'Taboo',
+    tabooBody: "Guruh ovozli xonasida o'ynaladi: so'zni taqiqlangan so'zlarsiz tushuntiring, qolganlar chatda topadi.",
+    toRooms: "Ovozli xonalarga o'tish",
+    weekLeaders: 'Bu haftaning yetakchilari',
+    fullRank: "To'liq reyting",
+    you: r => (r ? `Siz: #${r}` : "Siz hali reytingda yo'qsiz"),
+    pts: n => `${n} ball`,
+    back: "O'yinlar",
+    // error hunter
+    ehFind: "Xato so'zni bosing",
+    ehPick: "To'g'ri variantni tanlang",
+    ehRight: "To'g'ri!",
+    ehWrong: "Afsus",
+    ehTimeout: 'Vaqt tugadi',
+    ehNext: 'Keyingi',
+    ehFinish: 'Natija',
+    ehDone: 'Raund tugadi',
+    ehCorrect: (c, t) => `${c} / ${t} gap to'g'ri tuzatildi`,
+    counted: (n, p) => (n === p ? `Reytingga +${n} ball` : `Reytingga +${n} ball (bugungi limit)`),
+    again: 'Yana o\'ynash',
+    // duel
+    searching: 'Raqib qidirilmoqda…',
+    botSoon: s => `${s} soniyadan keyin mashq boti bilan o'ynaysiz`,
+    cancel: 'Bekor qilish',
+    vs: 'qarshi',
+    getReady: 'Tayyorlaning…',
+    oppAnswered: 'Raqib javob berdi',
+    win: "G'alaba! 🏆",
+    lose: "Bu safar raqib yutdi",
+    draw: 'Durang',
+    forfeit: "Raqib o'yindan chiqdi — g'alaba sizniki",
+    botHalf: "Botga qarshi o'yin reytingga yarim ball beradi.",
+    leaveDuel: 'Chiqish',
+    // taboo
+    tbStart: "🎲 Taboo o'ynash",
+    tbNeed: "Taboo uchun xonada kamida 2 kishi kerak",
+    tbYouDescribe: 'Siz tushuntirasiz — ovoz bilan!',
+    tbDontSay: 'Aytmang:',
+    tbSkip: n => `O'tkazish (${n})`,
+    tbDescribing: n => `${n} tushuntiryapti — chatda yozib toping!`,
+    tbBuzz: 'Taboo! 🚫',
+    tbStop: "O'yinni tugatish",
+    tbTurn: (t, n) => `Navbat ${t}/${n}`,
+    tbCorrect: (by, w, g) => `✓ ${by} topdi: ${w} (+${g})`,
+    tbSkipped: w => `⤼ O'tkazildi: ${w}`,
+    tbBuzzed: (by, w) => `🚫 ${by} "Taboo!" bosdi — so'z: ${w}`,
+    tbStarted: by => `🎲 ${by} Taboo o'yinini boshladi`,
+    tbEnd: 'Taboo tugadi — natijalar reytingga qo\'shildi:'
+  };
+
+  const gm = { today: null, caps: null, week: null, loading: false };
+
+  async function loadGamesHub() {
+    try {
+      const [today, week] = await Promise.all([api('/games/today'), api('/games/leaderboard?period=week')]);
+      gm.today = today.today; gm.caps = today.caps; gm.week = week;
+    } catch (error) {
+      gm.error = error.message;
+    }
+    if (state.screen === 'speak' && ch.tab === 'games') render();
+  }
+
+  function gamesHubScreen() {
+    const today = g => (gm.today && gm.caps ? `<span class="gm-today">${esc(GM_UZ.today(gm.today[g] || 0, gm.caps[g]))}</span>` : '');
+    const card = (tone, iconName, title, body, g, button) => `<section class="card gm-card">
+        <div class="gm-card-head"><span class="gm-icon ${tone}">${icon(iconName)}</span><h2>${title}</h2></div>
+        <p>${body}</p>
+        <div class="gm-card-foot">${g ? today(g) : '<span></span>'}${button}</div>
+      </section>`;
+    const week = gm.week;
+    const leaders = week
+      ? `<section class="card list-card gm-leaders">
+          <h2>${GM_UZ.weekLeaders}</h2>
+          ${week.top.length
+            ? week.top.slice(0, 3).map(r => gameRankRow(r)).join('')
+            : `<p class="muted gm-empty">${esc(GM_UZ.you(null))}</p>`}
+          <div class="gm-leaders-foot"><span class="muted">${esc(GM_UZ.you(week.you?.rank))}</span>
+            <button class="link-more" data-rank-games="1">${GM_UZ.fullRank}</button></div>
+        </section>`
+      : '';
+    return `
+      ${card('is-indigo', 'search', GM_UZ.ehTitle, GM_UZ.ehBody, 'error-hunter', `<button class="btn" data-gm="eh">${GM_UZ.play}</button>`)}
+      ${card('is-gold', 'target', GM_UZ.duelTitle, GM_UZ.duelBody, 'duel', `<button class="btn" data-gm="duel">${GM_UZ.findOpponent}</button>`)}
+      ${card('is-green', 'users', GM_UZ.tabooTitle, GM_UZ.tabooBody, 'taboo', `<button class="btn btn-ghost" data-ch-tab="voice">${GM_UZ.toRooms}</button>`)}
+      ${leaders}`;
+  }
+
+  const gameRankRow = r => `<div class="gm-rank-row ${r.you ? 'is-you' : ''}">
+      <span class="gm-rank">${r.rank}</span>
+      <span class="lb-mini${premiumClass(r)}">${picInner(r)}</span>
+      <span class="gm-rank-name">${nameMarkup(r)}${r.you ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</span>
+      <span class="gm-rank-points">${r.points}</span>
+    </div>`;
+
+  // ------------------------------------------------------ error hunter
+
+  const eh = { round: null, index: 0, phase: 'tap', options: null, picked: null, tapped: null, result: null, points: 0, deadline: 0, timer: null, busy: false, done: null };
+
+  async function startErrorHunt() {
+    stopVoice(); stopChat();
+    clearInterval(eh.timer);
+    Object.assign(eh, { round: null, index: 0, phase: 'tap', options: null, picked: null, tapped: null, result: null, points: 0, done: null, busy: false });
+    go('eh', { loading: true });
+    try {
+      eh.round = await api('/games/eh/start', { method: 'POST' });
+      state.loading = false;
+      beginEhItem();
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  function beginEhItem() {
+    eh.phase = 'tap'; eh.options = null; eh.picked = null; eh.tapped = null; eh.result = null;
+    eh.deadline = Date.now() + eh.round.seconds * 1000;
+    clearInterval(eh.timer);
+    eh.timer = setInterval(() => {
+      const left = Math.max(0, eh.deadline - Date.now());
+      const bar = document.getElementById('eh-bar');
+      if (bar) bar.style.width = `${(left / (eh.round.seconds * 1000)) * 100}%`;
+      if (left <= 0 && (eh.phase === 'tap' || eh.phase === 'fix') && !eh.busy) ehSend('timeout', {});
+    }, 200);
+    render();
+  }
+
+  async function ehSend(kind, body) {
+    if (eh.busy) return;
+    eh.busy = true;
+    try {
+      const out = await api(`/games/eh/${kind}`, { method: 'POST', body: { roundId: eh.round.roundId, index: eh.index, ...body } });
+      if (kind === 'tap' && out.found) {
+        eh.phase = 'fix'; eh.options = out.options;
+      } else {
+        eh.phase = 'reveal'; eh.result = out; eh.points = out.points;
+        clearInterval(eh.timer);
+        if (out.done) eh.done = { ...out.summary, counted: out.counted ?? 0 };
+      }
+    } catch (error) {
+      state.error = error.message;
+      clearInterval(eh.timer);
+    }
+    eh.busy = false;
+    if (state.screen === 'eh') render();
+  }
+
+  function ehScreen() {
+    if (state.loading || !eh.round) return `<div class="center-note"><span class="spinner"></span></div>`;
+    const total = eh.round.total;
+    const head = `<div class="gm-top">
+        <button class="crumb" data-gm="back">${icon('left')} ${GM_UZ.back}</button>
+        <span class="gm-progress">${Math.min(eh.index + 1, total)} / ${total}</span>
+        <span class="gm-score">${eh.points} <span>ball</span></span>
+      </div>`;
+
+    if (eh.phase === 'summary' && eh.done) {
+      return `${head}<section class="card gm-summary">
+          <span class="gm-icon is-indigo big">${icon('search')}</span>
+          <h2>${GM_UZ.ehDone}</h2>
+          <div class="gm-big">${eh.done.points}<span> ball</span></div>
+          <p class="muted">${esc(GM_UZ.ehCorrect(eh.done.correct, eh.done.total))}</p>
+          <p class="gm-counted">${esc(GM_UZ.counted(eh.done.counted, eh.done.points))}</p>
+          <div class="gm-actions"><button class="btn btn-lg" data-gm="eh">${GM_UZ.again}</button>
+            <button class="btn btn-ghost btn-lg" data-gm="back">${GM_UZ.back}</button></div>
+        </section>`;
+    }
+
+    const item = eh.round.items[eh.index];
+    const r = eh.result;
+    const words = item.words.map((w, i) => {
+      let cls = '';
+      if (eh.phase === 'fix' && i === eh.tapped) cls = 'is-picked';
+      if (eh.phase === 'reveal' && r) {
+        if (i === r.at) cls = 'is-error';
+        else if (i === eh.tapped) cls = 'is-miss';
+      }
+      return `<button class="eh-word ${cls}" data-eh-word="${i}" ${eh.phase === 'tap' && !eh.busy ? '' : 'disabled'}>${esc(w)}</button>`;
+    }).join('');
+
+    const prompt = eh.phase === 'tap' ? GM_UZ.ehFind : eh.phase === 'fix' ? GM_UZ.ehPick : '';
+    const options = eh.phase === 'fix'
+      ? `<div class="eh-options">${eh.options.map((o, i) =>
+          `<button class="btn btn-ghost eh-option" data-eh-fix="${i}" ${eh.busy ? 'disabled' : ''}>${esc(o)}</button>`).join('')}</div>`
+      : '';
+    const reveal = eh.phase === 'reveal' && r
+      ? `<div class="eh-reveal ${r.right ? 'is-right' : 'is-wrong'}">
+          <strong>${r.timeout ? GM_UZ.ehTimeout : r.right ? GM_UZ.ehRight : GM_UZ.ehWrong}${r.gained ? ` · +${r.gained}` : ''}</strong>
+          <p class="eh-fixed">${esc(r.sentence)}</p>
+          <p class="muted">${esc(r.why)}</p>
+          <button class="btn btn-lg btn-block" data-gm="eh-next">${r.done ? GM_UZ.ehFinish : GM_UZ.ehNext}</button>
+        </div>`
+      : '';
+
+    return `${head}
+      <div class="gm-bar"><span id="eh-bar" style="width:${eh.phase === 'reveal' ? 0 : Math.max(0, (eh.deadline - Date.now()) / (eh.round.seconds * 10))}%"></span></div>
+      <section class="card eh-card">
+        ${prompt ? `<p class="eh-prompt">${prompt}</p>` : ''}
+        <div class="eh-sentence">${words}</div>
+        ${options}
+      </section>
+      ${reveal}`;
+  }
+
+  // --------------------------------------------------------- word duel
+
+  const dl = { active: false, abort: null, connected: false, me: null, phase: 'idle', opponent: null, total: 10, bot: false,
+               q: null, myPick: null, oppAnswered: false, reveal: null, scores: {}, result: null, deadline: 0, timer: null, searchStart: 0, botAfter: 15 };
+
+  function openDuel() {
+    stopVoice(); stopChat();
+    Object.assign(dl, { phase: 'search', opponent: null, q: null, myPick: null, oppAnswered: false, reveal: null, scores: {}, result: null, searchStart: Date.now() });
+    go('duel');
+    if (!dl.active) {
+      dl.active = true;
+      (async () => {
+        while (dl.active) {
+          try { await readEvents('/games/duel/stream', dl, onDuelEvent); }
+          catch (error) { if (error.fatal) { dl.active = false; return setState({ error: error.message }); } }
+          dl.connected = false;
+          if (!dl.active) return;
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      })();
+    } else {
+      api('/games/duel/find', { method: 'POST' }).catch(error => setState({ error: error.message }));
+    }
+    duelTicker();
+  }
+
+  function stopDuel() {
+    if (!dl.active) return;
+    if (dl.phase === 'search') api('/games/duel/find', { method: 'DELETE' }).catch(() => {});
+    else if (['matched', 'question', 'reveal'].includes(dl.phase)) api('/games/duel/leave', { method: 'POST' }).catch(() => {});
+    dl.active = false;
+    dl.abort?.abort();
+    clearInterval(dl.timer);
+    dl.phase = 'idle';
+  }
+
+  function duelTicker() {
+    clearInterval(dl.timer);
+    dl.timer = setInterval(() => {
+      if (state.screen !== 'duel') return;
+      const bar = document.getElementById('dl-bar');
+      if (bar && dl.phase === 'question' && dl.q) {
+        bar.style.width = `${Math.max(0, (dl.deadline - Date.now()) / (dl.q.seconds * 10))}%`;
+      }
+      const soon = document.getElementById('dl-bot');
+      if (soon && dl.phase === 'search') {
+        const left = Math.max(0, dl.botAfter - Math.floor((Date.now() - dl.searchStart) / 1000));
+        soon.textContent = GM_UZ.botSoon(left);
+      }
+    }, 200);
+  }
+
+  function onDuelEvent(event, data) {
+    switch (event) {
+      case 'hello':
+        dl.me = data.you;
+        if (data.match) { dl.phase = 'matched'; dl.opponent = data.match.opponent; dl.scores = data.match.scores; }
+        else if (dl.phase === 'search') {
+          api('/games/duel/find', { method: 'POST' })
+            .then(r => { if (r.botAfter) dl.botAfter = r.botAfter; })
+            .catch(error => setState({ error: error.message }));
+        }
+        break;
+      case 'matched':
+        Object.assign(dl, { phase: 'matched', opponent: data.opponent, total: data.total, bot: data.bot, scores: data.scores, result: null });
+        break;
+      case 'question':
+        Object.assign(dl, { phase: 'question', q: data, myPick: null, oppAnswered: false, reveal: null, deadline: Date.now() + data.seconds * 1000 });
+        break;
+      case 'opponent-answered':
+        dl.oppAnswered = true;
+        break;
+      case 'reveal':
+        dl.phase = 'reveal'; dl.reveal = data; dl.scores = data.scores;
+        break;
+      case 'finished':
+        dl.phase = 'finished'; dl.result = data; dl.scores = data.scores;
+        loadGamesHub();
+        break;
+      case 'kicked':
+        dl.active = false; dl.abort?.abort();
+        state.error = GM_UZ.leaveDuel;
+        break;
+    }
+    if (state.screen === 'duel') render();
+  }
+
+  function duelPlayer(p, score, isMe) {
+    const person = p || { name: '…' };
+    return `<div class="dl-player ${isMe ? 'is-me' : ''}">
+      <span class="dl-av${premiumClass(person)}">${picInner(person)}</span>
+      <span class="dl-name">${nameMarkup(person)}</span>
+      <span class="dl-score">${score ?? 0}</span>
+    </div>`;
+  }
+
+  function duelScreen() {
+    const back = `<div class="gm-top"><button class="crumb" data-gm="back">${icon('left')} ${GM_UZ.back}</button>
+      ${dl.q && ['question', 'reveal'].includes(dl.phase) ? `<span class="gm-progress">${dl.q.i + 1} / ${dl.q.total}</span>` : '<span></span>'}<span></span></div>`;
+
+    if (dl.phase === 'search' || dl.phase === 'idle') {
+      return `${back}<section class="card gm-summary">
+          <span class="gm-icon is-gold big">${icon('target')}</span>
+          <h2>${GM_UZ.searching}</h2>
+          <span class="spinner"></span>
+          <p class="muted" id="dl-bot">${esc(GM_UZ.botSoon(dl.botAfter))}</p>
+          <button class="btn btn-ghost" data-gm="back">${GM_UZ.cancel}</button>
+        </section>`;
+    }
+
+    const me = { name: pr.state?.name || state.user?.nickname || state.user?.firstName || '', premium: pr.state?.active, avatar: pr.state?.avatar };
+    const board = `<div class="dl-board">
+        ${duelPlayer(me, dl.scores[dl.me], true)}
+        <span class="dl-vs">${GM_UZ.vs}</span>
+        ${duelPlayer(dl.opponent, dl.scores[dl.opponent?.id], false)}
+      </div>`;
+
+    if (dl.phase === 'matched') {
+      return `${back}${board}<section class="card gm-summary"><h2>${GM_UZ.getReady}</h2><span class="spinner"></span></section>`;
+    }
+
+    if (dl.phase === 'finished' && dl.result) {
+      const r = dl.result;
+      const title = r.reason === 'forfeit' && r.winner === dl.me ? GM_UZ.forfeit : r.winner === dl.me ? GM_UZ.win : r.winner ? GM_UZ.lose : GM_UZ.draw;
+      return `${back}${board}<section class="card gm-summary">
+          <h2>${esc(title)}</h2>
+          <div class="gm-big">${r.scores[dl.me] ?? 0}<span> ball</span></div>
+          ${dl.bot ? `<p class="muted">${GM_UZ.botHalf}</p>` : ''}
+          <div class="gm-actions"><button class="btn btn-lg" data-gm="duel">${GM_UZ.again}</button>
+            <button class="btn btn-ghost btn-lg" data-gm="back">${GM_UZ.back}</button></div>
+        </section>`;
+    }
+
+    const q = dl.q;
+    const rv = dl.phase === 'reveal' ? dl.reveal : null;
+    const oppId = dl.opponent?.id;
+    const options = q.options.map((o, i) => {
+      let cls = '';
+      if (rv) {
+        if (i === rv.answer) cls = 'is-right';
+        else if (i === rv.picks[dl.me]) cls = 'is-wrong';
+      } else if (i === dl.myPick) cls = 'is-picked';
+      const oppMark = rv && rv.picks[oppId] === i ? `<span class="dl-opp-mark">${esc((dl.opponent?.name || '').slice(0, 1).toUpperCase())}</span>` : '';
+      return `<button class="dl-option ${cls}" data-dl-pick="${i}" ${dl.myPick !== null || rv ? 'disabled' : ''}>${esc(o)}${oppMark}</button>`;
+    }).join('');
+
+    return `${back}${board}
+      <div class="gm-bar"><span id="dl-bar" style="width:${rv ? 0 : 100}%"></span></div>
+      <section class="card dl-card">
+        <p class="dl-question">${esc(q.text)}</p>
+        <div class="dl-options">${options}</div>
+        <p class="dl-status">${rv
+          ? (rv.gained[dl.me] ? `+${rv.gained[dl.me]}` : '+0')
+          : dl.oppAnswered ? `✓ ${GM_UZ.oppAnswered}` : '&nbsp;'}</p>
+      </section>`;
+  }
+
+  // ------------------------------------------------------------- taboo
+
+  function tabooPanel() {
+    const room = vc.room;
+    if (!room || room.kind !== 'club') return '';
+    const t = vc.taboo;
+    if (!t) {
+      const enough = (room.members || []).length >= 2;
+      return `<div class="tb-start">
+        <button class="btn btn-ghost" data-tb="start" ${enough ? '' : 'disabled'}>${GM_UZ.tbStart}</button>
+        ${enough ? '' : `<span class="muted">${GM_UZ.tbNeed}</span>`}
+      </div>`;
+    }
+    const iDescribe = t.describer?.id === vc.me;
+    const card = iDescribe && vc.tabooCard
+      ? `<div class="tb-card">
+          <span class="tb-label">${GM_UZ.tbYouDescribe}</span>
+          <div class="tb-word">${esc(vc.tabooCard.word)}</div>
+          <span class="tb-label">${GM_UZ.tbDontSay}</span>
+          <div class="tb-taboo">${vc.tabooCard.taboo.map(w => `<span>${esc(w)}</span>`).join('')}</div>
+          <button class="btn btn-ghost btn-sm" data-tb="skip" ${vc.tabooCard.skipsLeft > 0 ? '' : 'disabled'}>${esc(GM_UZ.tbSkip(vc.tabooCard.skipsLeft))}</button>
+        </div>`
+      : `<div class="tb-guess">
+          <p><strong>${esc(GM_UZ.tbDescribing(t.describer?.name || ''))}</strong></p>
+          <button class="btn tb-buzz" data-tb="buzz">${GM_UZ.tbBuzz}</button>
+        </div>
+        ${composerMarkup('tb-guess-input', 'call')}`;
+    return `<section class="card tb-panel">
+      <div class="tb-head">
+        <span class="tb-turn">${esc(GM_UZ.tbTurn(t.turn, t.turns))}</span>
+        <span class="tb-clock" id="tb-clock">${Math.max(0, Math.ceil((t.deadline - Date.now()) / 1000))}</span>
+      </div>
+      ${card}
+      <div class="tb-scores">${(t.scores || []).map(s => `<span${s.id === vc.me ? ' class="is-me"' : ''}>${esc(s.name)} <strong>${s.points}</strong></span>`).join('')}</div>
+      <button class="link-more tb-stop" data-tb="stop">${GM_UZ.tbStop}</button>
+    </section>`;
+  }
+
+  let sysCount = 0;
+  const systemLine = text => {
+    vc.chat.push({ id: `sys-${++sysCount}`, system: true, text, at: new Date().toISOString() });
+  };
+
+  /** Taboo events arriving on the voice stream. Returns true when handled. */
+  function onTabooEvent(event, data) {
+    switch (event) {
+      case 'taboo-start': systemLine(GM_UZ.tbStarted(data.by)); return true;
+      case 'taboo':
+        // The server's clock and ours differ a little; keep our own countdown.
+        vc.taboo = { ...data, deadline: Date.now() + (data.left ?? data.seconds * 1000) };
+        if (vc.taboo.describer?.id !== vc.me) vc.tabooCard = null;
+        return true;
+      case 'taboo-card': vc.tabooCard = data; return true;
+      case 'taboo-correct': systemLine(GM_UZ.tbCorrect(data.by, data.word, data.gained)); return true;
+      case 'taboo-skip': systemLine(GM_UZ.tbSkipped(data.word)); return true;
+      case 'taboo-buzz': systemLine(GM_UZ.tbBuzzed(data.by, data.word)); return true;
+      case 'taboo-end':
+        systemLine(`${GM_UZ.tbEnd} ${(data.scores || []).map(s => `${s.name} ${s.points}`).join(', ')}`);
+        vc.taboo = null; vc.tabooCard = null;
+        return true;
+    }
+    return false;
+  }
+
+  async function tabooAction(action) {
+    try {
+      await api(`/games/taboo/${action}`, { method: 'POST' });
+    } catch (error) {
+      vc.notice = error.message;
+      render();
+    }
+  }
+
+  // --------------------------------------------------- games ranking
+
+  const rk = { tab: 'mock', period: 'week', data: null };
+
+  async function loadGameRank() {
+    try { rk.data = await api(`/games/leaderboard?period=${rk.period}`); }
+    catch (error) { rk.data = { top: [], you: {}, error: error.message }; }
+    if (state.screen === 'rank') render();
+  }
+
+  function gameRankCard() {
+    const d = rk.data;
+    const seg = (id, label) => `<button class="seg-btn ${rk.period === id ? 'is-current' : ''}" data-rk-period="${id}">${label}</button>`;
+    return `<div class="seg seg-sm">${seg('week', 'Bu hafta')}${seg('all', 'Umumiy')}</div>
+      <section class="card list-card">
+        <h2>${rk.period === 'week' ? "Bu haftaning eng ko'p ball to'plaganlari" : "Barcha vaqt bo'yicha"}</h2>
+        ${!d ? '<div class="center-note"><span class="spinner"></span></div>'
+          : d.top.length ? d.top.map(gameRankRow).join('')
+          : `<p class="muted gm-empty">Hali hech kim ball to'plamagan — birinchi bo'ling!</p>`}
+      </section>
+      ${d ? `<p class="muted gm-you">${esc(d.you?.rank ? `Sizning o'rningiz: #${d.you.rank} · ${d.you.points} ball` : "O'ynang va reytingga chiqing — Error Hunter, Word Duel va Taboo ball beradi.")}</p>` : ''}`;
+  }
+
+  function wireGames() {
+    root.querySelectorAll('[data-gm]').forEach(el => el.addEventListener('click', () => {
+      const a = el.dataset.gm;
+      if (a === 'eh') return startErrorHunt();
+      if (a === 'duel') return openDuel();
+      if (a === 'back') { stopDuel(); clearInterval(eh.timer); return openVoice('games'); }
+      if (a === 'eh-next') {
+        if (eh.result?.done) { eh.phase = 'summary'; return render(); }
+        eh.index += 1;
+        return beginEhItem();
+      }
+    }));
+    root.querySelectorAll('[data-eh-word]').forEach(el => el.addEventListener('click', () => {
+      eh.tapped = Number(el.dataset.ehWord);
+      ehSend('tap', { word: eh.tapped });
+    }));
+    root.querySelectorAll('[data-eh-fix]').forEach(el => el.addEventListener('click', () => ehSend('fix', { choice: Number(el.dataset.ehFix) })));
+    root.querySelectorAll('[data-dl-pick]').forEach(el => el.addEventListener('click', async () => {
+      if (dl.myPick !== null || !dl.q) return;
+      dl.myPick = Number(el.dataset.dlPick);
+      render();
+      api('/games/duel/answer', { method: 'POST', body: { i: dl.q.i, choice: dl.myPick } }).catch(() => {});
+    }));
+    root.querySelectorAll('[data-gm-open]').forEach(el => el.addEventListener('click', () => openVoice('games')));
+    root.querySelectorAll('[data-tb]').forEach(el => el.addEventListener('click', () => tabooAction(el.dataset.tb)));
+    root.querySelectorAll('[data-rank-games]').forEach(el => el.addEventListener('click', () => { rk.tab = 'games'; openRank(); }));
+    root.querySelectorAll('[data-rk-tab]').forEach(el => el.addEventListener('click', () => {
+      rk.tab = el.dataset.rkTab;
+      if (rk.tab === 'games') loadGameRank();
+      render();
+    }));
+    root.querySelectorAll('[data-rk-period]').forEach(el => el.addEventListener('click', () => {
+      rk.period = el.dataset.rkPeriod; rk.data = null; render(); loadGameRank();
+    }));
+    // Leaving the game screens stops their timers and streams.
+    if (state.screen !== 'eh') clearInterval(eh.timer);
+    if (state.screen !== 'duel' && dl.active) stopDuel();
+  }
+
   // ------------------------------------------------------------ rendering
 
   /**
@@ -3166,7 +3692,7 @@
   const TABS = [
     { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard'] },
     { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'writing', 'writing-check', 'briefing'] },
-    { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak'] },
+    { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
     { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup'] }
   ];
@@ -3179,7 +3705,7 @@
    * keyboard already takes half a phone), and a live call.
    */
   const showTabs = () =>
-    isStudentShell() && canLeave() && !['exam', 'writing-exam'].includes(state.screen) &&
+    isStudentShell() && canLeave() && !['exam', 'writing-exam', 'eh', 'duel'].includes(state.screen) &&
     !(state.screen === 'speak' && vc.room);
 
   function brandMarkup() {
@@ -3272,7 +3798,9 @@
       'writing-result': writingResultScreen,
       speak: speakScreen,
       rank: rankScreen,
-      profile: profileScreen
+      profile: profileScreen,
+      eh: ehScreen,
+      duel: duelScreen
     }[state.screen] || landingScreen;
 
     const tabs = tabBarMarkup();
@@ -3725,7 +4253,7 @@
       ? `<section class="card home-level">
           <div class="home-level-top">
             <span class="home-label">${HOME_UZ.best}</span>
-            <span class="chip chip-speaking">${esc(stats.currentLevel || pos?.current?.level || '')}</span>
+            <span class="chip chip-speaking">${esc(pos?.current?.level || stats.highestLevel || '')}</span>
           </div>
           <div class="home-score">${best}<span> / ${max}</span></div>
           <div class="home-bar" role="img" aria-label="${best} / ${max}"><span style="width:${pos ? pos.percent.toFixed(1) : 0}%"></span></div>
@@ -3785,6 +4313,7 @@
         ${tile('data-folder="speaking"', 'tests', HOME_UZ.parts)}
         ${tile('data-go="writing"', 'pen', HOME_UZ.writing, '', 'is-green')}
         ${tile('data-go="speak"', 'users', HOME_UZ.club, `<span class="home-tile-live"><span class="pulse"></span>${HOME_UZ.live}</span>`, 'is-gold')}
+        ${tile('data-gm-open="1"', 'target', "O'yinlar", '', 'is-rose')}
       </div>
       ${rankLine}
       ${adSlot('home')}
@@ -3841,9 +4370,14 @@
   }
 
   function rankScreen() {
+    const seg = (id, label) => `<button class="seg-btn ${rk.tab === id ? 'is-current' : ''}" data-rk-tab="${id}" aria-pressed="${rk.tab === id}">${label}</button>`;
+    if (rk.tab === 'games' && !rk.data) loadGameRank();
     return `
-      <div class="page-head"><h1>${LB_UZ.title}</h1><p class="muted">${LB_UZ.sub}</p></div>
-      ${state.leaderboard ? leaderboardCard() : '<div class="center-note"><span class="spinner"></span></div>'}
+      <div class="page-head"><h1>${LB_UZ.title}</h1><p class="muted">${rk.tab === 'games' ? "O'yinlardagi ballar: Error Hunter, Word Duel va Taboo" : LB_UZ.sub}</p></div>
+      <div class="seg" role="group" aria-label="Reyting turi">${seg('mock', 'Mock')}${seg('games', "O'yinlar")}</div>
+      ${rk.tab === 'games'
+        ? gameRankCard()
+        : state.leaderboard ? leaderboardCard() : '<div class="center-note"><span class="spinner"></span></div>'}
       ${adSlot('rank')}`;
   }
 
@@ -5062,6 +5596,7 @@
     wireWriting();
     wireLeaderboard();
     wireSpeak();
+    wireGames();
     if (state.screen === 'profile') wirePremium();
   }
 
