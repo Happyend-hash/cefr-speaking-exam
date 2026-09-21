@@ -265,6 +265,7 @@
   function signOut() {
     stopMicCheck();
     stopVoice();
+    stopChat();
     stopWritingTimers();
     store.remove('token');
     store.remove('user');
@@ -1938,7 +1939,9 @@
     after: null,            // { kind, sessionId, partner:{id,name}, rated }
     reportOpen: false,
     notice: '',
-    status: null            // /voice/status
+    status: null,           // /voice/status
+    chat: [],               // messages typed in the current call
+    chatRoom: null          // which call those messages belong to
   };
 
   const audioBox = () => {
@@ -1954,13 +1957,25 @@
 
   // ------------------------------------------------------------ stream
 
-  async function openVoice() {
+  /**
+   * The speaking club has two tabs: voice rooms and text chat. Each opens its
+   * own stream only while it is showing, so a student reading the chat is
+   * not sitting in the voice lobby and the other way round.
+   */
+  async function openVoice(tab = ch.tab || 'voice') {
+    ch.tab = tab;
     go('speak', { loading: true });
     try {
       vc.status = await api('/voice/status');
       state.loading = false;
       if (vc.status.blocked) return setState({ error: ACCESS_UZ.blockedTitle });
-      if (vc.status.consented) startStream();
+      if (tab === 'chat') {
+        stopVoice();
+        startChat();
+      } else {
+        stopChat();
+        if (vc.status.consented) startStream();
+      }
       render();
     } catch (error) {
       setState({ loading: false, error: error.message });
@@ -2101,6 +2116,12 @@
       case 'signal':
         onSignal(data.from, data.payload);
         return;
+      case 'chat':
+        if (!vc.chat.some(m => m.id === data.id)) vc.chat.push(data);
+        break;
+      case 'chat-deleted':
+        vc.chat = vc.chat.map(m => m.id === data.id ? { ...m, text: '', deleted: true } : m);
+        break;
       case 'ended': {
         const partner = vc.partner || vc.room?.members.find(m => m.id !== vc.me);
         vc.after = { kind: 'pair', sessionId: data.sessionId || vc.room?.sessionId, partner, rated: false, reason: data.reason };
@@ -2138,6 +2159,9 @@
 
   async function enterRoom(room, callPeers) {
     vc.room = { ...room, members: [...(room.members || [])] };
+    // A new call starts with an empty chat; coming back to the same call
+    // after a dropped connection keeps what was already typed.
+    if (vc.chatRoom !== room.id) { vc.chat = []; vc.chatRoom = room.id; }
     vc.reportOpen = false;
     try {
       await ensureMic();
@@ -2363,9 +2387,22 @@
     if (state.loading || !vc.status) {
       return `<div class="center-note"><span class="spinner"></span></div>`;
     }
-    if (!vc.status.consented) return consentScreen();
+    // In a call the call is the whole screen; its own chat is inside it.
     if (vc.room) return roomScreen();
-    return lobbyScreen();
+    const tab = ch.tab === 'chat' ? 'chat' : 'voice';
+    const tabBtn = (id, label, iconName) =>
+      `<button class="ch-tab ${tab === id ? 'is-current' : ''}" data-ch-tab="${id}" aria-pressed="${tab === id}">${icon(iconName)} ${label}</button>`;
+    return `
+      <div>
+        <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
+        <h1 style="font-size:26px;margin:10px 0 4px">${VC_UZ.title}</h1>
+        <p class="muted">${tab === 'chat' ? CH_UZ.sub : VC_UZ.sub}</p>
+      </div>
+      <div class="ch-tabs" role="group">
+        ${tabBtn('voice', CH_UZ.tabVoice, 'mic')}
+        ${tabBtn('chat', CH_UZ.tabChat, 'message')}
+      </div>
+      ${tab === 'chat' ? chatScreen() : !vc.status.consented ? consentScreen() : lobbyScreen()}`;
   }
 
   function consentScreen() {
@@ -2405,11 +2442,6 @@
     }).join('');
 
     return `
-      <div>
-        <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
-        <h1 style="font-size:26px;margin:10px 0 4px">${VC_UZ.title}</h1>
-        <p class="muted">${VC_UZ.sub}</p>
-      </div>
       ${vc.notice ? `<div class="alert alert-warn">${esc(vc.notice)}</div>` : ''}
       ${after}
       <div class="card vc-partner">
@@ -2487,6 +2519,13 @@
         <button class="vc-btn ${vc.muted ? 'is-on' : ''}" data-vc="mute">${icon('mic')}<span>${vc.muted ? VC_UZ.unmute : VC_UZ.mute}</span></button>
         ${others.length ? `<button class="vc-btn" data-vc="report-open">${icon('message')}<span>${VC_UZ.report}</span></button>` : ''}
         <button class="vc-btn vc-leave" data-vc="leave">${icon('right')}<span>${VC_UZ.leave}</span></button>
+      </div>
+      <div class="card ch-call">
+        <div class="ch-call-head">${icon('message')} <strong>${CH_UZ.callTitle}</strong></div>
+        <div class="ch-list ch-list-call" id="ch-call-list" data-keep-scroll>
+          ${vc.chat.length ? vc.chat.map(m => messageMarkup(m, 'call')).join('') : `<p class="muted ch-empty">${CH_UZ.callEmpty}</p>`}
+        </div>
+        ${composerMarkup('ch-call-input', 'call')}
       </div>`;
   }
 
@@ -2557,8 +2596,10 @@
       // Leaving the speaking screen hangs up: a call nobody can see is a call
       // nobody can mute or leave.
       if (vc.active || vc.room || vc.local) stopVoice();
+      if (ch.active) stopChat();
       return;
     }
+    wireChat();
     root.querySelectorAll('[data-vc]').forEach(el =>
       el.addEventListener('click', () => vcAction(el.dataset.vc, el)));
     root.querySelectorAll('[data-vc-join]').forEach(el =>
@@ -2584,10 +2625,362 @@
     }
   }
 
+
+  // ============================================================ text chat
+  //
+  // Two places to type: the General / B1 / B2 / C1 rooms on the Chat tab,
+  // and a small chat inside every speaking call. Everything is filtered on the
+  // server (swearing masked, links and phone numbers removed, English only)
+  // and every message is visible to the teacher.
+
+  const CH_UZ = {
+    tabVoice: 'Ovozli xonalar',
+    tabChat: 'Chat',
+    sub: "Boshqa o'quvchilar bilan ingliz tilida yozishing. Xabarlarni ustoz ham ko'radi.",
+    roomsTitle: 'Xonalar',
+    online: n => (n ? `${n} kishi shu yerda` : "Hozir hech kim yo'q"),
+    placeholder: 'Write in English…',
+    send: 'Yuborish',
+    report: 'Shikoyat',
+    reportWhy: "Nima bo'ldi? (ixtiyoriy)",
+    reportSend: 'Ustozga yuborish',
+    reportSent: 'Shikoyat ustozga yuborildi. Rahmat!',
+    cancel: 'Bekor qilish',
+    deleted: "Bu xabar ustoz tomonidan o'chirildi",
+    empty: "Hali xabar yo'q — birinchi bo'lib salom bering! 👋",
+    rules: "Faqat ingliz tilida. Havolalar, telefon raqamlari va so'kinishlar avtomatik olib tashlanadi.",
+    connecting: 'Ulanmoqda…',
+    lost: 'Aloqa uzildi — qayta ulanmoqda…',
+    kicked: 'Ustoz sizni chatdan chiqardi.',
+    you: 'siz',
+    callTitle: 'Chat',
+    callEmpty: "Bu yerga yozishingiz mumkin — masalan, so'zni yozib ko'rsatish uchun."
+  };
+
+  const ch = {
+    tab: 'voice',
+    active: false,
+    abort: null,
+    connected: false,
+    me: null,
+    rooms: [],
+    room: 'text-general',
+    messages: [],
+    loadingRoom: false,
+    error: '',
+    reportFor: null,       // message id with the report form open
+    sending: false
+  };
+
+  /** Read a server-sent event stream opened with fetch (keeps the token out of the URL). */
+  async function readEvents(path, ctl, onEvent) {
+    ctl.abort = new AbortController();
+    const response = await fetch(`${API}${path}`, {
+      headers: { Authorization: `Bearer ${state.token}` },
+      signal: ctl.abort.signal
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const error = new Error(payload.message || `Unavailable (${response.status})`);
+      error.fatal = response.status >= 400 && response.status < 500;
+      throw error;
+    }
+    ctl.connected = true;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const event = frame.match(/^event: (.+)$/m)?.[1];
+        const data = frame.match(/^data: (.+)$/m)?.[1];
+        if (event && data) {
+          try { onEvent(event, JSON.parse(data)); } catch (error) { console.error('chat event', event, error); }
+        }
+      }
+    }
+  }
+
+  function startChat() {
+    if (ch.active) return;
+    ch.active = true;
+    ch.error = '';
+    (async () => {
+      while (ch.active) {
+        try {
+          await readEvents('/chat/stream', ch, onChatEvent);
+        } catch (error) {
+          if (!ch.active) return;
+          if (error.fatal) {
+            ch.active = false;
+            ch.connected = false;
+            return setState({ error: error.message });
+          }
+        }
+        ch.connected = false;
+        if (!ch.active) return;
+        ch.error = CH_UZ.lost;
+        if (state.screen === 'speak') render();
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    })();
+  }
+
+  function stopChat() {
+    ch.active = false;
+    ch.connected = false;
+    ch.abort?.abort();
+    ch.reportFor = null;
+  }
+
+  function onChatEvent(event, data) {
+    switch (event) {
+      case 'hello':
+        ch.me = data.you;
+        ch.rooms = data.rooms || [];
+        ch.error = '';
+        // The server forgets which room we were in when the stream drops,
+        // so (re)open it — this also reloads anything missed meanwhile.
+        openChatRoom(ch.room);
+        break;
+      case 'rooms':
+        ch.rooms = data.rooms || [];
+        // Only the online counts changed: update them in place, so a busy
+        // lobby does not redraw the page under someone who is typing.
+        if (patchRoomCounts()) return;
+        break;
+      case 'message':
+        if (data.room !== ch.room || ch.messages.some(m => m.id === data.id)) return;
+        ch.messages.push(data);
+        if (ch.messages.length > 200) ch.messages.splice(0, ch.messages.length - 200);
+        break;
+      case 'deleted':
+        ch.messages = ch.messages.map(m => (m.id === data.id ? { ...m, text: '', deleted: true } : m));
+        break;
+      case 'kicked':
+        stopChat();
+        state.error = data.reason || CH_UZ.kicked;
+        break;
+    }
+    if (state.screen === 'speak' && ch.tab === 'chat' && !vc.room) render();
+  }
+
+  function patchRoomCounts() {
+    if (state.screen !== 'speak' || ch.tab !== 'chat') return true;
+    let all = true;
+    for (const r of ch.rooms) {
+      const el = document.getElementById(`ch-count-${r.id}`);
+      if (el) el.textContent = r.online || 0;
+      else all = false;
+    }
+    return all;
+  }
+
+  async function openChatRoom(room) {
+    ch.room = room;
+    ch.loadingRoom = true;
+    ch.reportFor = null;
+    if (state.screen === 'speak') render();
+    try {
+      const data = await api('/chat/join', { method: 'POST', body: { room } });
+      if (ch.room !== room) return;
+      ch.messages = data.messages || [];
+      ch.error = '';
+    } catch (error) {
+      ch.error = error.message;
+    }
+    ch.loadingRoom = false;
+    if (state.screen === 'speak') render();
+    scrollChatToEnd();
+  }
+
+  function scrollChatToEnd() {
+    root.querySelectorAll('.ch-list').forEach(list => { list.scrollTop = list.scrollHeight; });
+  }
+
+  const clock = at => {
+    const d = new Date(at);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  };
+
+  /** One message. `where` is 'room' or 'call' — both can be reported. */
+  function messageMarkup(m, where) {
+    const mine = m.user === (where === 'call' ? vc.me : ch.me);
+    const body = m.deleted
+      ? `<span class="ch-deleted">${CH_UZ.deleted}</span>`
+      : esc(m.text);
+    const reportForm = ch.reportFor === m.id
+      ? `<div class="ch-report">
+           <input type="text" id="ch-report-why" data-keep maxlength="300" placeholder="${esc(CH_UZ.reportWhy)}">
+           <button class="btn btn-sm" data-ch-report-send="${esc(m.id)}">${CH_UZ.reportSend}</button>
+           <button class="btn btn-ghost btn-sm" data-ch-report-close>${CH_UZ.cancel}</button>
+         </div>`
+      : '';
+    return `<div class="ch-msg ${mine ? 'is-mine' : ''}" data-msg="${esc(m.id)}">
+      <div class="ch-meta">
+        <span class="ch-name">${esc(m.name)}${mine ? ` <span class="lb-you">${CH_UZ.you}</span>` : ''}</span>
+        ${m.level ? `<span class="ch-level">${esc(m.level)}</span>` : ''}
+        <span class="ch-time">${esc(clock(m.at))}</span>
+        ${!mine && !m.deleted ? `<button class="ch-flag" data-ch-report="${esc(m.id)}" title="${CH_UZ.report}" aria-label="${CH_UZ.report}">⚑</button>` : ''}
+      </div>
+      <div class="ch-text">${body}</div>
+      ${reportForm}
+    </div>`;
+  }
+
+  function composerMarkup(id, where) {
+    return `<form class="ch-compose" data-ch-compose="${where}" autocomplete="off">
+      <input type="text" id="${id}" data-keep maxlength="500" placeholder="${esc(CH_UZ.placeholder)}" aria-label="${esc(CH_UZ.placeholder)}">
+      <button class="btn" type="submit">${CH_UZ.send}</button>
+    </form>`;
+  }
+
+  function chatScreen() {
+    const rooms = (ch.rooms.length ? ch.rooms : [
+      { id: 'text-general', name: 'General', online: 0 },
+      { id: 'text-b1', name: 'B1 chat', level: 'B1', online: 0 },
+      { id: 'text-b2', name: 'B2 chat', level: 'B2', online: 0 },
+      { id: 'text-c1', name: 'C1 chat', level: 'C1', online: 0 }
+    ]).map(r => `<button class="ch-room ${r.id === ch.room ? 'is-current' : ''}" data-ch-room="${esc(r.id)}" aria-pressed="${r.id === ch.room}">
+        <span class="ch-room-name">${esc(r.name)}</span>
+        <span class="ch-room-count"><span class="ch-dot"></span><span id="ch-count-${esc(r.id)}">${r.online || 0}</span></span>
+      </button>`).join('');
+
+    const current = ch.rooms.find(r => r.id === ch.room);
+    const list = ch.loadingRoom && !ch.messages.length
+      ? `<div class="center-note"><span class="spinner"></span></div>`
+      : ch.messages.length
+      ? ch.messages.map(m => messageMarkup(m, 'room')).join('')
+      : `<p class="muted ch-empty">${CH_UZ.empty}</p>`;
+
+    return `
+      <div class="ch-layout">
+        <div class="ch-rooms" role="group" aria-label="${CH_UZ.roomsTitle}">${rooms}</div>
+        <div class="card ch-panel">
+          <div class="ch-panel-head">
+            <strong>${esc(current?.name || 'General')}</strong>
+            <span class="muted" style="font-size:13px">${ch.connected ? esc(CH_UZ.online(current?.online || 0)) : CH_UZ.connecting}</span>
+          </div>
+          ${ch.error ? `<div class="alert alert-warn" style="margin:0">${esc(ch.error)}</div>` : ''}
+          <div class="ch-list" id="ch-room-list" data-keep-scroll>${list}</div>
+          ${composerMarkup('ch-room-input', 'room')}
+          <p class="muted ch-rules">${CH_UZ.rules}</p>
+        </div>
+      </div>`;
+  }
+
+  async function sendChat(where, input) {
+    const text = input.value.trim();
+    if (!text || ch.sending) return;
+    ch.sending = true;
+    input.value = '';
+    try {
+      if (where === 'call') {
+        const m = await api('/chat/call', { method: 'POST', body: { text } });
+        if (!vc.chat.some(x => x.id === m.id)) vc.chat.push(m);
+        vc.notice = '';
+      } else {
+        const m = await api('/chat/send', { method: 'POST', body: { room: ch.room, text } });
+        if (m.room === ch.room && !ch.messages.some(x => x.id === m.id)) ch.messages.push(m);
+        ch.error = '';
+      }
+    } catch (error) {
+      // Give the text back so nothing typed is lost, and say why.
+      const field = document.getElementById(input.id);
+      if (field && !field.value) field.value = text;
+      if (where === 'call') vc.notice = error.message; else ch.error = error.message;
+    }
+    ch.sending = false;
+    if (state.screen === 'speak') {
+      render();
+      scrollChatToEnd();
+      document.getElementById(input.id)?.focus();
+    }
+  }
+
+  function wireChat() {
+    root.querySelectorAll('[data-ch-tab]').forEach(el =>
+      el.addEventListener('click', () => {
+        if (el.dataset.chTab !== ch.tab) openVoice(el.dataset.chTab);
+      }));
+    root.querySelectorAll('[data-ch-room]').forEach(el =>
+      el.addEventListener('click', () => {
+        if (el.dataset.chRoom !== ch.room || !ch.messages.length) openChatRoom(el.dataset.chRoom);
+      }));
+    root.querySelectorAll('[data-ch-compose]').forEach(form =>
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        sendChat(form.dataset.chCompose, form.querySelector('input'));
+      }));
+    root.querySelectorAll('[data-ch-report]').forEach(el =>
+      el.addEventListener('click', () => {
+        ch.reportFor = ch.reportFor === el.dataset.chReport ? null : el.dataset.chReport;
+        render();
+        document.getElementById('ch-report-why')?.focus();
+      }));
+    root.querySelectorAll('[data-ch-report-close]').forEach(el =>
+      el.addEventListener('click', () => { ch.reportFor = null; render(); }));
+    root.querySelectorAll('[data-ch-report-send]').forEach(el =>
+      el.addEventListener('click', async () => {
+        const reason = document.getElementById('ch-report-why')?.value || '';
+        try {
+          await api('/chat/report', { method: 'POST', body: { messageId: el.dataset.chReportSend, reason } });
+          ch.reportFor = null;
+          setState({ notice: CH_UZ.reportSent });
+        } catch (error) {
+          setState({ error: error.message });
+        }
+      }));
+  }
+
   // ------------------------------------------------------------ rendering
 
+  /**
+   * Everything is redrawn from state, which would wipe a half-typed chat
+   * message and jump the message list back to the top every time someone
+   * else writes. Fields marked data-keep keep their text, cursor and focus;
+   * lists marked data-keep-scroll keep their place, or stay at the bottom if
+   * they were already there.
+   */
   function render() {
+    const kept = [...root.querySelectorAll('[data-keep][id]')].map(el => ({
+      id: el.id,
+      value: el.value,
+      focused: document.activeElement === el,
+      start: el.selectionStart,
+      end: el.selectionEnd
+    }));
+    const scrolls = [...root.querySelectorAll('[data-keep-scroll][id]')].map(el => ({
+      id: el.id,
+      top: el.scrollTop,
+      atEnd: el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    }));
+
     root.innerHTML = screenMarkup();
+
+    for (const k of kept) {
+      const el = document.getElementById(k.id);
+      if (!el) continue;
+      if (!el.value) el.value = k.value;
+      if (k.focused) {
+        el.focus({ preventScroll: true });
+        try { el.setSelectionRange(k.start, k.end); } catch { /* not a text field */ }
+      }
+    }
+    for (const s of scrolls) {
+      const el = document.getElementById(s.id);
+      if (el) el.scrollTop = s.atEnd ? el.scrollHeight : s.top;
+    }
+    // A list drawn for the first time starts at the newest message.
+    root.querySelectorAll('[data-keep-scroll][id]').forEach(el => {
+      if (!scrolls.some(s => s.id === el.id)) el.scrollTop = el.scrollHeight;
+    });
+
     wire();
   }
 

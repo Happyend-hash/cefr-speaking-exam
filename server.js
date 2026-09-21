@@ -53,6 +53,7 @@ import adminRoutes from './routes/admin.js';
 import writingRoutes from './routes/writing.js';
 import leaderboardRoutes from './routes/leaderboard.js';
 import voiceRoutes from './routes/voice.js';
+import chatRoutes from './routes/chat.js';
 
 // Middleware imports
 import { errorHandler, notFound } from './middleware/errorHandler.js';
@@ -210,6 +211,7 @@ app.use('/api/evaluation', authenticate, evaluationRoutes);
 app.use('/api/writing', authenticate, writingRoutes);
 app.use('/api/leaderboard', authenticate, leaderboardRoutes);
 app.use('/api/voice', authenticate, voiceRoutes);
+app.use('/api/chat', authenticate, chatRoutes);
 
 // Admin routes
 app.use('/api/admin', authenticate, adminRoutes);

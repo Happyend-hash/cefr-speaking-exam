@@ -312,6 +312,17 @@ export class VoiceHub {
     return { ok: true };
   }
 
+  /**
+   * A typed message inside a call, to everyone in the same room. The route
+   * has already filtered and stored it; this only delivers.
+   */
+  roomChat(userId, message) {
+    const room = this.roomOf(userId);
+    if (!room) return { ok: false, reason: 'not in a room' };
+    for (const id of room.members) this.send(id, 'chat', message);
+    return { ok: true, roomId: room.id };
+  }
+
   /** Teacher removes someone from voice immediately. */
   kick(userId, reason = 'removed by the teacher') {
     const id = String(userId);

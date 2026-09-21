@@ -173,6 +173,7 @@
         ${reviewCard()}
         ${studentsCard()}
         ${voiceCard()}
+        ${chatCard()}
 
         <div class="row" style="justify-content:space-between;margin-top:8px">
           <h2>Tests</h2>
@@ -1087,6 +1088,7 @@
 
   function wire() {
     wireVoiceAdmin();
+    wireChatAdmin();
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
     document.getElementById('new-test-form')?.addEventListener('submit', handleNewTest);
     document.getElementById('sample-form')?.addEventListener('submit', handleNewSample);
@@ -1214,6 +1216,9 @@
     if (action === 'voice-open') return loadVoice({ open: true });
     if (action === 'voice-close') return setState({ voiceOpen: false });
     if (action === 'voice-reload') return loadVoice({});
+    if (action === 'chat-open') return loadChat({ open: true });
+    if (action === 'chat-close') return setState({ chatOpen: false });
+    if (action === 'chat-reload') return loadChat({});
     if (action === 'block-all') return changeAccessForAll('block');
     if (action === 'unblock-all') return changeAccessForAll('unblock');
   }
@@ -1323,6 +1328,111 @@
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
+  }
+
+  // ---------------------------------------------------------------- chat
+
+  /**
+   * Text chat, from the teacher's side: the newest messages from every room
+   * and from inside calls, with what the filter removed shown in full, who
+   * wrote each one, and the reports. Delete takes a message off every screen
+   * at once; Block stops the student using the site at all.
+   */
+  const CHAT_ROOM_NAMES = { 'text-general': 'General', 'text-b1': 'B1 chat', 'text-b2': 'B2 chat', 'text-c1': 'C1 chat' };
+  const chatRoomName = room => CHAT_ROOM_NAMES[room] || (String(room).startsWith('voice:') ? 'In a call' : room);
+
+  function chatCard() {
+    if (!state.chatOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Text chat</h2>
+        <p class="muted" style="margin-top:6px">
+          Messages from the General, B1, B2 and C1 chat rooms and from inside speaking calls,
+          with student reports (kept ${esc(state.chat?.retentionDays || 30)} days, then deleted automatically).
+        </p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="chat-open">Open text chat</button>
+      </div>`;
+    }
+
+    const data = state.chat || {};
+    const messages = data.messages || [];
+    const filterBtn = (value, label) =>
+      `<button class="btn btn-sm ${state.chatFilter === value ? '' : 'btn-ghost'}" data-chat-filter="${esc(value)}">${label}</button>`;
+
+    const rows = messages.map(m => `
+      <div style="padding:10px 0;border-bottom:1px solid var(--line)${m.deleted ? ';opacity:.6' : ''}">
+        <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start">
+          <div style="min-width:0;flex:1">
+            <strong>${esc(m.name)}</strong>
+            <span class="muted" style="font-size:13px"> ${esc(m.email)} · ${esc(chatRoomName(m.room))} · ${new Date(m.at).toLocaleString()}</span>
+            ${m.reported ? '<span class="tag tag-draft">reported</span>' : ''}
+            ${m.filtered ? '<span class="tag" title="The filter changed this message before anyone saw it">filtered</span>' : ''}
+            ${m.deleted ? `<span class="tag">deleted${m.deletedBy ? ` by ${esc(m.deletedBy)}` : ''}</span>` : ''}
+            <div style="margin-top:4px;overflow-wrap:anywhere">${esc(m.text)}</div>
+            ${m.original ? `<div class="muted" style="margin-top:2px;font-size:13px;overflow-wrap:anywhere">Before the filter: ${esc(m.original)}</div>` : ''}
+            ${m.reports.map(r => `<div class="alert alert-error" style="margin-top:6px;padding:6px 10px">
+              <strong>${esc(r.byName || 'A student')}</strong> reported this${r.reason ? `: ${esc(r.reason)}` : ''}
+              <span class="muted">(${new Date(r.at).toLocaleString()})</span></div>`).join('')}
+          </div>
+          <div class="row" style="gap:6px">
+            ${m.deleted ? '' : `<button class="btn btn-ghost btn-sm" data-chat-delete="${esc(m.id)}">Delete</button>`}
+            <button class="btn btn-ghost btn-sm" data-chat-block="${esc(m.user)}" data-chat-name="${esc(m.name)}">Block</button>
+          </div>
+        </div>
+      </div>`).join('');
+
+    const reportedCount = messages.filter(m => m.reported).length;
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Text chat</h2>
+        <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm" data-action="chat-reload">Refresh</button>
+          <button class="btn btn-ghost btn-sm" data-action="chat-close">Close</button>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:6px">
+        Links, phone numbers and swear words are removed before students see a message.
+        Where the filter changed something, you also see what was typed. Newest first, up to 150.
+      </p>
+      <div class="row" style="gap:6px;margin-top:12px;flex-wrap:wrap">
+        ${filterBtn('', 'All')}
+        ${filterBtn('reported', `Reported${state.chatFilter === 'reported' && reportedCount ? ` (${reportedCount})` : ''}`)}
+        ${Object.entries(CHAT_ROOM_NAMES).map(([id, name]) => filterBtn(id, name)).join('')}
+      </div>
+      ${rows || '<p class="muted" style="margin-top:10px">No messages.</p>'}
+    </div>`;
+  }
+
+  async function loadChat({ open, filter } = {}) {
+    const next = filter === undefined ? state.chatFilter || '' : filter;
+    setState({ chatOpen: open || state.chatOpen, chatFilter: next, loading: true, error: '' });
+    try {
+      const query = next === 'reported' ? '?reported=1' : next ? `?room=${encodeURIComponent(next)}` : '';
+      const chat = await api(`/chat/admin/messages${query}`);
+      setState({ chat, loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  function wireChatAdmin() {
+    root.querySelectorAll('[data-chat-filter]').forEach(el =>
+      el.addEventListener('click', () => loadChat({ filter: el.dataset.chatFilter })));
+    root.querySelectorAll('[data-chat-delete]').forEach(el =>
+      el.addEventListener('click', async () => {
+        try {
+          await api(`/chat/admin/messages/${el.dataset.chatDelete}`, { method: 'DELETE' });
+          loadChat({});
+        } catch (error) { setState({ error: error.message }); }
+      }));
+    root.querySelectorAll('[data-chat-block]').forEach(el =>
+      el.addEventListener('click', async () => {
+        if (!window.confirm(`Block ${el.dataset.chatName}? They will be removed from chat and calls and cannot use the site until you unblock them in Students.`)) return;
+        try {
+          await api(`/admin/students/${el.dataset.chatBlock}/access`, { method: 'POST', body: { action: 'block' } });
+          state.notice = `${el.dataset.chatName} blocked. Unblock them in Students.`;
+          loadChat({});
+        } catch (error) { setState({ error: error.message }); }
+      }));
   }
 
   function wireVoiceAdmin() {
