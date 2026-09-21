@@ -290,6 +290,9 @@
         api('/user/profile').catch(() => null),
         loadLeaderboard()
       ]);
+      // Premium and the picture come with the profile: the avatar in the
+      // top bar and the Profil tab both use them.
+      if (profile?.premium) pr.state = profile.premium;
       setState({
         exams,
         history,
@@ -1606,8 +1609,9 @@
     }
 
     const tests = (state.writingTests || []).map(t => `
-      <div class="card mock-card card-hover">
-        <div class="mock-top"><h3>${esc(t.title)}</h3>
+      <div class="card tests-featured">
+        <span class="tests-kicker">${esc(WR_UZ.mockTitle)}</span>
+        <div class="mock-top"><h2>${esc(t.title)}</h2>
           ${t.inProgress ? '<span class="chip chip-progress">In progress</span>' : t.best ? `<span class="chip chip-done">${icon('check')} ${t.best.score}/75</span>` : ''}
         </div>
         <p class="mock-sub">${esc(WR_UZ.mockBody)}</p>
@@ -1615,22 +1619,16 @@
         ${t.best ? `<p class="muted" style="margin-top:6px;font-size:14px">${esc(WR_UZ.best(t.best.score, t.best.level))}</p>` : ''}
         <p class="muted" style="margin-top:6px;font-size:13px">${esc(WR_UZ.mockCost)}</p>
         <div class="spacer"></div>
-        <div class="row" style="margin-top:14px;gap:10px;flex-wrap:wrap">
-          <button class="btn" data-wr-start="${esc(t.id)}" ${state.loading ? 'disabled' : ''}>
-            ${esc(t.inProgress ? WR_UZ.resume : WR_UZ.start)} ${icon('right')}</button>
-          ${t.best ? `<button class="btn btn-ghost" data-wr-open="${esc(t.best.id)}">View result</button>` : ''}
+        <div class="tests-actions">
+          <button class="btn btn-lg" data-wr-start="${esc(t.id)}" ${state.loading ? 'disabled' : ''}>
+            ${esc(t.inProgress ? WR_UZ.resume : WR_UZ.start)}</button>
+          ${t.best ? `<button class="btn btn-ghost btn-lg" data-wr-open="${esc(t.best.id)}">Natija</button>` : ''}
         </div>
       </div>`).join('');
 
-    const check = `<div class="card secondary-card card-hover">
-      <div class="secondary-icon">${icon('pen')}</div>
-      <div class="grow">
-        <h3>${esc(WR_UZ.checkTitle)}</h3>
-        <p class="mock-sub">${esc(WR_UZ.checkBody)}</p>
-        <p class="muted" style="font-size:13px;margin-top:4px">${esc(WR_UZ.checkCost)}</p>
-      </div>
-      <div><button class="btn btn-ghost" data-wr-check="1">${esc(WR_UZ.checkOpen)} ${icon('right')}</button></div>
-    </div>`;
+    const check = `<section class="card list-card">
+      ${listRow({ attrs: 'data-wr-check="1"', badge: icon('pen'), badgeTone: 'is-green', title: esc(WR_UZ.checkTitle), sub: esc(WR_UZ.checkCost) })}
+    </section>`;
 
     const history = (state.writingHistory || []).length
       ? `<div class="card"><div class="section-head"><h2>${esc(WR_UZ.history)}</h2></div>
@@ -1652,19 +1650,18 @@
     const credits = state.access?.writing?.credits;
 
     return `
+      ${testsHeader('writing')}
       <div>
-        <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
-        <h1 style="font-size:26px;margin:10px 0 4px">${esc(WR_UZ.heading)}</h1>
         <p class="muted">${esc(WR_UZ.sub)}</p>
         ${credits !== undefined && credits !== null
           ? `<p style="margin-top:6px;font-weight:600">${esc(WR_UZ.balance(credits))}${
               state.access?.writing?.units > 0 ? '' : ` · <button class="link-more" style="margin-top:0" data-go="topup">${esc(ACCESS_UZ.how)}</button>`}</p>`
           : ''}
       </div>
-      <div class="section-head" style="margin-top:8px"><h2>${esc(WR_UZ.mockTitle)}</h2></div>
-      <div class="mock-grid">${tests}</div>
+      ${tests}
       ${check}
-      ${history}`;
+      ${history}
+      ${adSlot('tests')}`;
   }
 
   function wireWritingHome() {
@@ -1895,7 +1892,7 @@
     partnerWaitingNote: "Darajangizdagi sherik bo'lmasa, 20 soniyadan keyin boshqa darajadagi bilan juftlashasiz.",
     cancel: 'Bekor qilish',
     waiting: n => (n ? `${n} kishi kutmoqda` : "Hozir hech kim kutmayapti"),
-    clubsTitle: 'Speaking club xonalari',
+    clubsTitle: 'Guruh xonalari',
     clubsBody: "Guruh bo'lib gaplashing — 5 kishigacha. Istalgan xonaga kiring.",
     join: 'Kirish',
     full: "To'lgan",
@@ -2423,12 +2420,10 @@
     const tabBtn = (id, label, iconName) =>
       `<button class="ch-tab ${tab === id ? 'is-current' : ''}" data-ch-tab="${id}" aria-pressed="${tab === id}">${icon(iconName)} ${label}</button>`;
     return `
-      <div>
-        <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
-        <h1 style="font-size:26px;margin:10px 0 4px">${VC_UZ.title}</h1>
+      <div class="page-head">
+        <h1>Klub</h1>
         <p class="muted">${tab === 'chat' ? CH_UZ.sub : VC_UZ.sub}</p>
       </div>
-      ${premiumStrip()}
       <div class="ch-tabs" role="group">
         ${tabBtn('voice', CH_UZ.tabVoice, 'mic')}
         ${tabBtn('chat', CH_UZ.tabChat, 'message')}
@@ -2466,15 +2461,14 @@
         + (extra ? `<span class="vc-seat is-gold ${r.count > r.max ? 'is-taken' : ''}" title="${esc(PR_UZ.goldSeat)}"></span>` : '');
       const faces = (r.people || []).map(p =>
         `<span class="vc-face${premiumClass(p)}" title="${esc(p.name)}">${picInner(p)}</span>`).join('');
-      return `<div class="card vc-club">
-        <div class="row" style="justify-content:space-between;gap:10px">
-          <h3>${esc(r.name)}</h3>
-          ${r.level ? `<span class="chip chip-speaking">${esc(r.level)}</span>` : ''}
+      return `<div class="vc-room-row">
+        <div class="vc-room-info">
+          <div class="vc-room-name"><strong>${esc(r.name)}</strong>${r.level ? `<span class="chip chip-speaking">${esc(r.level)}</span>` : ''}</div>
+          <div class="vc-room-meta">
+            <span class="vc-seats" aria-label="${r.count} / ${r.max}">${seats}<span class="muted">${Math.min(r.count, r.max)}/${r.max}${r.count > r.max ? ' +👑' : ''}</span></span>
+            ${r.count ? `<span class="vc-faces" title="${esc(r.names.join(', '))}">${faces}</span>` : ''}
+          </div>
         </div>
-        <div class="vc-seats" aria-label="${r.count} / ${r.max}">${seats}<span class="muted">${Math.min(r.count, r.max)}/${r.max}${r.count > r.max ? ' +👑' : ''}</span></div>
-        ${r.count
-          ? `<div class="vc-faces">${faces}</div><p class="muted vc-club-names">${esc(r.names.join(', '))}</p>`
-          : `<p class="muted vc-club-names">${VC_UZ.empty}</p>`}
         <button class="btn ${full ? 'btn-ghost' : ''}${premiumSeat ? ' btn-gold' : ''}" data-vc-join="${esc(r.id)}" ${full || !vc.connected ? 'disabled' : ''}>
           ${full ? VC_UZ.full : premiumSeat ? `${CROWN} ${PR_UZ.goldSeat}` : VC_UZ.join}
         </button>
@@ -2492,8 +2486,11 @@
         </div>
         <div class="vc-partner-action">${partner}</div>
       </div>
-      <div class="section-head" style="margin-top:6px"><h2>${VC_UZ.clubsTitle}</h2><p>${VC_UZ.clubsBody}</p></div>
-      <div class="vc-clubs">${clubs}</div>
+      <section class="card list-card vc-rooms">
+        <h2>${VC_UZ.clubsTitle}</h2>
+        ${clubs}
+      </section>
+      ${adSlot('club')}
       ${vc.status.relay ? '' : `<p class="muted" style="font-size:13px">${VC_UZ.noRelay}</p>`}`;
   }
 
@@ -3121,6 +3118,7 @@
       atEnd: el.scrollHeight - el.scrollTop - el.clientHeight < 40
     }));
 
+    if (state.screen !== ads.lastScreen) { ads.visit += 1; ads.lastScreen = state.screen; }
     root.innerHTML = screenMarkup();
 
     for (const k of kept) {
@@ -3142,6 +3140,7 @@
     });
 
     wire();
+    fillAds();
   }
 
   /**
@@ -3158,10 +3157,35 @@
     return !['prep', 'answer', 'saving'].includes(run.phase);
   }
 
+  // ------------------------------------------------------------ navigation
+  //
+  // Students have five places, the same on every device: a bar along the
+  // bottom of a phone (where a thumb reaches) and the menu at the top of a
+  // computer. Teachers keep their own short menu.
+
+  const TABS = [
+    { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard'] },
+    { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'writing', 'writing-check', 'briefing'] },
+    { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak'] },
+    { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
+    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup'] }
+  ];
+  const currentTab = () => TABS.find(t => t.screens.includes(state.screen))?.id || '';
+  const isStudentShell = () => Boolean(state.user) && state.user.role !== 'admin';
+
+  /**
+   * The tab bar comes off wherever leaving would cost something or the
+   * screen needs every pixel: a running question, the writing exam (the
+   * keyboard already takes half a phone), and a live call.
+   */
+  const showTabs = () =>
+    isStudentShell() && canLeave() && !['exam', 'writing-exam'].includes(state.screen) &&
+    !(state.screen === 'speak' && vc.room);
+
   function brandMarkup() {
     // A real button, so it is reachable by keyboard and announced as a control.
     return canLeave() && state.user
-      ? `<button class="brand brand-btn" data-go="dashboard" title="Back to dashboard">CEFR Speaking</button>`
+      ? `<button class="brand brand-btn" data-go="dashboard" title="Asosiy sahifa">CEFR Speaking</button>`
       : `<div class="brand">CEFR Speaking</div>`;
   }
 
@@ -3174,32 +3198,52 @@
         </div>
       </nav>`;
     }
-    // Mid-exam every link comes off: leaving a running question loses the
-    // answer, so canLeave() gates the whole set rather than some of it.
-    // Teachers and students see different places, and "Questions" has to stay
-    // invisible to a student — a link they cannot use reads as a fault.
-    const link = (screen, label) =>
-      `<button class="nav-link ${state.screen === screen ? 'is-current' : ''}" data-go="${screen}">${label}</button>`;
 
-    const links = !canLeave()
-      ? ''
-      : state.user.role === 'admin'
-      ? `${link('dashboard', 'Dashboard')}
-         <a class="nav-link" href="/admin.html">Questions</a>`
-      : `${link('dashboard', 'Dashboard')}${link('speak', 'Speaking club')}${link('writing', 'Writing')}${link('results', 'My results')}`;
-
-    const initials = String(state.user.firstName || state.user.email || '?')
+    const initials = String(state.user.nickname || state.user.firstName || state.user.email || '?')
       .trim().charAt(0).toUpperCase();
 
-    return `<nav class="nav">
+    // Teachers: their own short menu, unchanged.
+    if (!isStudentShell()) {
+      const link = (screen, label) =>
+        `<button class="nav-link ${state.screen === screen ? 'is-current' : ''}" data-go="${screen}">${label}</button>`;
+      return `<nav class="nav nav-staff">
+        ${brandMarkup()}
+        <div class="nav-links">${canLeave() ? `${link('dashboard', 'Dashboard')}<a class="nav-link" href="/admin.html">Questions</a>` : ''}</div>
+        <div class="nav-right">
+          <span class="avatar" aria-hidden="true">${esc(initials)}</span>
+          <button class="btn btn-ghost btn-sm" data-action="signout">Sign out</button>
+        </div>
+      </nav>`;
+    }
+
+    // Mid-exam every link comes off: leaving a running question loses the
+    // answer, so canLeave() gates the whole set rather than some of it.
+    const tab = currentTab();
+    const links = canLeave()
+      ? TABS.map(t => `<button class="nav-link ${tab === t.id ? 'is-current' : ''}" data-go="${t.go}" ${tab === t.id ? 'aria-current="page"' : ''}>${t.label}</button>`).join('')
+      : '';
+    const me = { name: pr.state?.name || state.user.firstName || '', premium: pr.state?.active, avatar: pr.state?.avatar };
+
+    const pageTitle = tab && tab !== 'home' ? TABS.find(t => t.id === tab).label : '';
+    return `<nav class="nav nav-student ${pageTitle ? 'has-title' : ''}">
       ${brandMarkup()}
-      <div class="nav-links">${links}</div>
+      ${pageTitle ? `<span class="nav-title">${pageTitle}</span>` : ''}
+      <div class="nav-links nav-desktop">${links}</div>
       <div class="nav-right">
-        <span class="avatar" aria-hidden="true">${esc(initials)}</span>
-        <span class="nav-user">${esc(state.user.firstName || state.user.email)}</span>
-        <button class="btn btn-ghost btn-sm" data-action="signout">Sign out</button>
+        ${canLeave()
+          ? `<button class="nav-me${premiumClass(me)}" data-go="profile" aria-label="Profil">${safePic(me.avatar) ? picInner(me) : `<span>${esc(initials)}</span>`}</button>`
+          : ''}
       </div>
     </nav>`;
+  }
+
+  function tabBarMarkup() {
+    if (!showTabs()) return '';
+    const tab = currentTab();
+    return `<nav class="tabbar" aria-label="Asosiy menyu">${TABS.map(t => `
+      <button class="tab ${tab === t.id ? 'is-current' : ''}" data-go="${t.go}" ${tab === t.id ? 'aria-current="page"' : ''}>
+        <span class="tab-icon">${icon(t.icon)}</span><span class="tab-label">${t.label}</span>
+      </button>`).join('')}</nav>`;
   }
 
   function alerts() {
@@ -3226,10 +3270,13 @@
       'writing-exam': writingExamScreen,
       'writing-check': writingCheckScreen,
       'writing-result': writingResultScreen,
-      speak: speakScreen
+      speak: speakScreen,
+      rank: rankScreen,
+      profile: profileScreen
     }[state.screen] || landingScreen;
 
-    return `${navMarkup()}<main class="stack">${alerts()}${body()}</main>`;
+    const tabs = tabBarMarkup();
+    return `${navMarkup()}<main class="stack ${tabs ? 'has-tabs' : ''}" data-screen="${esc(state.screen)}">${alerts()}${body()}</main>${tabs}`;
   }
 
   function landingScreen() {
@@ -3305,7 +3352,12 @@
     image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
     message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
-    star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'
+    star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+    home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
+    tests: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
   };
 
   const icon = name =>
@@ -3635,131 +3687,264 @@
       </div>`;
   }
 
+  const HOME_UZ = {
+    hello: name => (name ? `Salom, ${name}` : 'Salom'),
+    sub: "Bugun qaysi bo'limni mashq qilamiz?",
+    best: 'Eng yaxshi natija',
+    toNext: (n, lvl) => `${lvl} gacha ${n} ball`,
+    top: 'Eng yuqori daraja',
+    first: 'Birinchi mockingizni topshiring',
+    firstSub: "Bitta to'liq speaking mock — va darajangiz, har bir mezon bo'yicha izohlar tayyor.",
+    start: 'Speaking mock boshlash',
+    balance: (sp, wr) => `Balans: speaking ${sp} · writing ${wr}`,
+    buy: 'Paket olish',
+    parts: 'Qismlar',
+    writing: 'Writing',
+    club: 'Klub',
+    live: 'Jonli',
+    rank: r => `Reytingda #${r}`,
+    rankSub: (avg, n) => `o'rtacha ${avg} · ${n} ta mock`,
+    rankNone: 'Reyting',
+    rankNeed: n => `Reytingga chiqish uchun yana ${n} ta to'liq mock`,
+    recent: "So'nggi natijalar",
+    all: 'Hammasi'
+  };
+
   function dashboardScreen() {
     if (state.loading && !state.exams.length) {
       return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">Loading…</p></div>`;
     }
 
     const stats = state.stats || {};
-    const done = completedAttempts();
-    const hasResults = done.length > 0;
     const max = stats.maxScore || MAX_SCORE;
     const best = typeof stats.bestScore === 'number' ? stats.bestScore : null;
     const pos = best !== null ? cefrPosition(best) : null;
+    const name = state.user?.nickname || state.user?.firstName || '';
 
-    const speaking = (state.exams || []).filter(e => (e.module || 'speaking') === 'speaking');
+    const level = best !== null
+      ? `<section class="card home-level">
+          <div class="home-level-top">
+            <span class="home-label">${HOME_UZ.best}</span>
+            <span class="chip chip-speaking">${esc(stats.currentLevel || pos?.current?.level || '')}</span>
+          </div>
+          <div class="home-score">${best}<span> / ${max}</span></div>
+          <div class="home-bar" role="img" aria-label="${best} / ${max}"><span style="width:${pos ? pos.percent.toFixed(1) : 0}%"></span></div>
+          <div class="home-level-foot">
+            <span>${esc(pos?.current ? `${pos.current.level} (${pos.current.min}–${pos.next ? pos.next.min - 1 : max})` : '')}</span>
+            <span>${esc(pos?.next ? HOME_UZ.toNext(pos.pointsToNext, pos.next.level) : HOME_UZ.top)}</span>
+          </div>
+        </section>`
+      : `<section class="card home-level home-first">
+          <div class="icon-tile">${icon('mic')}</div>
+          <div><h2>${HOME_UZ.first}</h2><p class="muted">${HOME_UZ.firstSub}</p></div>
+        </section>`;
 
-    const name = state.user?.firstName || '';
-
-    // The balance sits next to the button that spends it. A student who finds
-    // out they have none only after clicking Start has already been surprised.
-    const remaining = state.access?.remaining;
-    const counter = typeof remaining === 'number'
-      ? `<p class="muted" style="margin-top:8px;text-align:center">${
-          state.access?.blocked
+    // The balance sits next to the button that spends it.
+    const acc = state.access || {};
+    const balance = typeof acc.remaining === 'number'
+      ? `<p class="home-balance">${
+          acc.blocked
             ? esc(ACCESS_UZ.blockedTitle)
-            : remaining > 0 || state.access?.units > 0
-            ? esc(ACCESS_UZ.remaining(state.access?.credits ?? remaining))
-            : `${esc(ACCESS_UZ.remainingNone)} · <button class="link-more" data-go="topup">${esc(ACCESS_UZ.how)}</button>`
+            : `${esc(HOME_UZ.balance(acc.credits ?? acc.remaining, acc.writing?.credits ?? 0))} · <button class="link-more" data-go="topup">${HOME_UZ.buy}</button>`
         }</p>`
       : '';
 
-    const welcome = `<div class="welcome">
-      <div>
-        <h1>Welcome back${name ? `, ${esc(name)}` : ''} 👋</h1>
-        <p>Ready to test your English speaking skills?</p>
-      </div>
-      <div>
-        <button class="btn btn-lg" data-folder="speaking">${icon('mic')} Start a speaking mock</button>
-        ${counter}
-      </div>
-    </div>`;
+    const tile = (target, iconName, label, extra = '', tone = '') =>
+      `<button class="home-tile" ${target}>
+        <span class="home-tile-icon ${tone}">${icon(iconName)}</span>
+        <span class="home-tile-label">${label}</span>${extra}
+      </button>`;
 
-    const statsRow = `<div class="stat-grid">
-      ${statCard('mic', 'Mocks completed', done.length,
-        stats.completedThisMonth ? `↑ ${stats.completedThisMonth} this month` : (hasResults ? '' : 'Take your first mock'),
-        stats.completedThisMonth ? 'up' : '')}
-      ${statCard('trophy', 'Best score',
-        best !== null ? `${best}<span class="of"> / ${max}</span>` : '—',
-        best !== null && typeof stats.previousBest === 'number'
-          ? `+${best - stats.previousBest} from previous best`
-          : (hasResults ? '' : 'No score yet'),
-        best !== null && typeof stats.previousBest === 'number' && best > stats.previousBest ? 'up' : '')}
-      ${statCard('target', 'Current level',
-        stats.currentLevel ? esc(stats.currentLevel) : '—',
-        pos ? (pos.next ? `${pos.pointsToNext} points to ${pos.next.level}` : 'Highest band reached') : 'Complete a mock to find out')}
-    </div>`;
+    const lb = state.leaderboard;
+    const me = lb?.you || {};
+    const rankLine = lb && state.user?.role === 'student'
+      ? `<button class="card home-rank" data-go="rank">
+          <span class="home-rank-icon">${icon('trophy')}</span>
+          <span class="home-rank-text">
+            <strong>${me.rank ? esc(HOME_UZ.rank(me.rank)) : HOME_UZ.rankNone}</strong>
+            <span class="muted">${esc(me.rank ? HOME_UZ.rankSub(me.average.toFixed(1), me.mocks) : HOME_UZ.rankNeed(me.needed || lb.minMocks))}</span>
+          </span>
+          ${icon('chevron')}
+        </button>`
+      : '';
 
-    const speakingCard = `<div class="card feature-card card-hover">
-      <div class="feature-icon">${icon('mic')}</div>
-      <div class="grow">
-        <div class="row" style="gap:10px"><h3>Speaking mock</h3><span class="chip chip-speaking">Speaking</span></div>
-        <p class="mock-sub">Practise Parts 1.1, 1.2, 2 and 3.</p>
-        <div class="meta-row">
-          <span>${icon('clock')} ~12 min</span>
-          <span>${icon('mic')} Recorded</span>
-          <span>${icon('check')} Evaluated</span>
-        </div>
-      </div>
-      <div>
-        <button class="btn btn-lg" data-folder="speaking">Start mock ${icon('right')}</button>
-        <p class="muted" style="margin-top:8px;text-align:center">${speaking.length} mock${speaking.length === 1 ? '' : 's'} available</p>
-      </div>
-    </div>`;
-
-    const speakCard = `<div class="card secondary-card card-hover vc-dash">
-      <div class="secondary-icon">${icon('users')}</div>
-      <div class="grow">
-        <div class="row" style="gap:10px"><h3>Speaking club</h3><span class="chip chip-speaking">Live</span></div>
-        <p class="mock-sub">Boshqa o'quvchilar bilan jonli gaplashing — sherik toping yoki guruh xonasiga kiring.</p>
-      </div>
-      <div><button class="btn btn-ghost" data-go="speak">Kirish ${icon('right')}</button></div>
-    </div>`;
-
-    // Writing lives on its own screen with its own tests (content/writingTests.js),
-    // so the card is always shown — it no longer depends on Exam documents.
-    const writingCard = `<div class="card secondary-card card-hover">
-      <div class="secondary-icon">${icon('pen')}</div>
-      <div class="grow">
-        <div class="row" style="gap:10px"><h3>Writing mock</h3><span class="chip chip-writing">Writing</span></div>
-        <p class="mock-sub">Part 1.1, 1.2 va 2 — 60 daqiqa, rasmiy shkala bo'yicha tekshiriladi. Tayyor ishingizni ham tekshirtirishingiz mumkin.</p>
-        <div class="meta-row">
-          <span>${icon('clock')} 60 min</span>
-          <span>${icon('pen')} Written</span>
-          <span>${icon('check')} Evaluated</span>
-        </div>
-      </div>
-      <div>
-        <button class="btn btn-ghost" data-go="writing">Start writing ${icon('right')}</button>
-        ${state.access?.writing?.credits != null
-          ? `<p class="muted" style="margin-top:8px;text-align:center">${esc(WR_UZ.balance(state.access.writing.credits))}</p>`
-          : ''}
-      </div>
-    </div>`;
-
-    // A student who has just handed in their first mock has no completed
-    // attempt yet, but they were sent here to watch for it — so the recent list
-    // has to show even while the analytics below it have nothing to draw.
-    const analytics = hasResults
-      ? `${cefrCard(best)}
-         <div class="split">${skillsCard()}${recentCard()}</div>`
-      : pendingAttempts().length
-      ? recentCard()
-      : firstMockEmptyState();
+    const recent = homeRecent();
 
     return `
       ${accessNotice()}
-      ${welcome}
-      ${statsRow}
-      ${leaderboardCard()}
-      <div class="section-head" style="margin-top:8px"><h2>Ready for your next test?</h2>
-        <p>Practise the real CEFR format and see how you perform.</p></div>
-      <div class="stack" style="margin-bottom:36px">
-        ${speakingCard}
-        ${speakCard}
-        ${writingCard}
+      <div class="home-hello">
+        <h1>${esc(HOME_UZ.hello(name))}</h1>
+        <p class="muted">${HOME_UZ.sub}</p>
       </div>
-      <div class="stack">${analytics}</div>`;
+      ${level}
+      <div class="home-start">
+        <button class="btn btn-lg btn-block" data-folder="speaking">${icon('mic')} ${HOME_UZ.start}</button>
+        ${balance}
+      </div>
+      <div class="home-tiles">
+        ${tile('data-folder="speaking"', 'tests', HOME_UZ.parts)}
+        ${tile('data-go="writing"', 'pen', HOME_UZ.writing, '', 'is-green')}
+        ${tile('data-go="speak"', 'users', HOME_UZ.club, `<span class="home-tile-live"><span class="pulse"></span>${HOME_UZ.live}</span>`, 'is-gold')}
+      </div>
+      ${rankLine}
+      ${adSlot('home')}
+      ${recent}`;
+  }
+
+  /** The three latest attempts, as rows — pending ones say they are being marked. */
+  function homeRecent() {
+    const max = state.stats?.maxScore || MAX_SCORE;
+    const recent = (state.history || [])
+      .filter(h => ['completed', 'evaluating', 'submitted'].includes(h.status))
+      .slice(0, 3);
+    if (!recent.length) return '';
+    const row = h => h.status === 'completed'
+      ? `<button class="home-result" data-result="${esc(h.id)}">
+          <span class="list-text"><strong>${esc(h.examTitle)}</strong><span>${esc(fmtDate(h.completedAt))}${h.mode === 'practice' ? ' · qism' : " · to'liq mock"}</span></span>
+          <span class="home-result-score">${h.overallScore}<span>/${max}</span></span>
+          <span class="chip chip-speaking">${esc(h.overallLevel || '—')}</span>
+        </button>`
+      : `<div class="home-result is-pending">
+          <span class="list-text"><strong>${esc(h.examTitle)}</strong><span>${esc(fmtDate(h.startedAt))}</span></span>
+          <span class="chip chip-progress"><span class="pulse"></span> Tekshirilmoqda…</span>
+        </div>`;
+    return `<section class="home-recent">
+      <div class="home-recent-head"><h2>${HOME_UZ.recent}</h2><button class="link-more" data-go="results">${HOME_UZ.all}</button></div>
+      <div class="card list-card">${recent.map(row).join('')}</div>
+    </section>`;
+  }
+
+  // ----------------------------------------------------------- tests hub
+
+  /** Speaking and Writing tests, one switch apart, under the Testlar tab. */
+  function openTests(tab = 'speaking') {
+    state.testsTab = tab;
+    if (tab === 'writing') return loadWritingHome();
+    go('mocks', { folder: 'speaking', mockSearch: '', mockStatus: 'all', mockSort: 'recommended' });
+  }
+
+  function testsHeader(active) {
+    const btn = (id, label) =>
+      `<button class="seg-btn ${active === id ? 'is-current' : ''}" data-tests="${id}" aria-pressed="${active === id}">${label}</button>`;
+    return `<div class="page-head">
+        <h1>Testlar</h1>
+      </div>
+      <div class="seg" role="group" aria-label="Bo'lim">${btn('speaking', 'Speaking')}${btn('writing', 'Writing')}</div>`;
+  }
+
+  // ---------------------------------------------------------------- rank
+
+  async function openRank() {
+    go('rank');
+    await loadLeaderboard();
+    if (state.screen === 'rank') render();
+  }
+
+  function rankScreen() {
+    return `
+      <div class="page-head"><h1>${LB_UZ.title}</h1><p class="muted">${LB_UZ.sub}</p></div>
+      ${state.leaderboard ? leaderboardCard() : '<div class="center-note"><span class="spinner"></span></div>'}
+      ${adSlot('rank')}`;
+  }
+
+  // ------------------------------------------------------------- profile
+
+  const PROF_UZ = {
+    title: 'Profil',
+    balance: 'Balans',
+    speaking: 'Speaking',
+    writing: 'Writing',
+    buy: (sp, wr) => `Paket olish · ${sp} speaking + ${wr} writing`,
+    results: 'Natijalarim',
+    resultsSub: n => (n ? `${n} ta urinish` : "Hali natija yo'q"),
+    writingResults: 'Writing natijalari',
+    writingResultsSub: 'Writing mock va tekshiruvlar',
+    skills: "Ko'nikmalarim",
+    signout: 'Chiqish'
+  };
+
+  async function openProfile() {
+    go('profile');
+    try {
+      pr.state = await api('/user/premium');
+    } catch { /* the strip simply does not show */ }
+    if (state.screen === 'profile') render();
+  }
+
+  function profileScreen() {
+    const acc = state.access || {};
+    const done = (state.history || []).length;
+    const row = (target, iconName, label, sub, tone = '') =>
+      `<button class="menu-row" ${target}>
+        <span class="menu-icon ${tone}">${icon(iconName)}</span>
+        <span class="menu-text"><strong>${label}</strong>${sub ? `<span class="muted">${esc(sub)}</span>` : ''}</span>
+        ${icon('chevron')}
+      </button>`;
+
+    const balance = typeof acc.remaining === 'number'
+      ? `<section class="card prof-balance">
+          <h2>${PROF_UZ.balance}</h2>
+          <div class="prof-balance-grid">
+            <div class="prof-bal is-indigo"><span>${PROF_UZ.speaking}</span><strong>${esc(String(acc.credits ?? acc.remaining))}</strong></div>
+            <div class="prof-bal is-green"><span>${PROF_UZ.writing}</span><strong>${esc(String(acc.writing?.credits ?? 0))}</strong></div>
+          </div>
+          <button class="btn btn-gold btn-block" data-go="topup">${esc(PROF_UZ.buy(4, 3))}</button>
+        </section>`
+      : '';
+
+    const skills = (state.history || []).some(h => h.status === 'completed') ? skillsCard() : '';
+
+    return `
+      <div class="page-head"><h1>${PROF_UZ.title}</h1></div>
+      ${premiumStrip()}
+      ${balance}
+      <section class="card menu-card">
+        ${row('data-go="results"', 'chart', PROF_UZ.results, PROF_UZ.resultsSub(done))}
+        ${row('data-go="writing"', 'pen', PROF_UZ.writingResults, PROF_UZ.writingResultsSub, 'is-green')}
+      </section>
+      ${skills}
+      ${state.user?.role === 'student' ? `<section class="card prof-nick">${nicknameRow()}</section>` : ''}
+      <button class="btn btn-ghost btn-block prof-signout" data-action="signout">${icon('logout')} ${PROF_UZ.signout}</button>`;
+  }
+
+  // ------------------------------------------------------------ sponsors
+  //
+  // One sponsor banner at most per screen, only on the tab screens, always
+  // after the main content — never in a test, the writing exam, a call or a
+  // result. A slot with no live banner takes no space at all.
+
+  const ads = { visit: 0, lastScreen: '', cache: {} };
+
+  function adSlot(place) {
+    const hit = ads.cache[place];
+    const banner = hit && hit.visit === ads.visit ? hit.banner : null;
+    return `<aside class="ad" id="ad-${place}" data-ad-place="${place}" ${banner ? '' : 'hidden'}>${banner ? adInner(banner) : ''}</aside>`;
+  }
+
+  const adInner = b => `<span class="ad-label">Homiy</span>
+    <a class="ad-link" href="${esc(b.go)}" target="_blank" rel="sponsored noopener noreferrer">
+      <img src="${esc(b.image)}" alt="${esc(b.name)}" loading="lazy" decoding="async">
+    </a>`;
+
+  /** Fill the slots on this screen — once per visit, so re-renders do not count extra views. */
+  function fillAds() {
+    root.querySelectorAll('[data-ad-place]').forEach(el => {
+      const place = el.dataset.adPlace;
+      const hit = ads.cache[place];
+      if (hit && hit.visit === ads.visit) return;
+      ads.cache[place] = { visit: ads.visit, banner: null };
+      const visit = ads.visit;
+      fetch(`${API}/sponsors/slot/${place}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(payload => {
+          const banner = payload?.data;
+          if (!banner || !/^\/api\/sponsors\/[a-f0-9]{24}\//.test(banner.image) || ads.visit !== visit) return;
+          ads.cache[place] = { visit, banner };
+          const slot = document.getElementById(`ad-${place}`);
+          if (slot) { slot.innerHTML = adInner(banner); slot.hidden = false; }
+        })
+        .catch(() => {});
+    });
   }
 
   // --------------------------------------------------------- mocks listing
@@ -3779,126 +3964,96 @@
     return 'not_started';
   }
 
+  const TESTS_UZ = {
+    full: "To'liq mock",
+    fullBody: min => `4 qism · 1.1, 1.2, 2, 3 · taxminan ${min} daqiqa. Natija 75 ballik shkalada.`,
+    start: 'Boshlash · 1 mock',
+    retake: 'Qayta topshirish · 1 mock',
+    have: c => `Sizda ${c} speaking mock bor`,
+    parts: "Qismlar bo'yicha mashq",
+    partNames: {
+      '1.1': ['Part 1.1', 'Shaxsiy savollar'],
+      '1.2': ['Part 1.2', 'Rasmlarni solishtirish'],
+      '2': ['Part 2', 'Bir mavzuda gapirish'],
+      '3': ['Part 3', 'Munozara: tarafdor va qarshi']
+    },
+    quarter: '¼ mock',
+    one: '1 mock',
+    all: 'Barcha mocklar',
+    done: score => `Eng yaxshi: ${score} ball`,
+    inProgress: 'Davom etmoqda',
+    notStarted: 'Hali topshirilmagan',
+    result: 'Natija',
+    none: "Hozircha mock yo'q — ustoz qo'shishi bilan shu yerda paydo bo'ladi."
+  };
+
+  /** A tappable row: badge, two lines of text, something on the right. */
+  const listRow = ({ attrs, badge, badgeTone = '', title, sub, end = '', extra = '' }) =>
+    `<div class="list-row">
+      <button class="list-main" ${attrs}>
+        <span class="list-badge ${badgeTone}">${badge}</span>
+        <span class="list-text"><strong>${title}</strong>${sub ? `<span>${sub}</span>` : ''}</span>
+        ${end ? `<span class="list-end">${end}</span>` : ''}
+        ${icon('chevron')}
+      </button>${extra}
+    </div>`;
+
   function mocksScreen() {
-    const folder = state.folder || 'speaking';
-    const isWriting = folder === 'writing';
     const attempts = attemptsByExam();
-    const max = state.stats?.maxScore || MAX_SCORE;
+    const byNumber = (a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+    const list = (state.exams || []).filter(e => (e.module || 'speaking') === 'speaking').sort(byNumber);
+    // The next one to take: the first not started, else in progress, else the first.
+    const rank = e => ({ not_started: 0, in_progress: 1, completed: 2 }[mockStatus(e, attempts)]);
+    const next = [...list].sort((a, b) => rank(a) - rank(b) || byNumber(a, b))[0];
+    const acc = state.access || {};
 
-    let list = (state.exams || []).filter(e => (e.module || 'speaking') === folder);
-
-    const query = (state.mockSearch || '').trim().toLowerCase();
-    if (query) {
-      list = list.filter(e =>
-        e.title.toLowerCase().includes(query) ||
-        (e.description || '').toLowerCase().includes(query) ||
-        (e.module || 'speaking').includes(query));
+    if (!next) {
+      return `${testsHeader('speaking')}<div class="card empty-state"><div class="icon-tile">${icon('tests')}</div><p>${TESTS_UZ.none}</p></div>`;
     }
 
-    const statusFilter = state.mockStatus || 'all';
-    if (statusFilter !== 'all') list = list.filter(e => mockStatus(e, attempts) === statusFilter);
+    const nextDone = mockStatus(next, attempts) === 'completed';
+    const minutes = Math.round((next.duration || 0) / 60) || 15;
+    const featured = `<section class="card tests-featured">
+      <span class="tests-kicker">${TESTS_UZ.full}</span>
+      <h2>${esc(next.title)}</h2>
+      <p>${esc(TESTS_UZ.fullBody(minutes))}</p>
+      <button class="btn btn-lg btn-block" data-start="${esc(next.id)}" data-mode="mock">${nextDone ? TESTS_UZ.retake : TESTS_UZ.start}</button>
+      ${typeof acc.remaining === 'number' ? `<span class="tests-have">${esc(TESTS_UZ.have(acc.credits ?? acc.remaining))}</span>` : ''}
+    </section>`;
 
-    const byNumber = (a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
-    const sort = state.mockSort || 'recommended';
-    list = [...list].sort((a, b) => {
-      if (sort === 'newest') return byNumber(b, a);
-      if (sort === 'oldest') return byNumber(a, b);
-      if (sort === 'best') return (attempts[b.id]?.best ?? -1) - (attempts[a.id]?.best ?? -1);
-      if (sort === 'unattempted') {
-        const rank = e => (mockStatus(e, attempts) === 'not_started' ? 0 : 1);
-        return rank(a) - rank(b) || byNumber(a, b);
-      }
-      // Recommended: anything untouched first, then in progress, then done.
-      const rank = e => ({ not_started: 0, in_progress: 1, completed: 2 }[mockStatus(e, attempts)]);
-      return rank(a) - rank(b) || byNumber(a, b);
-    });
+    const parts = (next.parts || []).length ? next.parts : ['1.1', '1.2', '2', '3'];
+    const partList = `<section class="card list-card">
+      <h2>${TESTS_UZ.parts}</h2>
+      ${parts.map(p => {
+        const [name, desc] = TESTS_UZ.partNames[p] || [`Part ${p}`, ''];
+        return listRow({
+          attrs: `data-start="${esc(next.id)}" data-mode="practice" data-part="${esc(p)}"`,
+          badge: esc(p), title: esc(name), sub: esc(desc), end: TESTS_UZ.quarter
+        });
+      }).join('')}
+    </section>`;
 
-    const featured = sort === 'recommended' && !query && statusFilter === 'all' ? list[0] : null;
-    const rest = featured ? list.slice(1) : list;
-
-    const toolbar = `<div class="toolbar">
-      <div class="search">${icon('search')}
-        <input type="search" id="mock-search" placeholder="Search mocks…" value="${esc(state.mockSearch || '')}" />
-      </div>
-      <select id="mock-status" aria-label="Filter by status">
-        ${Object.entries({
-          all: 'All statuses', not_started: 'Not started',
-          in_progress: 'In progress', completed: 'Completed'
-        }).map(([k, v]) =>
-          `<option value="${k}" ${statusFilter === k ? 'selected' : ''}>${v}</option>`).join('')}
-      </select>
-      <select id="mock-sort" aria-label="Sort">
-        ${Object.entries(MOCK_SORTS).map(([k, v]) =>
-          `<option value="${k}" ${sort === k ? 'selected' : ''}>Sort: ${v}</option>`).join('')}
-      </select>
-    </div>`;
-
-    const statusChip = status => ({
-      completed: `<span class="chip chip-done">${icon('check')} Completed</span>`,
-      in_progress: `<span class="chip chip-progress">In progress</span>`,
-      not_started: `<span class="chip chip-new">Not started</span>`
-    }[status]);
-
-    const partChips = exam => (exam.parts || []).length
-      ? `<div class="practise-row">
-           <span class="label" title="Har bir qism — mockning ¼ qismi">Practise (¼ mock):</span>
-           ${exam.parts.map(p =>
-             `<button class="chip-btn" data-start="${esc(exam.id)}" data-mode="practice" data-part="${esc(p)}">${esc(p)}</button>`).join('')}
-         </div>`
-      : '';
-
-    const mockCard = (exam, isFeatured = false) => {
-      const status = mockStatus(exam, attempts);
-      const a = attempts[exam.id];
-      const minutes = Math.round((exam.duration || 0) / 60);
-
-      return `<div class="card mock-card card-hover ${isFeatured ? 'featured' : ''}">
-        ${isFeatured ? `<div class="chip chip-speaking" style="align-self:flex-start;margin-bottom:12px">${icon('star')} Recommended</div>` : ''}
-        <div class="mock-top">
-          <h3>${esc(exam.title)}</h3>
-          ${statusChip(status)}
-        </div>
-        <p class="mock-sub">${isWriting ? 'Full writing test' : 'Full speaking test'}</p>
-        ${(exam.parts || []).length ? `<p class="mock-parts">Parts ${exam.parts.map(esc).join(' · ')}</p>` : ''}
-        <p class="mock-meta">${exam.totalTasks || exam.totalQuestions || 0} questions${minutes ? ` · ~${minutes} min` : ''}</p>
-        ${status === 'completed' ? `<div class="mock-best">
-          <div class="stat-label">Best score</div>
-          <div class="value">${a.best} / ${max} · ${esc(a.bestLevel || '')}</div>
-        </div>` : ''}
-        <div class="spacer"></div>
-        <div class="row" style="margin-top:14px">
-          <button class="btn ${isFeatured ? 'btn-lg' : ''}" data-start="${esc(exam.id)}" data-mode="mock">
-            ${status === 'completed' ? 'Retake mock' : 'Start full mock'} ${icon('right')}
-          </button>
-          ${status === 'completed' ? `<button class="btn btn-ghost" data-result="${esc(a.bestId)}">View result</button>` : ''}
-        </div>
-        ${partChips(exam)}
-      </div>`;
-    };
-
-    const empty = `<div class="card empty-state">
-      <div class="icon-tile">${icon('search')}</div>
-      <h3>No mock tests found</h3>
-      <p>Try another search, or clear the filters.</p>
-      <button class="btn btn-ghost" data-clear-filters="1">Clear filters</button>
-    </div>`;
-
-    const total = (state.exams || []).filter(e => (e.module || 'speaking') === folder).length;
+    const mockRows = list.map((e, i) => {
+      const status = mockStatus(e, attempts);
+      const a = attempts[e.id];
+      const num = (e.title.match(/\d+/) || [String(i + 1)])[0];
+      const sub = status === 'completed' ? TESTS_UZ.done(a.best) : status === 'in_progress' ? TESTS_UZ.inProgress : TESTS_UZ.notStarted;
+      return listRow({
+        attrs: `data-start="${esc(e.id)}" data-mode="mock"`,
+        badge: `M${esc(num)}`,
+        badgeTone: status === 'completed' ? 'is-done' : '',
+        // A finished mock has its Natija button on the right instead of the price.
+        title: esc(e.title), sub: esc(sub), end: status === 'completed' ? '' : TESTS_UZ.one,
+        extra: status === 'completed' ? `<button class="list-side" data-result="${esc(a.bestId)}">${TESTS_UZ.result}</button>` : ''
+      });
+    }).join('');
 
     return `
-      <div style="margin-bottom:18px">
-        <button class="crumb" data-go="dashboard">${icon('left')} All mock exams</button>
-        <h1 style="font-size:26px;margin:10px 0 4px">Mock exams</h1>
-        <p class="muted">Choose a full test or practise a specific part.
-          &nbsp;·&nbsp; ${isWriting ? 'Writing' : 'Speaking'} · ${total} mock test${total === 1 ? '' : 's'}</p>
-      </div>
-      ${toolbar}
-      ${list.length
-        ? `<div class="mock-grid">
-             ${featured ? `<div class="featured-wrap">${mockCard(featured, true)}</div>` : ''}
-             ${rest.map(e => mockCard(e)).join('')}
-           </div>`
-        : empty}`;
+      ${testsHeader('speaking')}
+      ${featured}
+      ${partList}
+      <section class="card list-card"><h2>${TESTS_UZ.all}</h2>${mockRows}</section>
+      ${adSlot('tests')}`;
   }
 
   // ------------------------------------------------------- results archive
@@ -3928,8 +4083,8 @@
 
     if (!state.history.length) {
       return `
-        <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
-        <h1 style="font-size:26px;margin:10px 0 18px">My results</h1>
+        <button class="crumb" data-go="profile">${icon('left')} Profil</button>
+        <h1 style="font-size:26px;margin:10px 0 18px">Natijalarim</h1>
         <div class="card empty-state">
           <div class="icon-tile">${icon('chart')}</div>
           <h3>No results yet</h3>
@@ -3939,8 +4094,8 @@
     }
 
     return `
-      <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
-      <h1 style="font-size:26px;margin:10px 0 4px">My results</h1>
+      <button class="crumb" data-go="profile">${icon('left')} Profil</button>
+      <h1 style="font-size:26px;margin:10px 0 4px">Natijalarim</h1>
       <p class="muted" style="margin-bottom:18px">Every attempt, with its recordings and feedback.</p>
       ${selectionBar}
       <div class="stack">${state.history.map(item => `
@@ -4810,9 +4965,15 @@
         if (target === 'dashboard') loadDashboard();
         else if (target === 'writing') loadWritingHome();
         else if (target === 'speak') openVoice();
+        else if (target === 'tests') openTests(state.testsTab || 'speaking');
+        else if (target === 'rank') openRank();
+        else if (target === 'profile') openProfile();
         else go(target);
       });
     });
+
+    root.querySelectorAll('[data-tests]').forEach(el =>
+      el.addEventListener('click', () => openTests(el.dataset.tests)));
 
     root.querySelectorAll('[data-start]').forEach(el =>
       el.addEventListener('click', () =>
@@ -4901,6 +5062,7 @@
     wireWriting();
     wireLeaderboard();
     wireSpeak();
+    if (state.screen === 'profile') wirePremium();
   }
 
   function handleAction(action) {

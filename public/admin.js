@@ -175,6 +175,7 @@
         ${voiceCard()}
         ${chatCard()}
         ${picturesCard()}
+        ${sponsorsCard()}
 
         <div class="row" style="justify-content:space-between;margin-top:8px">
           <h2>Tests</h2>
@@ -1099,6 +1100,7 @@
     wireVoiceAdmin();
     wireChatAdmin();
     wirePicturesAdmin();
+    wireSponsorsAdmin();
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
     document.getElementById('new-test-form')?.addEventListener('submit', handleNewTest);
     document.getElementById('sample-form')?.addEventListener('submit', handleNewSample);
@@ -1232,6 +1234,8 @@
     if (action === 'pictures-open') return loadPictures({ open: true });
     if (action === 'pictures-close') return setState({ picturesOpen: false });
     if (action === 'pictures-reload') return loadPictures({});
+    if (action === 'sponsors-open') return loadSponsors({ open: true });
+    if (action === 'sponsors-close') return setState({ sponsorsOpen: false });
     if (action === 'block-all') return changeAccessForAll('block');
     if (action === 'unblock-all') return changeAccessForAll('unblock');
   }
@@ -1341,6 +1345,125 @@
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
+  }
+
+  // ------------------------------------------------------------ sponsors
+
+  /**
+   * Sponsor banners sold to local businesses. Each shows on the screens
+   * ticked, one banner per screen at a time (turns taken at random when
+   * several are live), after the main content — never in a test, a call or
+   * a result. Views and clicks are what to show the sponsor.
+   */
+  const PLACE_NAMES = { home: 'Home', tests: 'Tests', club: 'Club', rank: 'Ranking' };
+
+  function sponsorsCard() {
+    if (!state.sponsorsOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Sponsor banners</h2>
+        <p class="muted" style="margin-top:6px">
+          Banners you sell to local businesses: shown on Home, Tests, Club and Ranking, with view and click counts.
+        </p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="sponsors-open">Open sponsor banners</button>
+      </div>`;
+    }
+    const list = state.sponsors?.sponsors || [];
+    const places = state.sponsors?.places || Object.keys(PLACE_NAMES);
+    const rows = list.map(sp => {
+      const ctr = sp.views ? ((sp.clicks / sp.views) * 100).toFixed(1) : '0.0';
+      const ended = sp.endsAt && new Date(sp.endsAt) < new Date();
+      return `<div style="padding:14px 0;border-bottom:1px solid var(--line);display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
+        ${sp.image ? `<img src="${esc(sp.image)}" alt="" style="width:240px;max-width:100%;aspect-ratio:16/5;object-fit:cover;border-radius:10px;border:1px solid var(--line)">` : ''}
+        <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:6px">
+          <div><strong>${esc(sp.name)}</strong>
+            ${sp.active && !ended ? '<span class="tag tag-live">live</span>' : `<span class="tag">${ended ? 'ended' : 'paused'}</span>`}</div>
+          <a href="${esc(sp.link)}" target="_blank" rel="noopener noreferrer" style="font-size:13px;overflow-wrap:anywhere">${esc(sp.link)}</a>
+          <div style="font-size:14px"><strong>${sp.views}</strong> views · <strong>${sp.clicks}</strong> clicks · ${ctr}% clicked
+            ${sp.endsAt ? ` · <span class="muted">until ${esc(new Date(sp.endsAt).toLocaleDateString())}</span>` : ''}</div>
+          <div class="row" style="gap:10px;flex-wrap:wrap;font-size:14px">
+            ${places.map(pl => `<label style="display:inline-flex;gap:4px;align-items:center">
+              <input type="checkbox" data-sp-place="${esc(sp.id)}" value="${esc(pl)}" ${sp.places.includes(pl) ? 'checked' : ''}> ${esc(PLACE_NAMES[pl] || pl)}</label>`).join('')}
+          </div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-sm" data-sp-toggle="${esc(sp.id)}" data-active="${sp.active ? '1' : ''}">${sp.active ? 'Pause' : 'Show again'}</button>
+            <label class="btn btn-ghost btn-sm" style="cursor:pointer">Replace picture
+              <input type="file" accept="image/gif,image/png,image/jpeg,image/webp" data-sp-image="${esc(sp.id)}" style="display:none"></label>
+            <button class="btn btn-ghost btn-sm" data-sp-delete="${esc(sp.id)}" data-name="${esc(sp.name)}">Delete</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Sponsor banners</h2>
+        <button class="btn btn-ghost btn-sm" data-action="sponsors-close">Close</button>
+      </div>
+      <p class="muted" style="margin-top:6px">
+        Picture <strong>1280 × 400 px</strong> (or 640 × 200), GIF, PNG, JPG or WEBP, up to 1 MB. Everyone sees banners, Premium students too.
+        Several live banners on one screen take turns.
+      </p>
+      <form id="sponsor-form" style="display:grid;gap:10px;margin-top:14px;padding:14px;border:1px dashed var(--line);border-radius:12px">
+        <strong>Add a banner</strong>
+        <input name="name" placeholder="Sponsor name (e.g. the learning centre)" maxlength="80" required>
+        <input name="link" placeholder="https://their-site.uz or t.me/their_channel" maxlength="500" required>
+        <input name="image" type="file" accept="image/gif,image/png,image/jpeg,image/webp" required>
+        <div class="row" style="gap:12px;flex-wrap:wrap;font-size:14px">
+          ${places.map(pl => `<label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" name="places" value="${esc(pl)}" checked> ${esc(PLACE_NAMES[pl] || pl)}</label>`).join('')}
+        </div>
+        <label style="font-size:14px">Show until (optional) <input type="date" name="endsAt"></label>
+        <button class="btn btn-sm" type="submit" style="justify-self:start">Add banner</button>
+      </form>
+      ${rows || '<p class="muted" style="margin-top:12px">No banners yet.</p>'}
+    </div>`;
+  }
+
+  async function loadSponsors({ open } = {}) {
+    setState({ sponsorsOpen: open || state.sponsorsOpen, loading: true, error: '' });
+    try {
+      setState({ sponsors: await api('/admin/sponsors'), loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  function wireSponsorsAdmin() {
+    const form = document.getElementById('sponsor-form');
+    form?.addEventListener('submit', async event => {
+      event.preventDefault();
+      try {
+        await api('/admin/sponsors', { method: 'POST', form: new FormData(form) });
+        state.notice = 'Banner added — it shows straight away.';
+        loadSponsors({});
+      } catch (error) { setState({ error: error.message }); }
+    });
+    const update = async (id, body) => {
+      try { await api(`/admin/sponsors/${id}`, { method: 'PUT', body }); loadSponsors({}); }
+      catch (error) { setState({ error: error.message }); }
+    };
+    root.querySelectorAll('[data-sp-toggle]').forEach(el =>
+      el.addEventListener('click', () => update(el.dataset.spToggle, { active: !el.dataset.active })));
+    root.querySelectorAll('[data-sp-place]').forEach(el =>
+      el.addEventListener('change', () => {
+        const id = el.dataset.spPlace;
+        const places = [...root.querySelectorAll(`[data-sp-place="${id}"]`)].filter(c => c.checked).map(c => c.value);
+        update(id, { places });
+      }));
+    root.querySelectorAll('[data-sp-image]').forEach(el =>
+      el.addEventListener('change', async () => {
+        const file = el.files?.[0];
+        if (!file) return;
+        const data = new FormData();
+        data.append('image', file);
+        try { await api(`/admin/sponsors/${el.dataset.spImage}/image`, { method: 'POST', form: data }); loadSponsors({}); }
+        catch (error) { setState({ error: error.message }); }
+      }));
+    root.querySelectorAll('[data-sp-delete]').forEach(el =>
+      el.addEventListener('click', async () => {
+        if (!window.confirm(`Delete the banner "${el.dataset.name}"? Its view and click counts go with it.`)) return;
+        try { await api(`/admin/sponsors/${el.dataset.spDelete}`, { method: 'DELETE' }); loadSponsors({}); }
+        catch (error) { setState({ error: error.message }); }
+      }));
   }
 
   // ------------------------------------------------------------ pictures
