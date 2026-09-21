@@ -101,6 +101,25 @@ const userSchema = new mongoose.Schema(
         min: 0,
         max: 11
       },
+      // WRITING has its own balance. examsRemaining / partCredits above are the
+      // SPEAKING balance (their names predate writing and are kept so no
+      // existing data moves). A package is 4 speaking + 3 writing, and the two
+      // are not interchangeable: a writing mock costs a fraction of a speaking
+      // one to run, so letting a student spend writing credit on speaking
+      // would quietly turn a cheap package into an expensive one.
+      //
+      // One free writing mock, like speaking: the sample that shows a new
+      // student what the test is.
+      writingRemaining: {
+        type: Number,
+        default: 1
+      },
+      writingPartCredits: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 11
+      },
       stripeCustomerId: String,
       stripeSubscriptionId: String
     },
@@ -126,6 +145,10 @@ const userSchema = new mongoose.Schema(
       message: String,
       messageAt: Date,
       totalGranted: {
+        type: Number,
+        default: 0
+      },
+      totalWritingGranted: {
         type: Number,
         default: 0
       },
@@ -261,30 +284,46 @@ userSchema.methods.getPublicProfile = function () {
 };
 
 /**
- * The credit balance, counted in twelfths of a mock.
+ * The credit balances, counted in twelfths of a mock.
  *
- * One pool pays for everything, and parts are priced as a share of a mock:
+ * Two separate balances — speaking and writing — each priced by part:
  *
- *   speaking — 4 parts (1.1, 1.2, 2, 3), each ¼ of a mock  =  3 twelfths
- *   writing  — 3 parts (1.1, 1.2, 2),    each ⅓ of a mock  =  4 twelfths
- *   a full mock of either                                   = 12 twelfths
+ *   speaking — 4 parts (1.1, 1.2, 2, 3), each ¼ of a speaking mock = 3 twelfths
+ *   writing  — 3 parts (1.1, 1.2, 2),    each ⅓ of a writing mock  = 4 twelfths
+ *   a full mock of either                                           = 12 twelfths
  *
- * Twelfths because 12 is the smallest unit both ¼ and ⅓ divide into exactly.
- * All arithmetic is in whole twelfths, so nothing ever rounds: a student who
- * practises all four speaking parts one by one has spent exactly one mock.
+ * Twelfths because 12 is the smallest unit both ¼ and ⅓ divide into exactly,
+ * so nothing ever rounds. Every method takes the module and defaults to
+ * speaking, which is how all the code written before writing existed calls it.
  */
 export const UNITS_PER_MOCK = 12;
 export const PART_COST = Object.freeze({ speaking: 3, writing: 4 });
+export const MODULES = Object.freeze(['speaking', 'writing']);
 
-userSchema.methods.creditUnits = function () {
-  const whole = Math.max(0, Math.floor(Number(this.subscription?.examsRemaining) || 0));
-  const part = Math.max(0, Math.floor(Number(this.subscription?.partCredits) || 0));
+/** Where each module's balance lives: [whole mocks, leftover twelfths]. */
+export const BALANCE_FIELDS = Object.freeze({
+  speaking: ['examsRemaining', 'partCredits'],
+  writing: ['writingRemaining', 'writingPartCredits']
+});
+
+const fieldsFor = module => BALANCE_FIELDS[module] || BALANCE_FIELDS.speaking;
+
+/** The package a paying student gets. Overridable without a code change. */
+export const PACKAGE = Object.freeze({
+  speaking: Number(process.env.PACKAGE_SPEAKING) || 4,
+  writing: Number(process.env.PACKAGE_WRITING) || 3
+});
+
+userSchema.methods.creditUnits = function (module = 'speaking') {
+  const [wholeField, partField] = fieldsFor(module);
+  const whole = Math.max(0, Math.floor(Number(this.subscription?.[wholeField]) || 0));
+  const part = Math.max(0, Math.floor(Number(this.subscription?.[partField]) || 0));
   return whole * UNITS_PER_MOCK + part;
 };
 
-/** Can this student pay for `units` twelfths of a mock? */
-userSchema.methods.canAfford = function (units) {
-  return this.creditUnits() >= units;
+/** Can this student pay for `units` twelfths of a mock of this module? */
+userSchema.methods.canAfford = function (units, module = 'speaking') {
+  return this.creditUnits(module) >= units;
 };
 
 /**
@@ -292,63 +331,67 @@ userSchema.methods.canAfford = function (units) {
  *
  * Leftover change is spent first, so a student who practised one part last
  * week uses that up before a fresh mock is opened. The balance is then re-split
- * into whole mocks and change — so twelve twelfths can never sit in
- * partCredits; they are always a whole mock again.
+ * into whole mocks and change — so twelve twelfths can never sit in the change
+ * field; they are always a whole mock again.
  */
-userSchema.methods.spendCredits = function (units) {
+userSchema.methods.spendCredits = function (units, module = 'speaking') {
   const cost = Math.max(0, Math.floor(Number(units) || 0));
-  const total = this.creditUnits();
+  const total = this.creditUnits(module);
   if (total < cost) return false;
-  this.setCreditUnits(total - cost);
+  this.setCreditUnits(total - cost, module);
   return true;
 };
 
 /** Hand credit back — an attempt that was charged and never used. */
-userSchema.methods.refundCredits = function (units) {
+userSchema.methods.refundCredits = function (units, module = 'speaking') {
   const amount = Math.max(0, Math.floor(Number(units) || 0));
-  this.setCreditUnits(this.creditUnits() + amount);
+  this.setCreditUnits(this.creditUnits(module) + amount, module);
 };
 
-userSchema.methods.setCreditUnits = function (total) {
+userSchema.methods.setCreditUnits = function (total, module = 'speaking') {
+  const [wholeField, partField] = fieldsFor(module);
   const safe = Math.max(0, Math.floor(total));
-  this.subscription.examsRemaining = Math.floor(safe / UNITS_PER_MOCK);
-  this.subscription.partCredits = safe % UNITS_PER_MOCK;
+  this.subscription[wholeField] = Math.floor(safe / UNITS_PER_MOCK);
+  this.subscription[partField] = safe % UNITS_PER_MOCK;
 };
 
 /**
  * The balance as people say it: "4", "4¾", "⅔", "3 5/12".
  *
  * Shown to students and to the teacher, so both read the same figure.
- * Awkward fractions (5/12, 7/12…) only appear after mixing speaking and
- * writing parts, and are printed plainly rather than rounded — rounding
- * would tell a student they have more, or less, than they do.
  */
 const FRACTION = {
   0: '', 1: '1/12', 2: '⅙', 3: '¼', 4: '⅓', 5: '5/12',
   6: '½', 7: '7/12', 8: '⅔', 9: '¾', 10: '⅚', 11: '11/12'
 };
 
-export function formatCredits(examsRemaining = 0, partCredits = 0) {
-  const whole = Math.max(0, Math.floor(Number(examsRemaining) || 0));
-  const part = Math.max(0, Math.floor(Number(partCredits) || 0)) % UNITS_PER_MOCK;
+export function formatCredits(whole = 0, partTwelfths = 0) {
+  const w = Math.max(0, Math.floor(Number(whole) || 0));
+  const part = Math.max(0, Math.floor(Number(partTwelfths) || 0)) % UNITS_PER_MOCK;
   const fraction = FRACTION[part];
-  if (!fraction) return String(whole);
-  if (!whole) return fraction;
-  return fraction.includes('/') ? `${whole} ${fraction}` : `${whole}${fraction}`;
+  if (!fraction) return String(w);
+  if (!w) return fraction;
+  return fraction.includes('/') ? `${w} ${fraction}` : `${w}${fraction}`;
 }
 
-userSchema.methods.creditLabel = function () {
-  return formatCredits(this.subscription?.examsRemaining, this.subscription?.partCredits);
+/** A module's balance label straight from a (lean) user document. */
+export function balanceLabel(user, module = 'speaking') {
+  const [wholeField, partField] = fieldsFor(module);
+  return formatCredits(user?.subscription?.[wholeField], user?.subscription?.[partField]);
+}
+
+userSchema.methods.creditLabel = function (module = 'speaking') {
+  return balanceLabel(this, module);
 };
 
-/** Is there a whole mock's worth left? */
-userSchema.methods.hasExamsRemaining = function () {
-  return this.canAfford(UNITS_PER_MOCK);
+/** Is there a whole speaking mock's worth left? */
+userSchema.methods.hasExamsRemaining = function (module = 'speaking') {
+  return this.canAfford(UNITS_PER_MOCK, module);
 };
 
-/** Use one whole mock (a full speaking or full writing mock). */
-userSchema.methods.useExamCredit = function () {
-  return this.spendCredits(UNITS_PER_MOCK);
+/** Use one whole mock. */
+userSchema.methods.useExamCredit = function (module = 'speaking') {
+  return this.spendCredits(UNITS_PER_MOCK, module);
 };
 
 /**
@@ -358,7 +401,7 @@ userSchema.methods.useExamCredit = function () {
  * Uzbek and the admin panel says it in English — the same decision, two
  * audiences. `allowed` is the only thing a caller should branch on.
  */
-userSchema.methods.examAccess = function (cost = UNITS_PER_MOCK) {
+userSchema.methods.examAccess = function (cost = UNITS_PER_MOCK, module = 'speaking') {
   // Teachers and admins are never charged and never blocked. They are the
   // people who have to be able to open the test to check it — including the
   // teacher who has just blocked the whole class, who would otherwise have
@@ -376,25 +419,30 @@ userSchema.methods.examAccess = function (cost = UNITS_PER_MOCK) {
     };
   }
 
-  // The cost is in twelfths: 12 for a full mock, 3 for one speaking part,
-  // 4 for one writing part.
-  if (!this.canAfford(cost)) {
+  // The cost is in twelfths of THIS module's mock: 12 for a full mock, 3 for
+  // one speaking part, 4 for one writing part.
+  const [wholeField] = BALANCE_FIELDS[module] || BALANCE_FIELDS.speaking;
+  const label = this.creditLabel(module);
+
+  if (!this.canAfford(cost, module)) {
     return {
       allowed: false,
       code: 'no_credits',
-      remaining: this.subscription.examsRemaining,
-      credits: this.creditLabel(),
-      message: this.creditUnits() > 0
-        ? `You have ${this.creditLabel()} of a mock left — not enough for this. Ask your teacher to add more.`
-        : 'You have no mock exams left. Ask your teacher to add more.'
+      module,
+      remaining: this.subscription[wholeField],
+      credits: label,
+      message: this.creditUnits(module) > 0
+        ? `You have ${label} of a ${module} mock left — not enough for this. Ask your teacher to add more.`
+        : `You have no ${module} mocks left. Ask your teacher to add more.`
     };
   }
 
   return {
     allowed: true,
     code: 'ok',
-    remaining: this.subscription.examsRemaining,
-    credits: this.creditLabel(),
+    module,
+    remaining: this.subscription[wholeField],
+    credits: label,
     message: ''
   };
 };

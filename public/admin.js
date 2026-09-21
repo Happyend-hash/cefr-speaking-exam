@@ -315,7 +315,9 @@
       </div>
 
       <p class="muted" style="margin-top:6px">
-        A new account gets one free mock. After that you add mocks here when someone pays.
+        A new account gets one free speaking mock and one free writing mock. After that,
+        when someone pays, press <strong>Add package</strong> (${packageLabel()}) — or add
+        speaking or writing mocks by hand for special cases.
         ${data?.contact
           ? `Students are told to contact <strong>${esc(data.contact)}</strong>.`
           : `<strong>Students are not shown anywhere to pay yet.</strong> Set
@@ -360,6 +362,17 @@
     </div>`;
   }
 
+  // The standard package, as the server grants it (PACKAGE_SPEAKING /
+  // PACKAGE_WRITING in Railway). Shown on the button so the teacher knows
+  // what one click adds.
+  const packageLabel = () => {
+    const p = state.students?.package || { speaking: 4, writing: 3 };
+    return `${p.speaking} speaking + ${p.writing} writing`;
+  };
+
+  const balance = (name, label, some) =>
+    `<span style="font-weight:600;${some ? '' : 'color:var(--red)'}">${esc(name)} ${esc(label)}</span>`;
+
   function studentRow(s) {
     const tags =
       (s.blocked ? '<span class="tag tag-draft">blocked</span>' : '') +
@@ -380,16 +393,24 @@
           ${s.attempts} attempt${s.attempts === 1 ? '' : 's'} · last ${last}
         </div>
         <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
-          <span style="font-weight:600;${s.remaining > 0 || s.partCredits > 0 ? '' : 'color:var(--red)'}">
-            ${esc(s.credits ?? String(s.remaining))} left
-          </span>
-          <input id="amt-${esc(s.id)}" type="number" min="0" max="100" value="5"
-                 style="width:64px" aria-label="Number of mocks" />
-          <button class="btn btn-sm" data-access="grant" data-id="${esc(s.id)}">Add</button>
-          <button class="btn btn-ghost btn-sm" data-access="set" data-id="${esc(s.id)}">Set to</button>
+          ${balance('Speaking', s.credits ?? String(s.remaining), s.remaining > 0 || s.partCredits > 0)}
+          ${balance('Writing', s.writingCredits ?? String(s.writingRemaining ?? 0), s.writingRemaining > 0 || s.writingPartCredits > 0)}
+          <button class="btn btn-sm" data-access="package" data-id="${esc(s.id)}"
+                  title="Adds ${packageLabel()} on top of what is left">Add package (${packageLabel()})</button>
           <button class="btn btn-ghost btn-sm" data-access="${s.blocked ? 'unblock' : 'block'}"
                   data-id="${esc(s.id)}">${s.blocked ? 'Unblock' : 'Block'}</button>
         </div>
+      </div>
+      <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px;justify-content:flex-end">
+        <span class="muted" style="font-size:13px">Or by hand:</span>
+        <input id="amt-${esc(s.id)}" type="number" min="0" max="100" value="1"
+               style="width:64px" aria-label="Number of mocks" />
+        <select id="mod-${esc(s.id)}" aria-label="Which mocks">
+          <option value="speaking">speaking</option>
+          <option value="writing">writing</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" data-access="grant" data-id="${esc(s.id)}">Add</button>
+        <button class="btn btn-ghost btn-sm" data-access="set" data-id="${esc(s.id)}">Set to</button>
       </div>
     </div>`;
   }
@@ -1232,6 +1253,7 @@
   async function changeAccess(id, action) {
     const input = document.getElementById(`amt-${id}`);
     const amount = Number(input?.value ?? 0);
+    const module = document.getElementById(`mod-${id}`)?.value || 'speaking';
 
     if ((action === 'grant' || action === 'set') && !Number.isInteger(amount)) {
       return setState({ error: 'Give a whole number of mocks.' });
@@ -1241,7 +1263,7 @@
     try {
       const data = await api(`/admin/students/${id}/access`, {
         method: 'POST',
-        body: { action, amount }
+        body: { action, amount, module }
       });
 
       // Reloads rather than patching the row in place: the attempt counts and
@@ -1249,9 +1271,9 @@
       // is worse than a second of loading.
       await loadStudents({});
       setState({
-        notice: action === 'grant'
-          ? `${data.email} now has ${data.credits ?? data.remaining} mock(s). They will see the confirmation on their dashboard.`
-          : `${data.email}: ${data.blocked ? 'blocked' : 'allowed'}, ${data.credits ?? data.remaining} mock(s) left.`
+        notice: action === 'grant' || action === 'package'
+          ? `${data.email} now has speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'}. They will see the confirmation on their dashboard.`
+          : `${data.email}: ${data.blocked ? 'blocked' : 'allowed'} — speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'} left.`
       });
     } catch (error) {
       setState({ loading: false, error: error.message });

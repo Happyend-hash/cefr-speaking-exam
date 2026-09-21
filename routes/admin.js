@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import Exam from '../models/Exam.js';
 import ExamResult from '../models/ExamResult.js';
 import CalibrationSample from '../models/CalibrationSample.js';
-import User, { formatCredits } from '../models/User.js';
+import User, { formatCredits, balanceLabel, BALANCE_FIELDS, PACKAGE } from '../models/User.js';
 import ImageStorageService, {
   ALLOWED_IMAGE_TYPES,
   MAX_IMAGE_BYTES
@@ -1183,6 +1183,10 @@ function studentRow(user, activity) {
     // Change left over from single parts, in twelfths of a mock.
     partCredits: user.subscription?.partCredits ?? 0,
     credits: formatCredits(user.subscription?.examsRemaining, user.subscription?.partCredits),
+    // Writing is a separate balance.
+    writingRemaining: user.subscription?.writingRemaining ?? 0,
+    writingPartCredits: user.subscription?.writingPartCredits ?? 0,
+    writingCredits: balanceLabel(user, 'writing'),
     granted: user.access?.totalGranted || 0,
     note: user.access?.note || '',
     pendingMessage: user.access?.message || '',
@@ -1250,7 +1254,9 @@ router.get('/students', async (req, res, next) => {
         studentCount: await User.countDocuments({ role: 'student' }),
         // So the panel can tell the teacher whether students have anywhere to
         // send a payment to, instead of quietly showing them a dead end.
-        contact: process.env.TELEGRAM_CONTACT || ''
+        contact: process.env.TELEGRAM_CONTACT || '',
+        // What "Add package" grants, so the button says exactly that.
+        package: PACKAGE
       }
     });
   } catch (error) {
@@ -1277,32 +1283,57 @@ router.post('/students/:id/access', async (req, res, next) => {
     if (!user.access) user.access = {};
     let outcome = '';
 
-    if (action === 'grant' || action === 'set') {
+    // Which balance. Speaking unless told otherwise, so anything that called
+    // this before writing existed still does what it did.
+    const module = req.body?.module === 'writing' ? 'writing' : 'speaking';
+    const [wholeField, partField] = BALANCE_FIELDS[module];
+    const both = () =>
+      `speaking ${balanceLabel(user, 'speaking')}, writing ${balanceLabel(user, 'writing')}`;
+
+    const confirmPayment = text => {
+      user.access.lastGrantedAt = new Date();
+      user.access.lastGrantedBy = req.user.email || String(req.user.id);
+      // Uzbek, because this is read by the student on their own dashboard,
+      // where every other instruction is already in Uzbek.
+      user.access.message = String(message || '').trim() || text;
+      user.access.messageAt = new Date();
+    };
+
+    if (action === 'package') {
+      // The standard package: 4 speaking + 3 writing (PACKAGE_SPEAKING /
+      // PACKAGE_WRITING to change it). Added on top of whatever is left.
+      const before = both();
+      user.subscription.examsRemaining = (user.subscription.examsRemaining || 0) + PACKAGE.speaking;
+      user.subscription.writingRemaining = (user.subscription.writingRemaining || 0) + PACKAGE.writing;
+      user.access.totalGranted = (user.access.totalGranted || 0) + PACKAGE.speaking;
+      user.access.totalWritingGranted = (user.access.totalWritingGranted || 0) + PACKAGE.writing;
+      confirmPayment(
+        `To'lovingiz tasdiqlandi. Hisobingizga ${PACKAGE.speaking} ta speaking va ${PACKAGE.writing} ta writing mock qo'shildi.`
+      );
+      outcome = `${user.email}: package added — ${before} → ${both()}`;
+    } else if (action === 'grant' || action === 'set') {
       const value = Number(amount);
       if (!Number.isInteger(value) || value < 0 || value > MAX_GRANT) {
         throw new APIError(`Give a whole number of mocks between 0 and ${MAX_GRANT}.`, 400);
       }
 
-      const before = formatCredits(user.subscription.examsRemaining, user.subscription.partCredits);
-      user.subscription.examsRemaining =
-        action === 'grant' ? (user.subscription.examsRemaining || 0) + value : value;
-      // "Set to 5" means exactly 5: any leftover third from a writing part goes.
-      // "Add 5" keeps it — the student already paid for that third.
-      if (action === 'set') user.subscription.partCredits = 0;
+      const before = balanceLabel(user, module);
+      user.subscription[wholeField] =
+        action === 'grant' ? (user.subscription[wholeField] || 0) + value : value;
+      // "Set to 5" means exactly 5: any leftover part-credit goes.
+      // "Add 5" keeps it — the student already paid for that part.
+      if (action === 'set') user.subscription[partField] = 0;
 
       if (action === 'grant' && value > 0) {
-        user.access.totalGranted = (user.access.totalGranted || 0) + value;
-        user.access.lastGrantedAt = new Date();
-        user.access.lastGrantedBy = req.user.email || String(req.user.id);
-        // Uzbek, because this is read by the student on their own dashboard,
-        // where every other instruction is already in Uzbek.
-        user.access.message =
-          String(message || '').trim() ||
-          `To'lovingiz tasdiqlandi. Hisobingizga ${value} ta mock qo'shildi.`;
-        user.access.messageAt = new Date();
+        if (module === 'writing') {
+          user.access.totalWritingGranted = (user.access.totalWritingGranted || 0) + value;
+        } else {
+          user.access.totalGranted = (user.access.totalGranted || 0) + value;
+        }
+        confirmPayment(`To'lovingiz tasdiqlandi. Hisobingizga ${value} ta ${module} mock qo'shildi.`);
       }
 
-      outcome = `${user.email}: ${before} → ${formatCredits(user.subscription.examsRemaining, user.subscription.partCredits)} mock(s)`;
+      outcome = `${user.email}: ${module} ${before} → ${balanceLabel(user, module)} mock(s)`;
     } else if (action === 'block') {
       user.access.blocked = true;
       user.access.blockedAt = new Date();
@@ -1312,7 +1343,7 @@ router.post('/students/:id/access', async (req, res, next) => {
       user.access.blockedAt = null;
       outcome = `${user.email} unblocked`;
     } else {
-      throw new APIError('Unknown action. Use grant, set, block or unblock.', 400);
+      throw new APIError('Unknown action. Use package, grant, set, block or unblock.', 400);
     }
 
     if (note !== undefined) user.access.note = String(note).slice(0, 500);
@@ -1329,6 +1360,8 @@ router.post('/students/:id/access', async (req, res, next) => {
         blocked: Boolean(user.access.blocked),
         remaining: user.subscription.examsRemaining,
         credits: formatCredits(user.subscription.examsRemaining, user.subscription.partCredits),
+        writingRemaining: user.subscription.writingRemaining ?? 0,
+        writingCredits: balanceLabel(user, 'writing'),
         pendingMessage: user.access.message || ''
       }
     });
@@ -1377,7 +1410,8 @@ router.post('/students/access-all', async (req, res, next) => {
       if (!Number.isInteger(value) || value < 0 || value > MAX_GRANT) {
         throw new APIError(`Give a whole number of mocks between 0 and ${MAX_GRANT}.`, 400);
       }
-      update = { $set: { 'subscription.examsRemaining': value, 'subscription.partCredits': 0 } };
+      const [wholeField, partField] = BALANCE_FIELDS[req.body?.module === 'writing' ? 'writing' : 'speaking'];
+      update = { $set: { [`subscription.${wholeField}`]: value, [`subscription.${partField}`]: 0 } };
     } else {
       throw new APIError('Unknown action. Use block, unblock or set.', 400);
     }

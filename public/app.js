@@ -964,6 +964,7 @@
     failed: 'Tekshirib bo\'lmadi',
     partial: "To'liq emas",
     back: 'Yozma imtihonga qaytish',
+    balance: n => `Qolgan writing mock: ${n}`,
 
     timeLeft: 'Qolgan vaqt',
     words: n => `${n} so'z`,
@@ -1095,7 +1096,7 @@
       const data = await api('/writing/mock', { method: 'POST', body: { testId } });
       adoptAttempt(data);
       if (data.credits !== undefined && data.credits !== null) {
-        state.access = { ...(state.access || {}), credits: data.credits, units: data.units };
+        state.access = { ...(state.access || {}), writing: { ...(state.access?.writing || {}), credits: data.credits, units: data.units } };
       }
       state.loading = false;
       go('writing-exam');
@@ -1408,7 +1409,7 @@
     try {
       const data = await api('/writing/check', { method: 'POST', body: { parts } });
       if (data.credits !== undefined && data.credits !== null) {
-        state.access = { ...(state.access || {}), credits: data.credits, units: data.units };
+        state.access = { ...(state.access || {}), writing: { ...(state.access?.writing || {}), credits: data.credits, units: data.units } };
       }
       state.loading = false;
       openWritingResult(data.attempt.id);
@@ -1636,13 +1637,18 @@
             </button>`).join('')}</div></div>`
       : `<p class="muted">${esc(WR_UZ.none)}</p>`;
 
-    const credits = state.access?.credits;
+    // Writing has its own balance (a package is 4 speaking + 3 writing).
+    const credits = state.access?.writing?.credits;
 
     return `
       <div>
         <button class="crumb" data-go="dashboard">${icon('left')} Dashboard</button>
         <h1 style="font-size:26px;margin:10px 0 4px">${esc(WR_UZ.heading)}</h1>
-        <p class="muted">${esc(WR_UZ.sub)}${credits ? ` · ${esc(ACCESS_UZ.remaining(credits))}` : ''}</p>
+        <p class="muted">${esc(WR_UZ.sub)}</p>
+        ${credits !== undefined && credits !== null
+          ? `<p style="margin-top:6px;font-weight:600">${esc(WR_UZ.balance(credits))}${
+              state.access?.writing?.units > 0 ? '' : ` · <button class="link-more" style="margin-top:0" data-go="topup">${esc(ACCESS_UZ.how)}</button>`}</p>`
+          : ''}
       </div>
       <div class="section-head" style="margin-top:8px"><h2>${esc(WR_UZ.mockTitle)}</h2></div>
       <div class="mock-grid">${tests}</div>
@@ -2072,14 +2078,16 @@
   };
 
   const ACCESS_UZ = {
-    remaining: n => `Qolgan mock: ${n}`,
+    remaining: n => `Qolgan speaking mock: ${n}`,
     remainingNone: 'Mock qolmadi',
     free: "Birinchi mock — bepul",
 
-    outTitle: 'Mock imtihonlaringiz tugadi',
+    outTitle: 'Bu bo\'lim uchun mock qolmadi',
     outBody:
       "Har bir mock yozuvni matnga o'girish va tekshirish uchun haqiqiy pul talab qiladi, " +
       "shuning uchun birinchi bepul mockdan keyin ustoz ruxsat beradi.",
+
+    packageLine: "Bitta paket: 4 ta speaking va 3 ta writing mock.",
 
     blockedTitle: 'Ruxsat vaqtincha to\'xtatilgan',
     blockedBody:
@@ -2140,6 +2148,7 @@
       <div class="card form-card" style="max-width:560px">
         <h2 style="margin-bottom:8px">${blocked ? ACCESS_UZ.blockedTitle : ACCESS_UZ.outTitle}</h2>
         <p class="muted">${blocked ? ACCESS_UZ.blockedBody : ACCESS_UZ.outBody}</p>
+        ${blocked ? '' : `<p style="margin-top:10px;font-weight:600">${ACCESS_UZ.packageLine}</p>`}
 
         <h3 style="font-size:15px;margin-top:22px">${ACCESS_UZ.how}</h3>
         <ol style="margin:10px 0 0 18px;line-height:1.7">
@@ -2243,6 +2252,9 @@
       </div>
       <div>
         <button class="btn btn-ghost" data-go="writing">Start writing ${icon('right')}</button>
+        ${state.access?.writing?.credits != null
+          ? `<p class="muted" style="margin-top:8px;text-align:center">${esc(WR_UZ.balance(state.access.writing.credits))}</p>`
+          : ''}
       </div>
     </div>`;
 

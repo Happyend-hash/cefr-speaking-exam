@@ -111,6 +111,15 @@ router.get('/profile', async (req, res, next) => {
           // a mock (¼ speaking, ⅓ writing), so the whole count alone under-reports.
           credits: user.examAccess().code === 'staff' ? null : user.creditLabel(),
           units: user.examAccess().code === 'staff' ? null : user.creditUnits(),
+          // Writing has its own balance — a package is 4 speaking + 3 writing,
+          // and the two are not interchangeable.
+          writing: user.examAccess().code === 'staff'
+            ? null
+            : {
+                remaining: user.subscription?.writingRemaining ?? 0,
+                credits: user.creditLabel('writing'),
+                units: user.creditUnits('writing')
+              },
           blocked: Boolean(user.access?.blocked),
           // Where to reach the teacher about paying. Configured once, in the
           // environment, so the contact can change without a deploy of the app

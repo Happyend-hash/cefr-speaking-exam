@@ -89,7 +89,7 @@ async function refund(studentId, units) {
   if (!units) return;
   const student = await User.findById(studentId);
   if (!student) return;
-  student.refundCredits(units);
+  student.refundCredits(units, 'writing');
   await student.save();
 }
 
@@ -222,7 +222,7 @@ router.post('/mock', async (req, res, next) => {
     if (!first) throw new APIError('User not found', 404);
 
     // A block stops even a resume: it is a decision about the person.
-    const blocked = first.examAccess(UNITS_PER_MOCK);
+    const blocked = first.examAccess(UNITS_PER_MOCK, 'writing');
     if (blocked.code === 'blocked') throw new APIError(blocked.message, 403, 'blocked');
 
     // Resume rather than charge again: a reload or a lost connection must not
@@ -247,7 +247,7 @@ router.post('/mock', async (req, res, next) => {
     // Read the balance only now: an expired attempt settled just above may
     // have handed credit back.
     const student = await User.findById(req.user.id);
-    const gate = student.examAccess(UNITS_PER_MOCK);
+    const gate = student.examAccess(UNITS_PER_MOCK, 'writing');
 
     // A whole mock is taken up front, because the student is about to see all
     // three tasks. Parts left blank are handed back at submission.
@@ -265,7 +265,7 @@ router.post('/mock', async (req, res, next) => {
     });
 
     if (gate.code !== 'staff') {
-      student.spendCredits(UNITS_PER_MOCK);
+      student.spendCredits(UNITS_PER_MOCK, 'writing');
       await student.save();
     }
 
@@ -276,8 +276,8 @@ router.post('/mock', async (req, res, next) => {
         attempt: presentWritingAttempt(attempt),
         test: publicWritingTest(test),
         serverNow: Date.now(),
-        credits: gate.code === 'staff' ? null : student.creditLabel(),
-        units: gate.code === 'staff' ? null : student.creditUnits()
+        credits: gate.code === 'staff' ? null : student.creditLabel('writing'),
+        units: gate.code === 'staff' ? null : student.creditUnits('writing')
       }
     });
   } catch (error) {
@@ -366,7 +366,7 @@ router.post('/check', async (req, res, next) => {
     if (!student) throw new APIError('User not found', 404);
 
     const cost = submitted.length * PART_COST.writing;
-    const gate = student.examAccess(cost);
+    const gate = student.examAccess(cost, 'writing');
     if (gate.code === 'blocked') throw new APIError(gate.message, 403, 'blocked');
     if (!gate.allowed) throw new APIError(gate.message, 402, gate.code);
 
@@ -392,7 +392,7 @@ router.post('/check', async (req, res, next) => {
     const attempt = await WritingAttempt.create(doc);
 
     if (gate.code !== 'staff') {
-      student.spendCredits(cost);
+      student.spendCredits(cost, 'writing');
       await student.save();
     }
 
@@ -402,8 +402,8 @@ router.post('/check', async (req, res, next) => {
       success: true,
       data: {
         attempt: presentWritingAttempt(attempt),
-        credits: gate.code === 'staff' ? null : student.creditLabel(),
-        units: gate.code === 'staff' ? null : student.creditUnits()
+        credits: gate.code === 'staff' ? null : student.creditLabel('writing'),
+        units: gate.code === 'staff' ? null : student.creditUnits('writing')
       }
     });
   } catch (error) {
