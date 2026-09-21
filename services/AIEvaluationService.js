@@ -5,6 +5,7 @@ import { CEFR_BANDS, levelForScore, MAX_SCORE } from '../models/ExamResult.js';
 import { CRITERIA_PROMPT_BLOCK, CRITERION_KEYS, BAND_LABELS } from '../content/speakingCriteria.js';
 import { bandsToRaw, rawToScore, BAND_MAX } from './ScoreConversion.js';
 import { WRITING_PARTS, WRITING_PROMPT_BLOCK } from '../content/writingCriteria.js';
+import { describeForMarker } from './FluencyService.js';
 
 /**
  * AI Evaluation Service - Integrates with Claude Opus for CEFR assessment
@@ -186,7 +187,7 @@ ${blocks.join('\n\n')}
 `;
   }
 
-  async evaluateAttempt({ answers, examTitle, pronunciation = null, anchors = [] }) {
+  async evaluateAttempt({ answers, examTitle, pronunciation = null, fluency = null, anchors = [] }) {
     const byPart = answers.reduce((groups, answer) => {
       (groups[answer.part] ||= []).push(answer);
       return groups;
@@ -195,7 +196,9 @@ ${blocks.join('\n\n')}
     const transcript = Object.entries(byPart)
       .map(([part, group]) => `
 === PART ${part} ===
-${group.map(a => `Q: ${a.question}\nA: "${a.transcription}"`).join('\n\n')}`)
+${group.map(a => `Q: ${a.question}\nA: "${a.transcription}"${
+      a.fluency ? `\n[recording: ${describeForMarker(a.fluency)}]` : ''
+    }`).join('\n\n')}`)
       .join('\n');
 
     const cached = `You are an expert examiner for the O'zbekiston Multilevel English speaking exam.
@@ -244,6 +247,43 @@ No punctuation, inferred sentence boundaries, and repetitions or restarts that
 are normal in speech and often artefacts of transcription rather than errors.
 Judge the English a listener would have heard.
 
+Hesitation sounds are written down on purpose: "um", "uh", "erm", "eee",
+"mmm". They are evidence about FLUENCY. They are never grammar or vocabulary
+errors — do not count them against those criteria.
+
+FLUENCY (nutq ravonligi) IS JUDGED FROM THE RECORDING, NOT THE TEXT:
+A transcript is clean — a four-second silence leaves no trace in it. So every
+answer below carries a [recording: …] line measured from its full audio:
+
+- words/min: pace across the time the candidate was speaking, pauses included
+- pauses ≥1s: silences a listener notices; ≥2s strain the listener; the
+  longest one is named
+- silent %: share of the speaking time spent silent between words
+- fillers: "um", "eee", "mmm" and similar, counted
+- repeats: immediate restarts such as "I I think"
+- started after: silence before the first word
+
+Read them against the descriptors' own language — "frequent pausing, false
+starts and reformulations", "some pausing", "pausing while searching for
+vocabulary but this does not put a strain on the listener". As a guide for
+this exam's candidates, taken over the answers that carry most of the speaking
+(Parts 2 and 3 matter most):
+
+- Frequent pausing (the lower bands): under ~80 words/min, OR 6+ pauses ≥1s per
+  minute, OR regular pauses of 2-3s+, OR 8+ fillers per minute.
+- Some pausing (middle bands): roughly 80-110 words/min, 3-5 pauses ≥1s per
+  minute, a few fillers.
+- Pausing that does not strain the listener (upper bands): above ~110
+  words/min, at most 2 pauses ≥1s per minute and none much over 2s, fillers
+  occasional.
+
+These are guides, not a formula: a thoughtful pause before a complex idea is
+not the same as stalling mid-sentence, and a candidate who answers briefly but
+without hesitation is fluent. But the measurements outrank your impression of
+the text. A candidate whose transcript reads smoothly but whose recording shows
+frequent long pauses and fillers is NOT fluent, and must not get a high band
+for fluency.
+
 PRONUNCIATION (talaffuz) IS MEASURED, NOT GUESSED:
 A transcript cannot hear an accent. Where measured figures are supplied in the
 performance below, the talaffuz band must follow them and the descriptors
@@ -270,7 +310,7 @@ error, not caution.`;
 
     const measured = pronunciation?.assessed
       ? `\n\nMEASURED PRONUNCIATION (Azure AI Speech, 0-100, from the candidate's actual audio):
-accuracy ${Math.round(pronunciation.accuracy ?? 0)}, fluency ${Math.round(pronunciation.fluency ?? 0)}${
+accuracy ${Math.round(pronunciation.accuracy ?? 0)}, Azure fluency ${Math.round(pronunciation.fluency ?? 0)} (lenient: sampled from about one minute and blind to fillers — for fluency, the [recording] measurements above outrank it)${
           Number.isFinite(pronunciation.prosody) ? `, prosody ${Math.round(pronunciation.prosody)}` : ''
         }, overall ${Math.round(pronunciation.overall ?? 0)}${
           pronunciation.problemWords?.length
@@ -291,8 +331,13 @@ if any. Do not mark the candidate down for the accuracy number.`
       : `\n\nNo pronunciation measurement is available for this attempt. Return null for
 the talaffuz band.`;
 
+    const measuredFluency = fluency?.measured
+      ? `\n\nFLUENCY ACROSS THE WHOLE ATTEMPT (measured from ${fluency.answers} recordings, ${Math.round(fluency.speakingSec)}s of speaking):
+${fluency.wordsPerMin} words/min; ${fluency.longPausesPerMin} pauses ≥1s per minute (${fluency.longPauses} in all, ${fluency.veryLongPauses} of them ≥2s, longest ${fluency.longestPauseSec}s); silent ${fluency.pauseRatio}% of speaking time; ${fluency.fillersPerMin} fillers per minute (${fluency.fillers} in all); ${fluency.repeats} repeats${fluency.slowStarts ? `; ${fluency.slowStarts} answer(s) started only after 3s+ of silence` : ''}.`
+      : '';
+
     const user = `${examTitle ? `Exam: ${examTitle}\n\n` : ''}THE CANDIDATE'S FULL PERFORMANCE:
-${transcript}${measured}`;
+${transcript}${measured}${measuredFluency}`;
 
     const response = await this.callClaudeAPI({ cached, user });
     const verdict = this.parseEvaluation(response);
@@ -666,7 +711,9 @@ boundaries have to be inferred. Repetitions, restarts and self-corrections are
 normal features of fluent speech and are frequently transcription artefacts
 rather than the candidate's errors. Judge the English a listener would have
 heard, not the typography. Do not count a missing comma, a run-on line or a
-repeated word as a grammatical error.
+repeated word as a grammatical error. Hesitation sounds ("um", "uh", "erm",
+"eee", "mmm") are written down on purpose for the fluency measurement; they
+are never grammar or vocabulary errors.
 
 WHAT YOU CAN AND CANNOT JUDGE:
 You did not hear this student. Pronunciation and fluency are measured separately

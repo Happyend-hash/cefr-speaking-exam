@@ -191,6 +191,14 @@
 
   const criterionLabel = key => CRITERION_LABELS[key] || key;
 
+  /** The measured fluency of a whole attempt, in one Uzbek sentence. */
+  const FLUENCY_UZ = {
+    summary: f =>
+      `Yozuvingizdan o'lchandi: daqiqasiga ${f.wordsPerMin} so'z · ` +
+      `${f.longPauses} ta uzoq pauza (1 soniyadan ko'p${f.veryLongPauses ? `, ${f.veryLongPauses} tasi 2 soniyadan ko'p` : ''}), eng uzuni ${f.longestPauseSec} s · ` +
+      `${f.fillers} ta to'ldiruvchi tovush (umm, eee) · ${f.repeats} ta takrorlash.`
+  };
+
   const esc = value =>
     String(value ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -3041,6 +3049,14 @@
         ${c.descriptor
           ? `<p style="margin-top:10px">${esc(c.descriptor)}</p>`
           : ''}
+        ${c.key === 'fluencyCoherence' && state.result?.fluency
+          // The recording behind the band: what a listener heard that the
+          // transcript cannot show. Pauses and fillers are things a student
+          // can hear in their own recording and work on.
+          ? `<div class="muted" style="font-size:13px;margin-top:8px">
+               ${esc(FLUENCY_UZ.summary(state.result.fluency))}
+             </div>`
+          : ''}
         ${c.key === 'pronunciation' && state.result?.pronunciation?.assessed
           // The measurement behind the band, shown where the band is. This is
           // the one criterion with an instrument rather than an opinion behind
@@ -3223,9 +3239,15 @@
                     // trusted to the point, the judged ones are an opinion.
                     value?.measured ? '<span class="measured-tag">o\'lchandi</span>' : ''
                   }</span>
-                  <span class="criterion-score">${value?.score ?? 0} / ${MAX_SCORE}</span>
+                  ${value?.score === null && value?.measured
+                    // Measured facts with no score (fluency): the pauses and
+                    // fillers are the finding, and a bar would invent a number.
+                    ? ''
+                    : `<span class="criterion-score">${value?.score ?? 0} / ${MAX_SCORE}</span>`}
                 </div>
-                <div class="bar-track"><div class="bar-fill${value?.measured ? ' measured' : ''}" style="width:${pctOfMax(value?.score)}%"></div></div>
+                ${value?.score === null && value?.measured
+                  ? ''
+                  : `<div class="bar-track"><div class="bar-fill${value?.measured ? ' measured' : ''}" style="width:${pctOfMax(value?.score)}%"></div></div>`}
                 ${value?.feedback ? `<p>${esc(value.feedback)}</p>` : ''}
               </div>`).join('')}
             ${state.result?.pronunciation && !state.result.pronunciation.assessed

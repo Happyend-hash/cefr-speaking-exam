@@ -18,6 +18,47 @@ import axios from 'axios';
 
 const WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
+/**
+ * Ask the transcriber to keep hesitations.
+ *
+ * By default speech-to-text writes clean text: "umm", "erm", "eee" and false
+ * starts are dropped, which is right for dictation and wrong for an exam that
+ * marks fluency. The marker only ever reads the transcript, so hesitation it
+ * cannot see is hesitation it cannot mark — this was a real cause of generous
+ * fluency bands.
+ *
+ * OpenAI's documented way to keep them is a prompt written in the style you
+ * want back: a transcript full of fillers makes the model keep fillers.
+ *
+ * The prompt is DATA the model imitates, not an instruction, and newer models
+ * occasionally return the prompt itself when the audio has little speech in
+ * it. transcribeWithWhisper checks for that and retries without the prompt, so
+ * an echo can never be marked as the student's answer.
+ *
+ * TRANSCRIBE_KEEP_FILLERS=false turns this off.
+ */
+const FILLER_PROMPT = 'Umm, so, uh, I- I think, erm, the main thing is, mmm, well... eee, you know.';
+
+const normalise = text => String(text || '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+
+/**
+ * Did the model hand back our prompt instead of the student's words?
+ *
+ * An echo is any run of five of the prompt's words in the prompt's own order.
+ * Students do say "you know" and "I think" — a short answer sharing a few
+ * common words with the prompt is not an echo — but no real answer reproduces
+ * five consecutive words of this particular hesitation-strewn sentence.
+ */
+export function isPromptEcho(text, prompt = FILLER_PROMPT) {
+  const out = ` ${normalise(text)} `;
+  const p = normalise(prompt).split(' ');
+  if (!out.trim()) return false;
+  for (let i = 0; i + 5 <= p.length; i++) {
+    if (out.includes(` ${p.slice(i, i + 5).join(' ')} `)) return true;
+  }
+  return false;
+}
+
 class TranscriptionService {
   get whisperKey() {
     const key = process.env.OPENAI_API_KEY;
@@ -80,7 +121,21 @@ class TranscriptionService {
     };
   }
 
+  get keepFillers() {
+    return String(process.env.TRANSCRIBE_KEEP_FILLERS || 'true').toLowerCase() !== 'false';
+  }
+
   async transcribeWithWhisper(audioBuffer, filename, contentType) {
+    if (!this.keepFillers) return this.transcribeOnce(audioBuffer, filename, contentType, '');
+
+    const text = await this.transcribeOnce(audioBuffer, filename, contentType, FILLER_PROMPT);
+    if (!isPromptEcho(text)) return text;
+
+    console.warn('Transcription returned the filler prompt itself; retrying without it');
+    return this.transcribeOnce(audioBuffer, filename, contentType, '');
+  }
+
+  async transcribeOnce(audioBuffer, filename, contentType, prompt) {
     const form = new FormData();
     form.append('file', new Blob([audioBuffer], { type: contentType }), filename);
     // gpt-4o-mini-transcribe is half the price of legacy whisper-1 ($0.003 vs
@@ -88,6 +143,7 @@ class TranscriptionService {
     // with WHISPER_MODEL if it ever mishears these students.
     form.append('model', process.env.WHISPER_MODEL || 'gpt-4o-mini-transcribe');
     form.append('language', process.env.EXAM_LANGUAGE || 'en');
+    if (prompt) form.append('prompt', prompt);
 
     try {
       const response = await axios.post(WHISPER_URL, form, {

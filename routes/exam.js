@@ -14,6 +14,7 @@ import AudioStorageService, {
 import ImageStorageService from '../services/ImageStorageService.js';
 import User, { UNITS_PER_MOCK, PART_COST } from '../models/User.js';
 import PronunciationService from '../services/PronunciationService.js';
+import FluencyService from '../services/FluencyService.js';
 import { removeResult } from '../services/AttemptCleanup.js';
 import { RAW_MAX, BAND_MAX } from '../services/ScoreConversion.js';
 import {
@@ -309,6 +310,9 @@ router.get('/results/:resultId', async (req, res, next) => {
               problemWords: result.pronunciation.problemWords || []
             }
           : { assessed: false },
+        // Measured from every answer's full recording — the evidence behind
+        // the fluency band. Absent on attempts marked before it existed.
+        fluency: result.fluency?.measured ? result.fluency : null,
         startedAt: result.startedAt,
         submittedAt: result.submittedAt,
         completedAt: result.completedAt,
@@ -827,6 +831,56 @@ async function assessPronunciation(result) {
 }
 
 /**
+ * Measure fluency on EVERY answer, from the full recording.
+ *
+ * Unlike pronunciation this is not sampled. Pronunciation is a stable trait —
+ * an accent does not change between questions — but hesitation does: a
+ * student fluent on familiar Part 1 questions can stall badly when arguing in
+ * Part 3, and that is exactly the evidence the band turns on. It is local
+ * arithmetic (ffmpeg + FluencyService) with no paid service behind it, so
+ * measuring everything costs only a second or two.
+ *
+ * One recording at a time, to keep memory flat when a class submits together.
+ * Never throws — a missing measurement must not cost the student their mark.
+ */
+async function measureFluency(result) {
+  const perTask = new Map();
+  for (const taskResult of result.taskResults) {
+    if (!taskResult.audioKey) continue;
+    try {
+      const audio = await AudioStorageService.readBuffer(taskResult.audioKey);
+      perTask.set(taskResult.taskNumber, await FluencyService.measureAnswer(audio, taskResult.transcription));
+    } catch (error) {
+      perTask.set(taskResult.taskNumber, { measured: false, reason: error.message.slice(0, 200) });
+    }
+  }
+  return perTask;
+}
+
+/**
+ * The fluency facts for one answer, in Uzbek, for the student's result.
+ *
+ * Facts, not a score: "4 ta uzoq pauza" is something a student can hear in
+ * their own recording and fix. A number out of 75 derived from it would be an
+ * invention of ours with no official meaning.
+ */
+function fluencyFeedback(f) {
+  if (!f?.measured) return '';
+  const bits = [
+    `daqiqasiga ${f.wordsPerMin} so'z`,
+    f.longPauses
+      ? `${f.longPauses} ta uzoq pauza (1 soniyadan ko'p), eng uzuni ${f.longestPauseSec} s`
+      : "uzoq pauza yo'q",
+    f.fillers
+      ? `${f.fillers} ta to'ldiruvchi tovush (${Object.keys(f.fillerKinds || {}).join(', ')})`
+      : "to'ldiruvchi tovush (umm, eee) yo'q"
+  ];
+  if (f.repeats) bits.push(`${f.repeats} ta takrorlash`);
+  if (f.startDelaySec >= 3) bits.push(`javobni ${f.startDelaySec} soniyadan keyin boshladingiz`);
+  return `${bits.join(' · ')}.`;
+}
+
+/**
  * Say what the pronunciation measurement found, in Uzbek, naming names.
  *
  * "Talaffuz: 61/75" tells a student nothing they can act on. The words the
@@ -1025,10 +1079,20 @@ export async function markAttempt(resultId) {
    * other begins. It is also deliberately outside the AI limiter: that cap
    * exists to protect the Anthropic rate limit, and Azure has its own.
    */
-  const [pronunciation] = await Promise.all([
+  const [pronunciation, fluencyByTask] = await Promise.all([
     assessPronunciation(result),
+    measureFluency(result),
     Promise.all(jobs.map(job => AICallLimiter.run(job)))
   ]);
+
+  // Stored per answer and summarised for the attempt, so a teacher can see the
+  // evidence behind a fluency band and the marker's reading can be checked.
+  for (const taskResult of result.taskResults) {
+    const f = fluencyByTask.get(taskResult.taskNumber);
+    if (f) taskResult.fluency = f;
+  }
+  result.fluency = FluencyService.summarise([...fluencyByTask.values()]);
+  result.markModified('taskResults');
 
   if (pronunciation) {
     result.pronunciation = { ...pronunciation, assessedAt: new Date() };
@@ -1058,14 +1122,10 @@ export async function markAttempt(resultId) {
           feedback: pronunciationFeedback(pronunciation)
         };
       }
-      if (typeof pronunciation.fluency === 'number') {
-        measured.fluency = {
-          score: asExamScore(pronunciation.fluency),
-          measured: true,
-          feedback: `Nutq ravonligi ${Math.round(pronunciation.fluency)}/100 — ` +
-                    `tezlik, to'xtalishlar va ritm bo'yicha o'lchandi.`
-        };
-      }
+      // Fluency is NOT taken from Azure any more. Azure heard about one minute
+      // of the attempt and drops "umm" before scoring, so its fluency figure
+      // was generous for exactly the students who hesitate most. The measured
+      // facts are attached per answer below instead.
 
       for (const taskResult of result.taskResults) {
         if (taskResult.status !== 'evaluated' || !taskResult.aiEvaluation) continue;
@@ -1076,6 +1136,21 @@ export async function markAttempt(resultId) {
         taskResult.markModified('aiEvaluation.criteria');
       }
     }
+  }
+
+  // Each answer's own fluency facts, shown beside its other criteria. No score:
+  // these are measurements, and `score: null` tells the client to show the
+  // facts without a bar.
+  for (const taskResult of result.taskResults) {
+    if (taskResult.status !== 'evaluated' || !taskResult.aiEvaluation) continue;
+    const f = taskResult.fluency;
+    const criteria = { ...(taskResult.aiEvaluation.criteria || {}) };
+    delete criteria.fluency;
+    if (f?.measured) {
+      criteria.fluency = { score: null, measured: true, feedback: fluencyFeedback(f) };
+    }
+    taskResult.aiEvaluation.criteria = criteria;
+    taskResult.markModified('aiEvaluation.criteria');
   }
 
   if (jobs.length) {
@@ -1124,7 +1199,10 @@ export async function markAttempt(resultId) {
     .map(t => ({
       part: questionByNumber.get(t.taskNumber)?.part || '—',
       question: questionByNumber.get(t.taskNumber)?.text || '',
-      transcription: t.transcription
+      transcription: t.transcription,
+      // What the recording shows that the transcript cannot: pauses, pace,
+      // fillers. Without this the marker judged fluency from clean text.
+      fluency: t.fluency || null
     }));
 
   let overall = null;
@@ -1140,6 +1218,7 @@ export async function markAttempt(resultId) {
           answers: speakingAnswers,
           examTitle: exam.title,
           pronunciation: result.pronunciation,
+          fluency: result.fluency,
           anchors
         })
       );

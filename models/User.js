@@ -374,10 +374,24 @@ export function formatCredits(whole = 0, partTwelfths = 0) {
   return fraction.includes('/') ? `${w} ${fraction}` : `${w}${fraction}`;
 }
 
+/**
+ * A module's whole-mock count from a user document, lean or not.
+ *
+ * A lean read skips schema defaults, so an account created before writing
+ * existed has no writingRemaining at all — yet the moment that student starts
+ * a writing mock, the full document fills in the default of 1 and lets them.
+ * Reading the default here too keeps the teacher's list honest about it.
+ */
+export function wholeMocks(user, module = 'speaking') {
+  const [wholeField] = fieldsFor(module);
+  const value = user?.subscription?.[wholeField];
+  return value === undefined || value === null ? 1 : value;
+}
+
 /** A module's balance label straight from a (lean) user document. */
 export function balanceLabel(user, module = 'speaking') {
-  const [wholeField, partField] = fieldsFor(module);
-  return formatCredits(user?.subscription?.[wholeField], user?.subscription?.[partField]);
+  const [, partField] = fieldsFor(module);
+  return formatCredits(wholeMocks(user, module), user?.subscription?.[partField]);
 }
 
 userSchema.methods.creditLabel = function (module = 'speaking') {

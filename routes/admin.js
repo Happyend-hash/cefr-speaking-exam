@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import Exam from '../models/Exam.js';
 import ExamResult from '../models/ExamResult.js';
 import CalibrationSample from '../models/CalibrationSample.js';
-import User, { formatCredits, balanceLabel, BALANCE_FIELDS, PACKAGE } from '../models/User.js';
+import User, { formatCredits, balanceLabel, wholeMocks, BALANCE_FIELDS, PACKAGE } from '../models/User.js';
 import ImageStorageService, {
   ALLOWED_IMAGE_TYPES,
   MAX_IMAGE_BYTES
@@ -1184,7 +1184,7 @@ function studentRow(user, activity) {
     partCredits: user.subscription?.partCredits ?? 0,
     credits: formatCredits(user.subscription?.examsRemaining, user.subscription?.partCredits),
     // Writing is a separate balance.
-    writingRemaining: user.subscription?.writingRemaining ?? 0,
+    writingRemaining: wholeMocks(user, 'writing'),
     writingPartCredits: user.subscription?.writingPartCredits ?? 0,
     writingCredits: balanceLabel(user, 'writing'),
     granted: user.access?.totalGranted || 0,

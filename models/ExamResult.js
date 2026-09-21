@@ -117,6 +117,11 @@ const examResultSchema = new mongoose.Schema(
           evaluatedAt: Date
         },
 
+        // Fluency measured from this answer's full recording (FluencyService):
+        // pauses, pace, fillers, repeats. Stored whole so the evidence behind a
+        // fluency band can always be shown and checked.
+        fluency: { type: mongoose.Schema.Types.Mixed, default: undefined },
+
         // Final Score
         finalScore: Number, // Average of AI and manual if both exist, otherwise AI
         status: {
@@ -161,6 +166,12 @@ const examResultSchema = new mongoose.Schema(
       error: String,
       assessedAt: Date
     },
+
+    /**
+     * Fluency across every answer, weighted by speaking time — the summary the
+     * marker is shown alongside each answer's own figures.
+     */
+    fluency: { type: mongoose.Schema.Types.Mixed, default: undefined },
 
     /**
      * The examiner's verdict on the whole performance.
