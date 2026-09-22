@@ -289,7 +289,9 @@
         api('/exam'),
         api('/exam/results'),
         api('/user/profile').catch(() => null),
-        loadLeaderboard()
+        loadLeaderboard(),
+        // Writing results, so Home shows both skills side by side.
+        api('/writing/attempts').then(list => { state.writingHistory = list; }).catch(() => {})
       ]);
       // Premium and the picture come with the profile: the avatar in the
       // top bar and the Profil tab both use them.
@@ -3606,6 +3608,7 @@
       api('/games/duel/answer', { method: 'POST', body: { i: dl.q.i, choice: dl.myPick } }).catch(() => {});
     }));
     root.querySelectorAll('[data-gm-open]').forEach(el => el.addEventListener('click', () => openVoice('games')));
+    root.querySelectorAll('[data-home-wr]').forEach(el => el.addEventListener('click', () => openWritingResult(el.dataset.homeWr)));
     root.querySelectorAll('[data-tb]').forEach(el => el.addEventListener('click', () => tabooAction(el.dataset.tb)));
     root.querySelectorAll('[data-rank-games]').forEach(el => el.addEventListener('click', () => { rk.tab = 'games'; openRank(); }));
     root.querySelectorAll('[data-rk-tab]').forEach(el => el.addEventListener('click', () => {
@@ -3708,11 +3711,29 @@
     isStudentShell() && canLeave() && !['exam', 'writing-exam', 'eh', 'duel'].includes(state.screen) &&
     !(state.screen === 'speak' && vc.room);
 
+  // ------------------------------------------------------------- the logo
+  //
+  // English Hub Family: a microphone with a gold tick inside a house — a home
+  // for learning English, where your speaking gets checked. Drawn inline so it
+  // stays sharp at any size and needs no extra request.
+
+  const LOGO_MARK = `<svg class="logo-mark" viewBox="0 0 100 100" aria-hidden="true"><path d="M10 46L50 12L90 46" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 40V88H80V40" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><g transform="translate(22 34) scale(0.56)"><rect x="33" y="8" width="34" height="54" rx="17" fill="currentColor"/><path d="M41 35L48 42L60 27" fill="none" stroke="#f0b100" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 44A28 28 0 0 0 78 44" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/><path d="M50 72V86M38 88H62" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></g></svg>`;
+
+  const logoWords = (tagline = false) => `<span class="logo-words">
+      <span class="logo-name">English <span>Hub</span></span>
+      <span class="logo-family">FAMILY</span>
+      ${tagline ? '<span class="logo-tagline">CEFR Speaking &amp; Writing</span>' : ''}
+    </span>`;
+
+  /** The full logo, large — landing and sign-in pages. */
+  const logoLockup = () => `<div class="logo-lockup" role="img" aria-label="English Hub Family — CEFR Speaking and Writing">${LOGO_MARK}${logoWords(true)}</div>`;
+
   function brandMarkup() {
     // A real button, so it is reachable by keyboard and announced as a control.
+    const inner = `${LOGO_MARK}${logoWords(false)}`;
     return canLeave() && state.user
-      ? `<button class="brand brand-btn" data-go="dashboard" title="Asosiy sahifa">CEFR Speaking</button>`
-      : `<div class="brand">CEFR Speaking</div>`;
+      ? `<button class="brand brand-btn" data-go="dashboard" title="Asosiy sahifa" aria-label="English Hub Family — Asosiy">${inner}</button>`
+      : `<div class="brand" aria-label="English Hub Family">${inner}</div>`;
   }
 
   function navMarkup() {
@@ -3810,17 +3831,18 @@
   function landingScreen() {
     return `
       <section class="hero">
-        <h1>Find your real English speaking level</h1>
-        <p>Record answers to CEFR-calibrated tasks and get graded on grammar, vocabulary, fluency, pronunciation and coherence — with written feedback on each.</p>
+        ${logoLockup()}
+        <h1>Find your real CEFR speaking and writing level</h1>
+        <p>Take Multilevel-style speaking and writing mock exams and get your CEFR level on the official 75-point scale — with clear feedback on grammar, vocabulary, fluency, pronunciation, coherence and task response.</p>
         <div class="row">
           <button class="btn" data-go="signup">Get started</button>
           <button class="btn btn-ghost" data-go="login">I have an account</button>
         </div>
       </section>
       <div class="grid grid-3">
-        <div class="card"><div class="section-title">1 — Record</div><p class="muted" style="margin-top:8px">Speak your answer to each task straight in the browser. Nothing to install.</p></div>
-        <div class="card"><div class="section-title">2 — Assessed</div><p class="muted" style="margin-top:8px">Each response is scored against the CEFR descriptors for that level.</p></div>
-        <div class="card"><div class="section-title">3 — Feedback</div><p class="muted" style="margin-top:8px">See your level, your strengths, and exactly what to work on next.</p></div>
+        <div class="card"><div class="section-title">1 — Speak &amp; write</div><p class="muted" style="margin-top:8px">Record your speaking answers and write your letters and essays right in the browser, on the same timer as the real exam. Nothing to install.</p></div>
+        <div class="card"><div class="section-title">2 — Assessed</div><p class="muted" style="margin-top:8px">Every speaking and writing answer is marked against the official CEFR Multilevel criteria.</p></div>
+        <div class="card"><div class="section-title">3 — Feedback</div><p class="muted" style="margin-top:8px">See your level in both skills, your strengths, and exactly what to fix next.</p></div>
       </div>`;
   }
 
@@ -3828,6 +3850,7 @@
     const isSignup = mode === 'signup';
     return `
       <div class="card form-card">
+        <div class="auth-logo">${logoLockup()}</div>
         <h2 style="margin-bottom:18px">${isSignup ? 'Create your account' : 'Welcome back'}</h2>
         <form id="auth-form">
           ${isSignup ? `
@@ -4218,19 +4241,23 @@
   const HOME_UZ = {
     hello: name => (name ? `Salom, ${name}` : 'Salom'),
     sub: "Bugun qaysi bo'limni mashq qilamiz?",
-    best: 'Eng yaxshi natija',
+    best: 'Eng yaxshi natijalar',
+    speaking: 'Speaking',
+    writing: 'Writing',
+    notYet: 'Hali topshirilmagan',
     toNext: (n, lvl) => `${lvl} gacha ${n} ball`,
     top: 'Eng yuqori daraja',
     first: 'Birinchi mockingizni topshiring',
-    firstSub: "Bitta to'liq speaking mock — va darajangiz, har bir mezon bo'yicha izohlar tayyor.",
-    start: 'Speaking mock boshlash',
+    firstSub: "Speaking yoki writing mockini topshiring — darajangiz va har bir mezon bo'yicha izohlar tayyor bo'ladi.",
+    startSpeaking: 'Speaking mock',
+    startWriting: 'Writing mock',
     balance: (sp, wr) => `Balans: speaking ${sp} · writing ${wr}`,
     buy: 'Paket olish',
     parts: 'Qismlar',
     writing: 'Writing',
     club: 'Klub',
     live: 'Jonli',
-    rank: r => `Reytingda #${r}`,
+    rank: r => `Speaking reytingida #${r}`,
     rankSub: (avg, n) => `o'rtacha ${avg} · ${n} ta mock`,
     rankNone: 'Reyting',
     rankNeed: n => `Reytingga chiqish uchun yana ${n} ta to'liq mock`,
@@ -4249,21 +4276,33 @@
     const pos = best !== null ? cefrPosition(best) : null;
     const name = state.user?.nickname || state.user?.firstName || '';
 
-    const level = best !== null
+    // The best COMPLETE writing mock (a partial one has no 75-point score).
+    const writingBest = (state.writingHistory || [])
+      .filter(h => h.complete && typeof h.score === 'number')
+      .reduce((top, h) => (!top || h.score > top.score ? h : top), null);
+
+    const skillRow = (label, iconName, tone, score, levelName, target) => {
+      const p = typeof score === 'number' ? cefrPosition(score) : null;
+      return `<button class="home-skill" ${target}>
+        <span class="home-skill-head">
+          <span class="home-skill-name"><span class="home-skill-icon ${tone}">${icon(iconName)}</span>${label}</span>
+          ${p ? `<span class="home-skill-score">${score}<span> / ${max}</span></span><span class="chip chip-speaking">${esc(levelName || p.current?.level || '')}</span>`
+              : `<span class="muted home-skill-none">${HOME_UZ.notYet}</span>`}
+        </span>
+        <span class="home-bar ${p ? '' : 'is-empty'}"><span style="width:${p ? p.percent.toFixed(1) : 0}%"></span></span>
+        ${p ? `<span class="home-level-foot"><span>${esc(p.current ? `${p.current.level} (${p.current.min}–${p.next ? p.next.min - 1 : max})` : '')}</span>
+          <span>${esc(p.next ? HOME_UZ.toNext(p.pointsToNext, p.next.level) : HOME_UZ.top)}</span></span>` : ''}
+      </button>`;
+    };
+
+    const level = best !== null || writingBest
       ? `<section class="card home-level">
-          <div class="home-level-top">
-            <span class="home-label">${HOME_UZ.best}</span>
-            <span class="chip chip-speaking">${esc(pos?.current?.level || stats.highestLevel || '')}</span>
-          </div>
-          <div class="home-score">${best}<span> / ${max}</span></div>
-          <div class="home-bar" role="img" aria-label="${best} / ${max}"><span style="width:${pos ? pos.percent.toFixed(1) : 0}%"></span></div>
-          <div class="home-level-foot">
-            <span>${esc(pos?.current ? `${pos.current.level} (${pos.current.min}–${pos.next ? pos.next.min - 1 : max})` : '')}</span>
-            <span>${esc(pos?.next ? HOME_UZ.toNext(pos.pointsToNext, pos.next.level) : HOME_UZ.top)}</span>
-          </div>
+          <span class="home-label">${HOME_UZ.best}</span>
+          ${skillRow(HOME_UZ.speaking, 'mic', '', best, pos?.current?.level, 'data-folder="speaking"')}
+          ${skillRow(HOME_UZ.writing, 'pen', 'is-green', writingBest?.score ?? null, writingBest?.level, 'data-go="writing"')}
         </section>`
       : `<section class="card home-level home-first">
-          <div class="icon-tile">${icon('mic')}</div>
+          <div class="icon-tile">${icon('tests')}</div>
           <div><h2>${HOME_UZ.first}</h2><p class="muted">${HOME_UZ.firstSub}</p></div>
         </section>`;
 
@@ -4306,12 +4345,14 @@
       </div>
       ${level}
       <div class="home-start">
-        <button class="btn btn-lg btn-block" data-folder="speaking">${icon('mic')} ${HOME_UZ.start}</button>
+        <div class="home-start-buttons">
+          <button class="btn btn-lg" data-folder="speaking">${icon('mic')} ${HOME_UZ.startSpeaking}</button>
+          <button class="btn btn-lg btn-writing" data-go="writing">${icon('pen')} ${HOME_UZ.startWriting}</button>
+        </div>
         ${balance}
       </div>
-      <div class="home-tiles">
-        ${tile('data-folder="speaking"', 'tests', HOME_UZ.parts)}
-        ${tile('data-go="writing"', 'pen', HOME_UZ.writing, '', 'is-green')}
+      <div class="home-tiles is-three">
+        ${tile('data-go="tests"', 'tests', HOME_UZ.parts)}
         ${tile('data-go="speak"', 'users', HOME_UZ.club, `<span class="home-tile-live"><span class="pulse"></span>${HOME_UZ.live}</span>`, 'is-gold')}
         ${tile('data-gm-open="1"', 'target', "O'yinlar", '', 'is-rose')}
       </div>
@@ -4323,13 +4364,29 @@
   /** The three latest attempts, as rows — pending ones say they are being marked. */
   function homeRecent() {
     const max = state.stats?.maxScore || MAX_SCORE;
-    const recent = (state.history || [])
+    const speaking = (state.history || [])
       .filter(h => ['completed', 'evaluating', 'submitted'].includes(h.status))
+      .map(h => ({ ...h, kind: 'speaking', when: h.completedAt || h.startedAt }));
+    const writing = (state.writingHistory || [])
+      .filter(h => h.status !== 'in_progress' && h.status !== 'failed')
+      .map(h => ({ ...h, kind: 'writing', when: h.date }));
+    const recent = [...speaking, ...writing]
+      .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0))
       .slice(0, 3);
     if (!recent.length) return '';
-    const row = h => h.status === 'completed'
+    const writingRow = h => h.status === 'evaluating'
+      ? `<div class="home-result is-pending">
+          <span class="list-text"><strong>${esc(h.title)}</strong><span>${esc(fmtDate(h.date))} · writing</span></span>
+          <span class="chip chip-progress"><span class="pulse"></span> Tekshirilmoqda…</span>
+        </div>`
+      : `<button class="home-result" data-home-wr="${esc(h.id)}">
+          <span class="list-text"><strong>${esc(h.title)}</strong><span>${esc(fmtDate(h.date))} · writing${h.complete ? '' : ' · qism'}</span></span>
+          ${h.complete && typeof h.score === 'number' ? `<span class="home-result-score">${h.score}<span>/${max}</span></span>` : ''}
+          <span class="chip chip-writing">${esc(h.level || '—')}</span>
+        </button>`;
+    const row = h => h.kind === 'writing' ? writingRow(h) : h.status === 'completed'
       ? `<button class="home-result" data-result="${esc(h.id)}">
-          <span class="list-text"><strong>${esc(h.examTitle)}</strong><span>${esc(fmtDate(h.completedAt))}${h.mode === 'practice' ? ' · qism' : " · to'liq mock"}</span></span>
+          <span class="list-text"><strong>${esc(h.examTitle)}</strong><span>${esc(fmtDate(h.completedAt))} · speaking${h.mode === 'practice' ? ' · qism' : ''}</span></span>
           <span class="home-result-score">${h.overallScore}<span>/${max}</span></span>
           <span class="chip chip-speaking">${esc(h.overallLevel || '—')}</span>
         </button>`

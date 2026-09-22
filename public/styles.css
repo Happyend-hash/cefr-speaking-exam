@@ -1678,3 +1678,69 @@ button.home-result:hover { background: var(--ground); }
 .tb-scores span.is-me { background: var(--indigo-50); color: var(--indigo-700); }
 .tb-stop { align-self: flex-start; margin: 0; font-size: 13px; }
 .ch-system { align-self: center; max-width: 92%; text-align: center; font-size: 13px; font-weight: 600; color: #9f1239; background: #fff1f2; padding: 5px 12px; border-radius: var(--radius-pill); }
+
+/* ================================================================ logo */
+
+.brand { display: inline-flex; align-items: center; gap: 9px; color: var(--indigo-600); text-decoration: none; }
+.logo-mark { width: 34px; height: 34px; flex: 0 0 34px; color: var(--indigo-600); }
+.logo-words { display: flex; flex-direction: column; align-items: flex-start; line-height: 1; }
+.logo-name { font-family: "Sora", "Inter", system-ui, sans-serif; font-size: 18px; font-weight: 800; letter-spacing: -0.03em; color: var(--ink); white-space: nowrap; }
+.logo-name span { color: var(--indigo-600); }
+.logo-family { font-family: "Sora", "Inter", system-ui, sans-serif; font-size: 8.5px; font-weight: 700; letter-spacing: 0.42em; color: var(--premium-text); margin-top: 3px; }
+.logo-tagline { font-family: "Sora", "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #334155; margin-top: 8px; display: inline-flex; align-items: center; gap: 8px; }
+.logo-tagline::before { content: ""; width: 22px; height: 2px; border-radius: 2px; background: var(--indigo-600); }
+.nav-student.has-title .brand { display: inline-flex; }
+@media (max-width: 899px) {
+  /* On a phone the page name takes the brand's place; the mark stays. */
+  .nav-student.has-title .brand .logo-words { display: none; }
+  .nav-student.has-title .brand { margin-right: 4px; }
+  .nav-student .logo-mark { width: 30px; height: 30px; flex-basis: 30px; }
+}
+@media (max-width: 380px) {
+  .nav-staff .brand { display: inline-flex; }
+  .nav-staff .brand .logo-words { display: none; }
+}
+
+/* Large lockup on the landing and sign-in pages */
+.logo-lockup { display: inline-flex; align-items: center; gap: 16px; text-align: left; }
+.logo-lockup .logo-mark { width: 76px; height: 76px; flex-basis: 76px; }
+.logo-lockup .logo-name { font-size: 34px; }
+.logo-lockup .logo-family { font-size: 12px; margin-top: 5px; }
+.hero .logo-lockup { margin-bottom: 28px; }
+.auth-logo { display: flex; justify-content: center; margin-bottom: 22px; }
+.auth-logo .logo-lockup .logo-mark { width: 60px; height: 60px; flex-basis: 60px; }
+.auth-logo .logo-lockup .logo-name { font-size: 26px; }
+@media (max-width: 420px) {
+  .logo-lockup { gap: 12px; }
+  .logo-lockup .logo-mark { width: 60px; height: 60px; flex-basis: 60px; }
+  .logo-lockup .logo-name { font-size: 27px; }
+  .logo-tagline { font-size: 10.5px; }
+}
+
+/* ---------------------------------- Home: speaking and writing side by side */
+
+.home-skill {
+  display: flex; flex-direction: column; gap: 8px; width: 100%;
+  padding: 12px 0 2px; border: 0; border-top: 1px solid #f1f5f9; background: none;
+  text-align: left; color: var(--ink);
+}
+.home-label + .home-skill { border-top: 0; padding-top: 4px; }
+.home-skill:focus-visible { outline: 2px solid var(--indigo-500); outline-offset: 4px; border-radius: 8px; }
+.home-skill-head { display: flex; align-items: center; gap: 10px; }
+.home-skill-name { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; margin-right: auto; }
+.home-skill-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--indigo-50); color: var(--indigo-600); }
+.home-skill-icon svg { width: 16px; height: 16px; }
+.home-skill-icon.is-green { background: var(--green-bg); color: var(--green); }
+.home-skill-score { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+.home-skill-score span { font-size: 14px; font-weight: 600; color: var(--ink-soft); letter-spacing: 0; }
+.home-skill-none { font-size: 14px; }
+.home-bar.is-empty { background: #f1f5f9; }
+.home-skill .home-level-foot { font-size: 12px; }
+.home-skill:has(.is-green) .home-bar span { background: var(--green); }
+
+.home-start-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.home-start-buttons .btn { justify-content: center; min-height: 56px; font-size: 16px; padding-left: 10px; padding-right: 10px; }
+.home-start-buttons .btn svg { width: 18px; height: 18px; }
+.btn-writing { background: var(--green); border-color: var(--green); }
+.btn-writing:hover:not(:disabled) { background: #15803d; border-color: #15803d; }
+.home-tiles.is-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
