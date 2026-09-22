@@ -1744,3 +1744,21 @@ button.home-result:hover { background: var(--ground); }
 .btn-writing { background: var(--green); border-color: var(--green); }
 .btn-writing:hover:not(:disabled) { background: #15803d; border-color: #15803d; }
 .home-tiles.is-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* ---------------------------------------------------------- install */
+.in-card { display: flex; flex-direction: column; gap: 14px; padding: 20px; }
+.in-card h2 { font-size: 17px; }
+.in-card p { line-height: 1.55; }
+.in-steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 10px; }
+.in-steps li { counter-increment: step; display: flex; gap: 12px; align-items: flex-start; line-height: 1.5; }
+.in-steps li::before {
+  content: counter(step); flex: 0 0 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--indigo-50); color: var(--indigo-700); font-weight: 800; font-size: 14px;
+}
+.in-note { font-size: 13px; }
+.in-done { font-weight: 700; color: var(--green); }
+.in-other { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 18px; }
+.in-other summary { cursor: pointer; font-weight: 600; color: var(--ink-soft); }
+.in-other .in-steps { margin-top: 12px; }
+.in-share { display: inline-grid; place-items: center; vertical-align: -4px; color: var(--indigo-600); }
+.in-card .btn svg, .menu-icon svg { flex: none; }

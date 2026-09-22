@@ -3113,6 +3113,158 @@
       }));
   }
 
+  // ============================================================== INSTALL
+  /**
+   * "Ilovani o'rnatish": put the site on the home screen like an app.
+   *
+   * Android/Chrome offers a one-tap install (beforeinstallprompt); when it
+   * doesn't, and on iPhone, the screen shows the steps by hand. If an APK has
+   * been uploaded to /downloads it is offered too — the check is a HEAD
+   * request, so the button only appears once the file is really there.
+   */
+  const APK_URL = '/downloads/EnglishHubFamily.apk';
+  const inst = { prompt: null, installed: false, apk: false };
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => { /* the site works without it */ });
+    });
+  }
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    inst.prompt = event;
+    if (state.screen === 'install') render();
+  });
+  window.addEventListener('appinstalled', () => {
+    inst.installed = true;
+    inst.prompt = null;
+    if (state.screen === 'install') render();
+  });
+
+  function isStandalone() {
+    return window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  }
+
+  function platform() {
+    const ua = navigator.userAgent || '';
+    const iPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+    if (/iPhone|iPad|iPod/i.test(ua) || iPadOS) return 'ios';
+    if (/Android/i.test(ua)) return 'android';
+    return 'desktop';
+  }
+
+  const IN_UZ = {
+    menu: "Ilovani o'rnatish",
+    menuSub: 'Telefon ekraniga ilova kabi qo‘shing',
+    title: "Ilovani o'rnatish",
+    sub: "English Hub Family telefoningizda alohida ilova bo'lib ochiladi — brauzer satrlarisiz, bir bosishda.",
+    oneTap: 'Bir bosishda o‘rnatish',
+    oneTapBody: "Brauzeringiz ilovani to'g'ridan-to'g'ri o'rnatishni taklif qilyapti.",
+    installBtn: "O'rnatish",
+    done: "Ilova o'rnatildi — uni telefon ekranidan oching.",
+    already: "Siz ilovaning o'zidasiz. Hammasi joyida!",
+    android: 'Android (Chrome)',
+    androidSteps: [
+      'Saytni <strong>Chrome</strong> brauzerida oching.',
+      'Yuqori o‘ng burchakdagi <strong>⋮</strong> menyuni bosing.',
+      '<strong>“Ilovani o‘rnatish”</strong> yoki <strong>“Bosh ekranga qo‘shish”</strong> ni tanlang.',
+      '<strong>O‘rnatish</strong> ni bosing — belgi telefon ekranida paydo bo‘ladi.'
+    ],
+    ios: 'iPhone / iPad (Safari)',
+    iosSteps: [
+      'Saytni <strong>Safari</strong> brauzerida oching (Chrome emas).',
+      'Pastdagi <strong>Ulashish</strong> tugmasini bosing ' + '<span class="in-share" aria-hidden="true">SHARE</span>.',
+      'Ro‘yxatdan <strong>“Bosh ekranga”</strong> (Add to Home Screen) ni tanlang.',
+      'Yuqorida <strong>Qo‘shish</strong> (Add) ni bosing.'
+    ],
+    iosNote: "iPhone uchun App Store'dagi ilova hozircha yo'q — bosh ekranga qo'shilgan sayt xuddi ilova kabi ishlaydi.",
+    desktop: 'Kompyuter (Chrome / Edge)',
+    desktopSteps: [
+      'Manzil satrining o‘ng tomonidagi <strong>o‘rnatish</strong> belgisini bosing.',
+      '<strong>O‘rnatish</strong> ni tasdiqlang.'
+    ],
+    apkTitle: 'Android uchun APK fayl',
+    apkBody: "Play Market'siz o'rnatish uchun. Telefon “noma'lum manbadan” ruxsat so'rasa, shu brauzerga ruxsat bering.",
+    apkBtn: 'APK yuklab olish',
+    other: 'Boshqa qurilmalar uchun'
+  };
+
+  const SHARE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 7 4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+
+  async function openInstall() {
+    go('install');
+    try {
+      const res = await fetch(APK_URL, { method: 'HEAD', cache: 'no-store' });
+      inst.apk = res.ok && !/text\/html/i.test(res.headers.get('content-type') || '');
+    } catch {
+      inst.apk = false;
+    }
+    if (state.screen === 'install') render();
+  }
+
+  function installScreen() {
+    const steps = list => `<ol class="in-steps">${list.map(t => `<li><span>${t.replace('SHARE', SHARE_ICON)}</span></li>`).join('')}</ol>`;
+    const guide = key => ({
+      android: [IN_UZ.android, steps(IN_UZ.androidSteps)],
+      ios: [IN_UZ.ios, steps(IN_UZ.iosSteps) + `<p class="muted in-note">${IN_UZ.iosNote}</p>`],
+      desktop: [IN_UZ.desktop, steps(IN_UZ.desktopSteps)]
+    })[key];
+    const here = platform();
+    const [title, body] = guide(here);
+    const others = ['android', 'ios', 'desktop'].filter(k => k !== here).map(k => {
+      const [t, b] = guide(k);
+      return `<details class="in-other"><summary>${t}</summary>${b}</details>`;
+    }).join('');
+
+    const top = isStandalone()
+      ? `<section class="card in-card"><p class="in-done">${IN_UZ.already}</p></section>`
+      : inst.installed
+        ? `<section class="card in-card"><p class="in-done">${IN_UZ.done}</p></section>`
+        : inst.prompt
+          ? `<section class="card in-card">
+              <h2>${IN_UZ.oneTap}</h2>
+              <p class="muted">${IN_UZ.oneTapBody}</p>
+              <button class="btn btn-lg btn-block" data-install="prompt">${icon('download')} ${IN_UZ.installBtn}</button>
+            </section>`
+          : '';
+
+    const apk = inst.apk && here !== 'ios'
+      ? `<section class="card in-card">
+          <h2>${IN_UZ.apkTitle}</h2>
+          <p class="muted">${IN_UZ.apkBody}</p>
+          <a class="btn btn-ghost btn-block" href="${APK_URL}" download>${icon('download')} ${IN_UZ.apkBtn}</a>
+        </section>`
+      : '';
+
+    return `
+      <button class="crumb" data-go="profile">${icon('left')} ${PROF_UZ.title}</button>
+      <div class="page-head"><h1>${IN_UZ.title}</h1><p class="muted">${IN_UZ.sub}</p></div>
+      ${top}
+      <section class="card in-card">
+        <h2>${title}</h2>
+        ${body}
+      </section>
+      ${apk}
+      <p class="muted in-note">${IN_UZ.other}</p>
+      ${others}`;
+  }
+
+  function wireInstall() {
+    root.querySelectorAll('[data-install="open"]').forEach(el =>
+      el.addEventListener('click', openInstall));
+    root.querySelector('[data-install="prompt"]')?.addEventListener('click', async () => {
+      const ev = inst.prompt;
+      if (!ev) return;
+      inst.prompt = null;
+      ev.prompt();
+      try {
+        const choice = await ev.userChoice;
+        if (choice?.outcome === 'accepted') inst.installed = true;
+      } catch { /* nothing to do */ }
+      if (state.screen === 'install') render();
+    });
+  }
+
   // ================================================================ GAMES
   //
   // Error Hunter (solo), Word Duel (1 v 1, live) and Taboo (in group voice
@@ -3697,7 +3849,7 @@
     { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'writing', 'writing-check', 'briefing'] },
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
-    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup'] }
+    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install'] }
   ];
   const currentTab = () => TABS.find(t => t.screens.includes(state.screen))?.id || '';
   const isStudentShell = () => Boolean(state.user) && state.user.role !== 'admin';
@@ -3821,7 +3973,8 @@
       rank: rankScreen,
       profile: profileScreen,
       eh: ehScreen,
-      duel: duelScreen
+      duel: duelScreen,
+      install: installScreen
     }[state.screen] || landingScreen;
 
     const tabs = tabBarMarkup();
@@ -3908,7 +4061,8 @@
     tests: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
-    lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
+    lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><path d="M12 15V3"/>'
   };
 
   const icon = name =>
@@ -4492,6 +4646,7 @@
       <section class="card menu-card">
         ${row('data-go="results"', 'chart', PROF_UZ.results, PROF_UZ.resultsSub(done))}
         ${row('data-go="writing"', 'pen', PROF_UZ.writingResults, PROF_UZ.writingResultsSub, 'is-green')}
+        ${isStandalone() ? '' : row('data-install="open"', 'download', IN_UZ.menu, IN_UZ.menuSub)}
       </section>
       ${skills}
       ${state.user?.role === 'student' ? `<section class="card prof-nick">${nicknameRow()}</section>` : ''}
@@ -5654,6 +5809,7 @@
     wireLeaderboard();
     wireSpeak();
     wireGames();
+    wireInstall();
     if (state.screen === 'profile') wirePremium();
   }
 
