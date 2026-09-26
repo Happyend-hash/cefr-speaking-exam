@@ -308,15 +308,27 @@ accuracy ${Math.round(pronunciation.accuracy ?? 0)}, Azure fluency ${Math.round(
             ? `\nWords mispronounced: ${pronunciation.problemWords.slice(0, 8).map(w => w.word).join(', ')}`
             : ''
         }
-Use these for every part's pronunciation sentence, read against its descriptor.${
+Use these for every part's pronunciation sentence, read against its descriptor.
+As a guide: accuracy 80+ supports the top pronunciation sentences ("intelligible",
+"no strain on the listener"); 60-79 supports the middle ones ("occasional
+strain", "mispronunciations noticeable but do not impede understanding"); below
+60 supports the lower ones ("mispronunciations put a strain on the listener",
+"strong native-language influence"). ACCURACY MEASURES PHONEMES, NOT
+CONFIDENCE — a fast, fluent, confident speaker can still mispronounce heavily,
+and that combination (high fluency, low accuracy) is real evidence of a
+genuine pronunciation weakness, not a reason to look past the accuracy number.
+Do not let a smooth-reading transcript or a high fluency figure talk you into
+a higher pronunciation sentence than the accuracy score and the mispronounced
+words support.${
           pronunciation.accuracySuspect
             ? `
 
 WARNING — THE ACCURACY FIGURE ABOVE IS UNRELIABLE FOR THIS ATTEMPT.
-It sits far below fluency and prosody, which does not happen to a real speaker:
-someone whose sounds are genuinely unclear is also hesitant and flat. Judge
-pronunciation on fluency and prosody, and on the words listed as mispronounced
-if any. Do not mark the candidate down for the accuracy number.`
+It sits far below fluency and prosody in a way that only happens when the
+measurement itself failed (a scripted assessment scored against a flawed
+transcript) — not from ordinary variation in a speaker. Judge pronunciation on
+fluency and prosody, and on the words listed as mispronounced if any. Do not
+mark the candidate down for the accuracy number.`
             : ''
         }`
       : `\n\nNo pronunciation measurement is available for this attempt. Judge

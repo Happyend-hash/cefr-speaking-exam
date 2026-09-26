@@ -83,10 +83,39 @@ const AZURE_MAX = 100;
  *
  * 25 comes from the case that exposed this: one attempt measured accuracy 39
  * against fluency 83 and prosody 73 — gaps of 44 and 34 — while the same
- * speaker measured 88 minutes earlier. A genuine pronunciation problem does
- * not leave fluency and intonation untouched.
+ * speaker measured 88 minutes earlier, scripted, against a transcript full of
+ * errors. That was a SCRIPTED-mode artifact: accuracy is the one figure scored
+ * against ReferenceText, so a bad transcript drags accuracy down alone and
+ * leaves fluency and prosody untouched. It is not evidence about the speaker.
+ *
+ * That is why this guard is scoped to scripted mode only (see accuracySuspect
+ * below) — see "Unscripted" above for the fuller account of the same case. In
+ * UNSCRIPTED mode, the default, there is no reference transcript for accuracy
+ * to fail against, so the same gap means something else entirely: a fluent,
+ * confident speaker whose phonemes are genuinely often wrong, which is exactly
+ * the profile a phoneme-level accuracy score exists to catch. Applying this
+ * guard there was found to be quietly excusing real low pronunciation scores —
+ * "generous" marks traced back to here — because Azure's own fluency figure
+ * runs lenient (see FLUENCY-MEASUREMENT.md) and is almost always comfortably
+ * above a mediocre-to-poor accuracy score, so the gap fired routinely rather
+ * than only on genuine measurement faults.
  */
 const SUSPECT_GAP = 25;
+
+/**
+ * Pure, so the gating rule can be checked by a test without a network call.
+ *
+ * See SUSPECT_GAP's comment for the reasoning: this only fires in scripted
+ * mode, where a gap this size is a known measurement fault. In unscripted
+ * mode (the default) the same gap is real evidence about the speaker and must
+ * reach the marker, not be waved away.
+ */
+export function isAccuracySuspect({ accuracy, fluency, prosody, unscripted }) {
+  if (unscripted) return false;
+  if (typeof accuracy !== 'number') return false;
+  const others = [fluency, prosody].filter(v => typeof v === 'number');
+  return others.length > 0 && others.every(value => value - accuracy >= SUSPECT_GAP);
+}
 
 /**
  * A ceiling on how many recordings are being assessed at once, server-wide.
@@ -453,27 +482,35 @@ class PronunciationService {
     const prosody = mean(r => r.prosody);
 
     /*
-     * A second line of defence for the measurement that already failed once.
+     * A second line of defence — but only for the failure it was built for.
      *
-     * Accuracy is the figure that collapses when something is wrong with the
-     * reference, and it collapses ALONE — a speaker whose sounds are genuinely
-     * unclear is also hesitant and flat, so a real problem drags fluency and
-     * prosody down with it. Accuracy far below both of them is therefore a
-     * symptom of the measurement, not of the speaker.
+     * In SCRIPTED mode, accuracy is scored against ReferenceText (our own
+     * transcript); a bad transcript drags accuracy down alone and leaves
+     * fluency and prosody untouched, so a large gap there is a symptom of the
+     * measurement, not of the speaker.
      *
-     * Flagged rather than discarded: the marker is told the figure is
-     * unreliable and judges on the rest, which is honest about what we know.
-     * Silently dropping it would leave nobody able to see that Azure is
-     * misbehaving, and this fault went unnoticed for weeks exactly because
-     * nothing said so out loud.
+     * In UNSCRIPTED mode — the default — there is no reference to fail
+     * against. Accuracy there is Azure's own phoneme-level judgement of what
+     * it heard, and a gap between that and fluency/prosody is real
+     * information: a speaker can be fluent and confident while genuinely
+     * mispronouncing a lot, and that combination is exactly what a
+     * phoneme-accuracy score exists to surface. Applying this guard in
+     * unscripted mode was tested and found to fire routinely rather than
+     * rarely — Azure's own fluency score runs lenient (see
+     * FLUENCY-MEASUREMENT.md) and sits comfortably above a mediocre accuracy
+     * score often enough that real low-accuracy readings were being waved
+     * away as "unreliable" and excused from the marker's judgement. That is
+     * the generous-pronunciation bug this scoping fixes.
+     *
+     * Flagged rather than discarded even when it does apply: the marker is
+     * told the figure is unreliable and judges on the rest, which is honest
+     * about what we know. Silently dropping it would leave nobody able to see
+     * that Azure is misbehaving.
      */
-    const others = [fluency, prosody].filter(v => typeof v === 'number');
-    const accuracySuspect =
-      typeof accuracy === 'number' &&
-      others.length > 0 &&
-      others.every(value => value - accuracy >= SUSPECT_GAP);
+    const accuracySuspect = isAccuracySuspect({ accuracy, fluency, prosody, unscripted: this.unscripted });
 
     if (accuracySuspect) {
+      const others = [fluency, prosody].filter(v => typeof v === 'number');
       console.warn(
         `Pronunciation: accuracy ${Math.round(accuracy)} sits ${SUSPECT_GAP}+ below ` +
         `fluency/prosody (${others.map(Math.round).join('/')}) — treating it as unreliable`
