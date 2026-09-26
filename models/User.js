@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import bcryptjs from 'bcryptjs';
+import { emailConfigured } from '../services/EmailService.js';
 
 const userSchema = new mongoose.Schema(
   {
@@ -100,6 +101,22 @@ const userSchema = new mongoose.Schema(
 
     emailVerificationToken: String,
     emailVerificationExpires: Date,
+    // Throttles "resend the code" so a student mashing the button can't spam
+    // the mail server with one account.
+    emailVerificationLastSentAt: Date,
+
+    // Whether THIS account is actually required to verify before spending a
+    // mock. Deliberately separate from isEmailVerified, and deliberately
+    // defaulted to false: register() is the only place that sets it true, for
+    // accounts created after this gate shipped. Every account that already
+    // existed has no stored value for this field, so Mongoose hydrates it
+    // from the schema default (false) — meaning nobody already using the app
+    // gets locked out the day this feature turns on. Only new signups from
+    // here on are held to it.
+    emailVerificationRequired: {
+      type: Boolean,
+      default: false
+    },
 
     // Subscription & Payment
     subscription: {
@@ -314,6 +331,7 @@ userSchema.methods.getPublicProfile = function () {
   delete obj.passwordResetExpires;
   delete obj.emailVerificationToken;
   delete obj.emailVerificationExpires;
+  delete obj.emailVerificationLastSentAt;
   delete obj.loginHistory;
   return obj;
 };
@@ -465,6 +483,19 @@ userSchema.methods.examAccess = function (cost = UNITS_PER_MOCK, module = 'speak
       code: 'blocked',
       remaining: 0,
       message: 'Your teacher has paused your access to the mock exams.'
+    };
+  }
+
+  // Only holds for accounts required to verify (see emailVerificationRequired
+  // above) AND only while mail is actually configured — if SMTP isn't set up,
+  // nobody could ever receive a code, so the gate stays off rather than
+  // stranding every new signup with no way through it.
+  if (this.emailVerificationRequired && !this.isEmailVerified && emailConfigured()) {
+    return {
+      allowed: false,
+      code: 'unverified',
+      remaining: 0,
+      message: 'Please verify your email before starting a mock.'
     };
   }
 

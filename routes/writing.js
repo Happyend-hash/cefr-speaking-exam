@@ -368,6 +368,7 @@ router.post('/check', async (req, res, next) => {
     const cost = submitted.length * PART_COST.writing;
     const gate = student.examAccess(cost, 'writing');
     if (gate.code === 'blocked') throw new APIError(gate.message, 403, 'blocked');
+    if (gate.code === 'unverified') throw new APIError(gate.message, 403, 'unverified');
     if (!gate.allowed) throw new APIError(gate.message, 402, gate.code);
 
     const doc = {

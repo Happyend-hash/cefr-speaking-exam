@@ -1,6 +1,7 @@
 import express from 'express';
 import AuthService from '../services/AuthService.js';
 import { APIError } from '../middleware/errorHandler.js';
+import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -143,6 +144,53 @@ router.post('/verify-email/:token', async (req, res, next) => {
       success: true,
       message: result.message,
       data: result.user
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/auth/verify-email-code
+ * @desc    Confirm the 6-digit code emailed at signup. Signed in already —
+ *          this checks the code against the caller's own account, not a
+ *          link token, since the frontend keeps the student signed in from
+ *          the moment they sign up.
+ * @access  Private
+ */
+router.post('/verify-email-code', authenticate, async (req, res, next) => {
+  try {
+    const { code } = req.body;
+    if (!code) throw new APIError('Enter the code from your email', 400);
+
+    const user = await AuthService.verifyEmailCode(req.user.id, code);
+
+    res.json({
+      success: true,
+      message: 'Email verified',
+      data: user
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/auth/resend-verification
+ * @desc    Send a fresh verification code. Rate-limited per account.
+ * @access  Private
+ */
+router.post('/resend-verification', authenticate, async (req, res, next) => {
+  try {
+    const result = await AuthService.resendVerificationEmail(req.user.id);
+
+    // The api() helper on the client unwraps to `data` when present, so the
+    // message the student actually needs to see has to live there too, not
+    // only at the top level.
+    res.json({
+      success: true,
+      message: result.message,
+      data: { emailSent: result.sent, message: result.message }
     });
   } catch (error) {
     next(error);

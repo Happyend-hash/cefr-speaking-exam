@@ -1,7 +1,12 @@
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import User from '../models/User.js';
 import { v4 as uuidv4 } from 'uuid';
 import { APIError } from '../middleware/errorHandler.js';
+import { sendMail } from './EmailService.js';
+
+const VERIFICATION_CODE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resend requests
 
 /**
  * Authentication Service - Handles user registration, login, and token management
@@ -20,17 +25,27 @@ class AuthService {
         throw new APIError('An account with this email already exists', 409);
       }
 
-      // Create new user
+      // Create new user. emailVerificationRequired is set true here and only
+      // here — see the field's own comment in models/User.js for why that is
+      // what keeps this from locking out anyone who already had an account.
       const user = new User({
         email,
         firstName,
         lastName,
         password,
-        emailVerificationToken: uuidv4(),
-        emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+        emailVerificationToken: this.generateVerificationCode(),
+        emailVerificationExpires: new Date(Date.now() + VERIFICATION_CODE_TTL_MS),
+        emailVerificationLastSentAt: new Date(),
+        emailVerificationRequired: true
       });
 
       await user.save();
+
+      // Best-effort: a mail hiccup must not stop an account being created —
+      // the student can always ask for a fresh code from the verify screen,
+      // and if SMTP isn't configured at all, examAccess() doesn't enforce
+      // verification in the first place.
+      await this.sendVerificationEmail(user);
 
       return {
         id: user._id,
@@ -38,13 +53,106 @@ class AuthService {
         firstName: user.firstName,
         lastName: user.lastName,
         role: user.role,
-        status: user.status,
-        emailVerificationToken: user.emailVerificationToken
+        status: user.status
       };
     } catch (error) {
       console.error('Error registering user:', error);
       throw error;
     }
+  }
+
+  /**
+   * Generate a 6-digit numeric verification code. crypto.randomInt is used
+   * rather than Math.random so the code can't be predicted from the account's
+   * creation time.
+   */
+  generateVerificationCode() {
+    return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  }
+
+  /**
+   * Email the account's current verification code. Never throws — a failed
+   * send is reported back (`sent: false`) so the caller can decide what to
+   * tell the student, but it never breaks signup or resend.
+   */
+  async sendVerificationEmail(user) {
+    try {
+      return await sendMail({
+        to: user.email,
+        subject: 'Confirm your email',
+        text: `Your verification code is ${user.emailVerificationToken}. It expires in 30 minutes. If you didn't request this, you can ignore this email.`,
+        html: `
+          <p>Your verification code is:</p>
+          <p style="font-size:28px;font-weight:700;letter-spacing:6px">${user.emailVerificationToken}</p>
+          <p style="color:#666">It expires in 30 minutes. If you didn't request this, you can ignore this email.</p>
+        `
+      });
+    } catch (error) {
+      console.error('Error sending verification email:', error);
+      return { sent: false, reason: error.message };
+    }
+  }
+
+  /**
+   * Check a code the student typed in against their account's current one.
+   */
+  async verifyEmailCode(userId, code) {
+    const user = await User.findById(userId);
+    if (!user) throw new APIError('User not found', 404);
+
+    if (user.isEmailVerified) {
+      return user.getPublicProfile();
+    }
+
+    if (!user.emailVerificationToken || !user.emailVerificationExpires || user.emailVerificationExpires < new Date()) {
+      throw new APIError('This code has expired — request a new one.', 400);
+    }
+
+    if (String(code ?? '').trim() !== user.emailVerificationToken) {
+      throw new APIError('That code is not correct.', 400);
+    }
+
+    user.isEmailVerified = true;
+    user.status = 'active';
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save();
+
+    return user.getPublicProfile();
+  }
+
+  /**
+   * Send a fresh code, rate-limited per account so mashing "resend" can't
+   * spam the mail server.
+   */
+  async resendVerificationEmail(userId) {
+    const user = await User.findById(userId);
+    if (!user) throw new APIError('User not found', 404);
+
+    if (user.isEmailVerified) {
+      return { message: 'Your email is already verified.', sent: false };
+    }
+
+    if (user.emailVerificationLastSentAt) {
+      const elapsed = Date.now() - user.emailVerificationLastSentAt.getTime();
+      if (elapsed < RESEND_COOLDOWN_MS) {
+        const waitSeconds = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 1000);
+        throw new APIError(`Please wait ${waitSeconds}s before requesting another code.`, 429);
+      }
+    }
+
+    user.emailVerificationToken = this.generateVerificationCode();
+    user.emailVerificationExpires = new Date(Date.now() + VERIFICATION_CODE_TTL_MS);
+    user.emailVerificationLastSentAt = new Date();
+    await user.save();
+
+    const result = await this.sendVerificationEmail(user);
+    return {
+      message: result.sent
+        ? 'A new code has been sent to your email.'
+        : 'Email is not set up on this server yet — ask your teacher to verify you.',
+      sent: Boolean(result.sent)
+    };
   }
 
   /**

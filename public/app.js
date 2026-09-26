@@ -435,16 +435,9 @@
       run.phase = 'ready';
       render();
     } catch (error) {
-      // Being out of mocks is not a fault, so it does not get a red error bar.
-      // It gets the page that explains what to do next.
-      if (error.code === 'no_credits' || error.code === 'blocked') {
-        return setState({
-          loading: false,
-          error: '',
-          access: { ...(state.access || {}), remaining: 0, blocked: error.code === 'blocked' },
-          screen: 'topup'
-        });
-      }
+      // Being out of mocks (or unverified) is not a fault, so it does not get
+      // a red error bar. It gets the page that explains what to do next.
+      if (handleAccessError(error)) return;
       setState({ loading: false, error: error.message });
     }
   }
@@ -1118,6 +1111,10 @@
         access: { ...(state.access || {}), remaining: 0, blocked: error.code === 'blocked' },
         screen: 'topup'
       });
+      return true;
+    }
+    if (error.code === 'unverified') {
+      setState({ loading: false, error: '', screen: 'verify-email' });
       return true;
     }
     return false;
@@ -3993,6 +3990,7 @@
       results: resultsScreen,
       briefing: briefingScreen,
       topup: topupScreen,
+      'verify-email': verifyEmailScreen,
       exam: examScreen,
       submitted: submittedScreen,
       result: resultScreen,
@@ -4422,6 +4420,33 @@
 
         <button class="btn btn-ghost btn-block" style="margin-top:14px" data-go="dashboard">
           ${ACCESS_UZ.later}
+        </button>
+      </div>`;
+  }
+
+  function verifyEmailScreen() {
+    return `
+      <div class="card form-card">
+        <h2 style="margin-bottom:8px">Verify your email</h2>
+        <p class="muted">
+          We sent a 6-digit code to <strong>${esc(state.user?.email || '')}</strong>.
+          Enter it below to unlock your free mock.
+        </p>
+        <form id="verify-form" style="margin-top:18px">
+          <div class="field">
+            <label for="verify-code">Verification code</label>
+            <input id="verify-code" name="code" inputmode="numeric" autocomplete="one-time-code"
+                   maxlength="6" placeholder="000000" required autofocus />
+          </div>
+          <button class="btn btn-block" type="submit" ${state.loading ? 'disabled' : ''}>
+            ${state.loading ? 'Checking…' : 'Verify'}
+          </button>
+        </form>
+        <p class="muted" style="text-align:center;margin-top:16px">
+          Didn't get it? <a href="#" data-action="resend-code">Resend code</a>
+        </p>
+        <button class="btn btn-ghost btn-block" style="margin-top:8px" data-go="dashboard">
+          Do this later
         </button>
       </div>`;
   }
@@ -5839,6 +5864,7 @@
       rec.isRecording ? endRecording() : beginRecording());
 
     document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit);
+    document.getElementById('verify-form')?.addEventListener('submit', handleVerifyCodeSubmit);
 
     wireWriting();
     wireLeaderboard();
@@ -5851,6 +5877,7 @@
   function handleAction(action) {
     switch (action) {
       case 'signout': return signOut();
+      case 'resend-code': return resendVerificationCode();
       case 'done-submitting': return loadDashboard();
       case 'notice-seen': return dismissNotice();
       case 'bands-save': return saveBands();
@@ -5912,6 +5939,30 @@
       const data = await api(`/auth/${isSignup ? 'signup' : 'login'}`, { method: 'POST', body: payload });
       state.loading = false;
       signIn(data);
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  async function handleVerifyCodeSubmit(event) {
+    event.preventDefault();
+    const code = event.target.code.value.trim();
+    setState({ loading: true, error: '' });
+    try {
+      const user = await api('/auth/verify-email-code', { method: 'POST', body: { code } });
+      state.user = user;
+      store.set('user', JSON.stringify(user));
+      setState({ loading: false, notice: 'Email verified — you can start your mock now.', screen: 'dashboard' });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  async function resendVerificationCode() {
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const result = await api('/auth/resend-verification', { method: 'POST' });
+      setState({ loading: false, notice: result.message || 'A new code has been sent.' });
     } catch (error) {
       setState({ loading: false, error: error.message });
     }

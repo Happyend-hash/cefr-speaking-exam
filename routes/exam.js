@@ -519,6 +519,7 @@ router.post('/:id/start', async (req, res, next) => {
     // letting a blocked student carry on with an attempt they already opened
     // would keep the transcription bill running.
     if (gate.code === 'blocked') throw new APIError(gate.message, 403, 'blocked');
+    if (gate.code === 'unverified') throw new APIError(gate.message, 403, 'unverified');
 
     const exam = await Exam.findById(req.params.id);
     if (!exam || !exam.isPublished || !exam.isActive) {
