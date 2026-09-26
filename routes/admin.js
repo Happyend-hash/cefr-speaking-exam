@@ -1442,17 +1442,26 @@ router.post('/students/:id/access', async (req, res, next) => {
         `Premium ${premiumDate(user)} gacha faol 👑`
       );
       outcome = `${user.email}: package added — ${before} → ${both()}`;
-    } else if (action === 'grant' || action === 'set') {
+    } else if (action === 'grant' || action === 'set' || action === 'reduce') {
       const value = Number(amount);
       if (!Number.isInteger(value) || value < 0 || value > MAX_GRANT) {
         throw new APIError(`Give a whole number of mocks between 0 and ${MAX_GRANT}.`, 400);
       }
 
       const before = balanceLabel(user, module);
-      user.subscription[wholeField] =
-        action === 'grant' ? (user.subscription[wholeField] || 0) + value : value;
+      if (action === 'grant') {
+        user.subscription[wholeField] = (user.subscription[wholeField] || 0) + value;
+      } else if (action === 'reduce') {
+        // Taking back mocks given by mistake, or an extra one added for a
+        // special case that turned out not to apply. Clamped at 0 — this is
+        // "take away up to N", never a debt the student then owes.
+        user.subscription[wholeField] = Math.max(0, (user.subscription[wholeField] || 0) - value);
+      } else {
+        user.subscription[wholeField] = value;
+      }
       // "Set to 5" means exactly 5: any leftover part-credit goes.
-      // "Add 5" keeps it — the student already paid for that part.
+      // "Add 5" and "Remove 5" leave it alone — neither is a fresh total, so
+      // there is no reason to touch a partial credit the student already has.
       if (action === 'set') user.subscription[partField] = 0;
 
       if (action === 'grant' && value > 0) {
@@ -1493,7 +1502,7 @@ router.post('/students/:id/access', async (req, res, next) => {
       endPremium(user);
       outcome = `${user.email}: Premium ended`;
     } else {
-      throw new APIError('Unknown action. Use package, grant, set, block, unblock, premium or premium-off.', 400);
+      throw new APIError('Unknown action. Use package, grant, reduce, set, block, unblock, premium or premium-off.', 400);
     }
 
     if (note !== undefined) user.access.note = String(note).slice(0, 500);

@@ -340,6 +340,16 @@
         </button>
       </div>
 
+      ${state.studentSearch || state.studentOnly
+        // Once a search finds the one student you were looking for, there was no
+        // way back to the full list except clearing the box by hand and hoping
+        // Enter still worked on an empty field. One button, always in the same
+        // place, does what "back" means here.
+        ? `<button class="btn btn-ghost btn-sm" style="margin-top:10px" data-action="students-clear">
+             ← All students
+           </button>`
+        : ''}
+
       <div style="margin-top:16px">
         ${rows || '<p class="muted">No students match.</p>'}
       </div>
@@ -419,6 +429,8 @@
           <option value="writing">writing</option>
         </select>
         <button class="btn btn-ghost btn-sm" data-access="grant" data-id="${esc(s.id)}">Add</button>
+        <button class="btn btn-ghost btn-sm" data-access="reduce" data-id="${esc(s.id)}"
+                title="Takes away up to this many — never goes below 0">Remove</button>
         <button class="btn btn-ghost btn-sm" data-access="set" data-id="${esc(s.id)}">Set to</button>
         <span class="muted" style="font-size:13px;margin-left:8px">Premium:</span>
         <button class="btn btn-ghost btn-sm" data-access="premium" data-id="${esc(s.id)}" title="30 more days of Premium, without adding mocks">+30 days</button>
@@ -1225,6 +1237,7 @@
     if (action === 'students-open') return loadStudents({ open: true });
     if (action === 'students-close') return setState({ studentsOpen: false });
     if (action === 'students-reload') return loadStudents({});
+    if (action === 'students-clear') return loadStudents({ search: '', only: '' });
     if (action === 'voice-open') return loadVoice({ open: true });
     if (action === 'voice-close') return setState({ voiceOpen: false });
     if (action === 'voice-reload') return loadVoice({});
@@ -1731,7 +1744,7 @@
     const amount = action === 'premium' ? 30 : Number(input?.value ?? 0);
     const module = document.getElementById(`mod-${id}`)?.value || 'speaking';
 
-    if ((action === 'grant' || action === 'set') && !Number.isInteger(amount)) {
+    if ((action === 'grant' || action === 'set' || action === 'reduce') && !Number.isInteger(amount)) {
       return setState({ error: 'Give a whole number of mocks.' });
     }
 
@@ -1753,6 +1766,8 @@
             : `${data.email}: Premium ended.`
           : action === 'grant' || action === 'package'
           ? `${data.email} now has speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'}. They will see the confirmation on their dashboard.`
+          : action === 'reduce' || action === 'set'
+          ? `${data.email}: speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'}.`
           : `${data.email}: ${data.blocked ? 'blocked' : 'allowed'} — speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'} left.`
       });
     } catch (error) {
