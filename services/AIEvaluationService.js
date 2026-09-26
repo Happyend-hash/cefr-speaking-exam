@@ -2,8 +2,9 @@ import axios from 'axios';
 
 // The bands live in one place so the score always means the same thing.
 import { CEFR_BANDS, levelForScore, MAX_SCORE } from '../models/ExamResult.js';
-import { CRITERIA_PROMPT_BLOCK, CRITERION_KEYS, BAND_LABELS } from '../content/speakingCriteria.js';
-import { bandsToRaw, rawToScore, BAND_MAX } from './ScoreConversion.js';
+import { SPEAKING_PROMPT_BLOCK, SPEAKING_PART_KEYS } from '../content/speakingRubric.js';
+import { SPEAKING_PART_MAX } from './ScoreConversion.js';
+import { scoreSpeaking } from './SpeakingScoring.js';
 import { WRITING_PARTS, WRITING_PROMPT_BLOCK } from '../content/writingCriteria.js';
 import { describeForMarker } from './FluencyService.js';
 
@@ -155,7 +156,7 @@ class AIEvaluationService {
     if (!anchors.length) return '';
 
     const blocks = anchors.map((anchor, index) => {
-      const bands = CRITERION_KEYS
+      const bands = SPEAKING_PART_KEYS
         .map(key => `${key} ${anchor.teacherBands?.[key] ?? '—'}`)
         .join(', ');
 
@@ -202,45 +203,31 @@ ${group.map(a => `Q: ${a.question}\nA: "${a.transcription}"${
       .join('\n');
 
     const cached = `You are an expert examiner for the O'zbekiston Multilevel English speaking exam.
-You are given a candidate's complete performance and must award the official
-criterion bands for it.
+You award each of the four parts ONE holistic band on that part's own official
+scale.
 
-HOW THIS EXAM IS MARKED — this is the agency's method, not ours:
-One generalised judgement is made across all three task types together
-("topshiriqlarning 3 turi bo'yicha umumlashgan baho qo'yiladi"). You do not mark
-answers separately and average them. You read the whole performance and decide,
-for each criterion, which band it sits in.
+HOW THIS EXAM IS MARKED — this is the school's own method:
+Each part is judged separately, against its OWN scale and its OWN ceiling. Part
+1.1 tops out at "Above A2", Part 3 at "Above C1" — the parts are not equal
+slices of one bigger scale, they are four different rulers. Do not compare one
+part against another and do not let a strong Part 3 pull up a weak Part 1.1 or
+the reverse; each is scored purely on what it shows.
 
-Each criterion is scored 0-${BAND_MAX} against the published descriptors below.
-Band 4 is the pivot: it means the candidate MEETS the requirement. 6 is above
-it, 3 is close to it, 1 does not meet it.
+HOW TO AWARD A BAND:
+- The band is HOLISTIC. Each descriptor names several things together — what
+  the candidate can do, grammar, vocabulary, fluency and hesitation, how ideas
+  connect, and pronunciation — and you weigh them into the ONE band whose
+  description fits the performance best overall. Do not score them separately
+  and average.
+- Use the whole scale. A performance that matches the top descriptor gets the
+  top band; hedging toward the middle for safety is a marking error.
+- A performance that is memorised, largely off-topic, or mostly in another
+  language is band 0 or 1, as the scales say.
 
-Bands 5 and 2 are deliberately not described by the agency. Band 5 means the
-candidate shows everything band 4 describes plus some of band 6; band 2 sits
-between 1 and 3. Use them — a scale where nobody is ever a 5 is a scale being
-used at half its resolution.
+THE OFFICIAL RATING SCALES — award bands against these words exactly:
 
-THE OFFICIAL CRITERIA AND DESCRIPTORS:
-
-${CRITERIA_PROMPT_BLOCK}
+${SPEAKING_PROMPT_BLOCK}
 ${this.buildAnchorBlock(anchors)}
-
-HOW THE PARTS CONTRIBUTE:
-The three parts give different evidence, and a criterion is judged on the best
-evidence available for it, not on an average across parts.
-
-- PART 1 (1.1 and 1.2) is short answers. It shows vocabulary and accuracy on
-  familiar topics. It cannot show sustained discourse, so weakness here is not
-  evidence about coherence over a long turn.
-- PART 2 is the extended turn. This is where fluency, coherence and the ability
-  to sustain discourse are actually visible.
-- PART 3 is argument. This is where the higher bands of communicative
-  effectiveness and range get demonstrated.
-
-A candidate who argues well in Part 3 but is terse in Part 1 has DEMONSTRATED
-the higher band — weakness earlier does not cancel evidence produced later. Mark
-the highest level the candidate actually shows, then adjust within the criterion
-for how consistently they show it.
 
 YOU ARE READING AUTOMATIC TRANSCRIPTION OF SPEECH:
 No punctuation, inferred sentence boundaries, and repetitions or restarts that
@@ -248,10 +235,9 @@ are normal in speech and often artefacts of transcription rather than errors.
 Judge the English a listener would have heard.
 
 Hesitation sounds are written down on purpose: "um", "uh", "erm", "eee",
-"mmm". They are evidence about FLUENCY. They are never grammar or vocabulary
-errors — do not count them against those criteria.
+"mmm". They are evidence about fluency, never grammar or vocabulary errors.
 
-FLUENCY (nutq ravonligi) IS JUDGED FROM THE RECORDING, NOT THE TEXT:
+FLUENCY IS JUDGED FROM THE RECORDING, NOT THE TEXT:
 A transcript is clean — a four-second silence leaves no trace in it. So every
 answer below carries a [recording: …] line measured from its full audio:
 
@@ -263,11 +249,10 @@ answer below carries a [recording: …] line measured from its full audio:
 - repeats: immediate restarts such as "I I think"
 - started after: silence before the first word
 
-Read them against the descriptors' own language — "frequent pausing, false
-starts and reformulations", "some pausing", "pausing while searching for
-vocabulary but this does not put a strain on the listener". As a guide for
-this exam's candidates, taken over the answers that carry most of the speaking
-(Parts 2 and 3 matter most):
+Read them against each part's own fluency/hesitation sentence — "frequent
+pauses, repetition or reformulation", "occasional hesitation", "speech is
+fluent and sustained". As a guide, taken over the answers that carry most of
+the speaking (Part 2 and Part 3 matter most, being the longest turns):
 
 - Frequent pausing (the lower bands): under ~80 words/min, OR 6+ pauses ≥1s per
   minute, OR regular pauses of 2-3s+, OR 8+ fillers per minute.
@@ -281,22 +266,28 @@ These are guides, not a formula: a thoughtful pause before a complex idea is
 not the same as stalling mid-sentence, and a candidate who answers briefly but
 without hesitation is fluent. But the measurements outrank your impression of
 the text. A candidate whose transcript reads smoothly but whose recording shows
-frequent long pauses and fillers is NOT fluent, and must not get a high band
-for fluency.
+frequent long pauses and fillers is NOT fluent, and that must pull the band for
+every part down from what the words alone would suggest.
 
-PRONUNCIATION (talaffuz) IS MEASURED, NOT GUESSED:
-A transcript cannot hear an accent. Where measured figures are supplied in the
-performance below, the talaffuz band must follow them and the descriptors
-together. Where no measurement is supplied, return null for that band rather
-than inventing one — a criterion nobody could judge is not a criterion the
-candidate failed, and the scoring handles a missing band correctly.
+PRONUNCIATION IS MEASURED, NOT GUESSED:
+A transcript cannot hear an accent. Where measured figures are supplied below,
+each part's pronunciation sentence must follow them, not your impression of the
+spelling. The same measurement applies across every part — it was sampled from
+the whole attempt, not answer by answer.
+
+A PART WITH NO EVIDENCE AT ALL gets null, not a band. This only happens in
+practice mode, where one part is drilled at a time — a full mock always has
+transcript evidence for all four. Do not return null just because pronunciation
+or fluency could not be measured; the part still has a transcript, still gets
+one band, and the measurements simply do not move that band as far as they
+otherwise would.
 
 Reply with JSON only:
 {
   "bands": {
-${CRITERION_KEYS.map(key => `    "${key}": 0-${BAND_MAX}`).join(',\n')}
+${Object.entries(SPEAKING_PART_MAX).map(([key, max]) => `    "${key}": 0-${max}`).join(',\n')}
   },
-  "reasoning": "Which part gave the evidence for each band, in one or two sentences",
+  "reasoning": "Which sentence of which part's descriptor decided each band, in one or two sentences",
   "overallFeedback": "What the candidate does well and what holds them back, addressed to them",
   "strengths": ["...", "...", "..."],
   "areasForImprovement": ["...", "...", "..."]
@@ -304,8 +295,8 @@ ${CRITERION_KEYS.map(key => `    "${key}": 0-${BAND_MAX}`).join(',\n')}
 
 ${this.languageInstruction}
 Award the bands the official examiner would: neither severe nor generous. Do not
-hedge toward band 3 or 4 for safety — a candidate whose performance matches the
-band 6 descriptor gets a 6, and marking them down to be cautious is a marking
+hedge toward the middle for safety — a performance that matches the top
+descriptor gets the top band, and marking it down to be cautious is a marking
 error, not caution.`;
 
     const measured = pronunciation?.assessed
@@ -317,19 +308,20 @@ accuracy ${Math.round(pronunciation.accuracy ?? 0)}, Azure fluency ${Math.round(
             ? `\nWords mispronounced: ${pronunciation.problemWords.slice(0, 8).map(w => w.word).join(', ')}`
             : ''
         }
-Use these for the talaffuz band, read against its descriptors.${
+Use these for every part's pronunciation sentence, read against its descriptor.${
           pronunciation.accuracySuspect
             ? `
 
 WARNING — THE ACCURACY FIGURE ABOVE IS UNRELIABLE FOR THIS ATTEMPT.
 It sits far below fluency and prosody, which does not happen to a real speaker:
-someone whose sounds are genuinely unclear is also hesitant and flat. Judge the
-talaffuz band on fluency and prosody, and on the words listed as mispronounced
+someone whose sounds are genuinely unclear is also hesitant and flat. Judge
+pronunciation on fluency and prosody, and on the words listed as mispronounced
 if any. Do not mark the candidate down for the accuracy number.`
             : ''
         }`
-      : `\n\nNo pronunciation measurement is available for this attempt. Return null for
-the talaffuz band.`;
+      : `\n\nNo pronunciation measurement is available for this attempt. Judge
+pronunciation from the transcript alone, as an examiner without audio would —
+do not return null for it; only a part with no evidence at all gets null.`;
 
     const measuredFluency = fluency?.measured
       ? `\n\nFLUENCY ACROSS THE WHOLE ATTEMPT (measured from ${fluency.answers} recordings, ${Math.round(fluency.speakingSec)}s of speaking):
@@ -343,43 +335,40 @@ ${transcript}${measured}${measuredFluency}`;
     const verdict = this.parseEvaluation(response);
 
     const bands = {};
-    for (const key of CRITERION_KEYS) {
+    for (const [key, max] of Object.entries(SPEAKING_PART_MAX)) {
       const awarded = verdict.bands?.[key];
 
       /*
        * A band the marker could not award stays ABSENT rather than becoming a
        * zero. Zero is a real judgement on this scale — worse than band 1 — and
-       * must never stand in for "unknown".
+       * must never stand in for "unknown". This only happens for a part with
+       * no evidence at all (practice mode); a full mock always has all four.
        *
        * The emptiness is tested before the conversion to a number, because
-       * Number(null) is 0 and Number('') is 0. Left to Number() alone, the
-       * marker returning null for an unmeasurable pronunciation — exactly what
-       * the prompt instructs it to do — silently became a zero and cost the
-       * candidate eight points on the reported score.
+       * Number(null) is 0 and Number('') is 0.
        */
       if (awarded === null || awarded === undefined || awarded === '') continue;
 
       const band = Number(awarded);
       if (!Number.isFinite(band)) continue;
-      bands[key] = Math.max(0, Math.min(BAND_MAX, Math.round(band)));
+      bands[key] = Math.max(0, Math.min(max, Math.round(band)));
     }
 
-    if (Object.keys(bands).length === 0) {
-      throw new Error('Overall marking returned no usable criterion bands');
+    const outcome = scoreSpeaking(bands);
+    if (!outcome) {
+      throw new Error('Overall marking returned no usable part bands');
     }
-
-    const raw = bandsToRaw(bands);
-    const score = rawToScore(raw);
 
     return {
       bands,
-      raw,
-      score,
-      // The agency's table is the authority on both numbers, so neither is
-      // taken from the model: the bands convert to a score, and the score
-      // determines the level. The marker's own arithmetic is never trusted,
-      // which is why it is no longer asked for any.
-      level: levelForScore(score),
+      // The school's table is the authority on both numbers, so neither is
+      // taken from the model: the bands convert to a mark and a score, and the
+      // score determines the level. The marker's own arithmetic is never
+      // trusted, which is why it is no longer asked for any.
+      raw: outcome.expertMark,
+      complete: outcome.complete,
+      score: outcome.score,
+      level: outcome.level,
       reasoning: verdict.reasoning || '',
       overallFeedback: verdict.overallFeedback || '',
       strengths: verdict.strengths || [],

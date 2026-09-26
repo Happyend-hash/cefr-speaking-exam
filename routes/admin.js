@@ -24,7 +24,8 @@ import {
   extendPremium, endPremium, isPremium, avatarUrl, avatarStorage, PREMIUM_DAYS, announceBadge
 } from '../services/Premium.js';
 import { invalidate as invalidateLeaderboard } from '../services/Leaderboard.js';
-import { bandsToScore } from '../services/ScoreConversion.js';
+import { SPEAKING_PART_MAX } from '../services/ScoreConversion.js';
+import { scoreSpeaking } from '../services/SpeakingScoring.js';
 import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark } from './exam.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -1577,7 +1578,7 @@ router.get('/results', async (req, res, next) => {
       .limit(limit)
       .populate('student', 'email firstName lastName')
       .populate('exam', 'title')
-      .select('student exam overallScore overallLevel criterionBands teacherBands completedAt createdAt mode part taskResults.taskNumber')
+      .select('student exam overallScore overallLevel partBands teacherBands completedAt createdAt mode part taskResults.taskNumber')
       .lean();
 
     res.json({
@@ -1630,18 +1631,17 @@ router.post('/results/:id/bands', async (req, res, next) => {
     const result = await ExamResult.findById(req.params.id);
     if (!result) throw new APIError('Attempt not found', 404);
 
-    const keys = ['vocabulary', 'grammar', 'fluencyCoherence', 'communicative', 'pronunciation'];
     const bands = {};
 
-    for (const key of keys) {
+    for (const [key, max] of Object.entries(SPEAKING_PART_MAX)) {
       const value = req.body?.[key];
-      // An unset criterion is left unset rather than zeroed: a teacher who only
-      // wants to correct pronunciation should not have to restate the other
-      // four, and a blank must never be read as "band 0".
+      // An unset part is left unset rather than zeroed: a teacher who only
+      // wants to correct one part should not have to restate the other three,
+      // and a blank must never be read as "band 0".
       if (value === undefined || value === null || value === '') continue;
       const band = Number(value);
-      if (!Number.isInteger(band) || band < 0 || band > 6) {
-        throw new APIError(`${key} must be a whole number from 0 to 6`, 400);
+      if (!Number.isInteger(band) || band < 0 || band > max) {
+        throw new APIError(`${key} must be a whole number from 0 to ${max}`, 400);
       }
       bands[key] = band;
     }
@@ -1669,7 +1669,7 @@ router.post('/results/:id/bands', async (req, res, next) => {
     // them because bands are easier to judge than a score but a score is what
     // they will be compared against — and a teacher whose bands quietly add up
     // to 72 for a candidate they think of as a 67 should see that immediately.
-    const teacherScore = bandsToScore(bands);
+    const teacherScore = scoreSpeaking(bands)?.score ?? null;
 
     res.json({
       success: true,

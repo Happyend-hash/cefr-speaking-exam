@@ -197,27 +197,31 @@ const examResultSchema = new mongoose.Schema(
     overallImprovements: [String],
 
     /**
-     * The official criterion bands, 0-6 each, and the arithmetic that turned
-     * them into a score.
+     * The official part bands — part11/part12/part2/part3, each on its own
+     * 0-5 or 0-6 scale — and the arithmetic that turned them into a score.
      *
      * THE BANDS ARE STORED, NOT JUST THE SCORE, and that is the point of this
-     * block. The raw speaking total's denominator is inferred rather than
-     * documented (see services/ScoreConversion.js). The day it is confirmed,
-     * every attempt ever marked can be reconverted from these bands in a loop
-     * that costs nothing. Had only the score been kept, correcting it would
-     * mean re-marking every attempt through the API — real money, and only for
-     * attempts whose audio still exists.
+     * block. Had only the score been kept, correcting a conversion mistake
+     * would mean re-marking every attempt through the API — real money, and
+     * only for attempts whose audio still exists. Kept as loose numbers
+     * (rather than a fixed 0-6 range) because a part's own ceiling can be 5 or
+     * 6 — see content/speakingRubric.js.
+     *
+     * Named `partBands` — not `criterionBands` — because these are no longer
+     * the old five weighted criteria (vocabulary, grammar, etc). Attempts
+     * marked before this change stored criterion-keyed bands here under the
+     * old field name; they are read by nothing now and are harmless left in
+     * the database.
      *
      * `denominator` records what the conversion assumed at the time, so an
-     * attempt marked under one assumption is never silently reinterpreted under
-     * another.
+     * attempt marked under one assumption is never silently reinterpreted
+     * under another.
      */
-    criterionBands: {
-      vocabulary: Number,
-      grammar: Number,
-      fluencyCoherence: Number,
-      communicative: Number,
-      pronunciation: Number
+    partBands: {
+      part11: Number,
+      part12: Number,
+      part2: Number,
+      part3: Number
     },
     rawTotal: Number,
     denominator: Number,
@@ -237,11 +241,10 @@ const examResultSchema = new mongoose.Schema(
      * agency and which from a teacher's ear.
      */
     teacherBands: {
-      vocabulary: Number,
-      grammar: Number,
-      fluencyCoherence: Number,
-      communicative: Number,
-      pronunciation: Number,
+      part11: Number,
+      part12: Number,
+      part2: Number,
+      part3: Number,
       note: String,
       source: {
         type: String,
@@ -433,7 +436,7 @@ examResultSchema.statics.markingAnchors = async function (limit = 3) {
   if (corrected.length <= limit) return corrected;
 
   const total = doc =>
-    ['vocabulary', 'grammar', 'fluencyCoherence', 'communicative', 'pronunciation']
+    ['part11', 'part12', 'part2', 'part3']
       .reduce((sum, key) => sum + (Number(doc.teacherBands?.[key]) || 0), 0);
 
   const ranked = corrected

@@ -17,13 +17,13 @@ import PronunciationService from '../services/PronunciationService.js';
 import FluencyService from '../services/FluencyService.js';
 import { recordScore } from '../services/Leaderboard.js';
 import { removeResult } from '../services/AttemptCleanup.js';
-import { RAW_MAX, BAND_MAX } from '../services/ScoreConversion.js';
+import { SPEAKING_RAW_MAX } from '../services/ScoreConversion.js';
 import {
-  CRITERIA,
-  BAND_LABELS,
-  descriptorFor,
-  nextBandFor
-} from '../content/speakingCriteria.js';
+  SPEAKING_PARTS,
+  speakingDescriptor,
+  speakingLabel,
+  speakingNextBand
+} from '../content/speakingRubric.js';
 import AICallLimiter from '../services/MarkingQueue.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -80,28 +80,29 @@ function flattenExam(exam, onlyPart = null) {
 }
 
 /**
- * The detail behind a result's score: each official criterion, the band
- * awarded, what that band means, and what the next one up requires.
+ * The detail behind a result's score: each official part, the band awarded,
+ * what that band means, and what the next one up requires.
  *
- * Returns an empty array for attempts marked before criterion bands existed, so
- * the client shows the score alone rather than an empty panel promising detail
- * it does not have.
+ * Returns an empty array for attempts marked before part bands existed (or
+ * marked under the old five-criterion scheme, whose keys do not match any
+ * part here), so the client shows the score alone rather than an empty panel
+ * promising detail it does not have.
  */
 function buildCriteriaDetail(bands) {
   if (!bands) return [];
 
-  return CRITERIA.map(criterion => {
-    const band = Number(bands[criterion.key] ?? bands.get?.(criterion.key));
+  return SPEAKING_PARTS.map(part => {
+    const band = Number(bands[part.key] ?? bands.get?.(part.key));
     if (!Number.isFinite(band)) return null;
 
     return {
-      key: criterion.key,
-      name: criterion.name,
+      key: part.key,
+      name: part.name,
       band,
-      max: BAND_MAX,
-      label: BAND_LABELS[band] || '',
-      descriptor: descriptorFor(criterion.key, band),
-      next: nextBandFor(criterion.key, band)
+      max: part.max,
+      label: speakingLabel(part.key, band),
+      descriptor: speakingDescriptor(part.key, band),
+      next: speakingNextBand(part.key, band)
     };
   }).filter(Boolean);
 }
@@ -296,7 +297,7 @@ router.get('/results/:resultId', async (req, res, next) => {
          * actionable half — a band number alone tells a student where they are
          * and nothing about how to move.
          */
-        criteria: buildCriteriaDetail(result.criterionBands),
+        criteria: buildCriteriaDetail(result.partBands),
         // The teacher's correction, if one was recorded. Sent to everyone but
         // only rendered for admins — it is not secret, it is simply not a
         // student's business which way their teacher disagreed with a marker.
@@ -1257,18 +1258,19 @@ export async function markAttempt(resultId) {
   const evaluatedCount = result.taskResults.filter(t => t.status === 'evaluated').length;
 
   /*
-   * The mark comes from the whole performance, as the agency's own method
-   * requires: "topshiriqlarning 3 turi bo'yicha umumlashgan baho qo'yiladi" —
-   * one generalised judgement across the three task types.
+   * The mark comes from the whole performance, as the school's own method
+   * requires: one holistic band per part, not five criteria averaged across
+   * everything the candidate said. Averaging per-answer scores was never how
+   * this exam works: it asked a 30-second Part 1.1 reply to prove C1, marked
+   * it down when it could not, and pulled genuine C1 candidates into the
+   * middle of B2. The new per-part scales do not have this problem — Part 1.1
+   * is judged on its own "Above A2" ceiling, Part 3 on its own "Above C1"
+   * ceiling — so nothing here has to compensate for one part being asked to
+   * prove a level its task never gives room for.
    *
-   * So the marker awards the five official criterion bands, 0-6 each, and the
-   * published conversion table turns those into the 0-75 figure. Averaging the
-   * answers was never how this exam works: it asked a 30-second Part 1.1 reply
-   * to prove C1, marked it down when it could not, and pulled genuine C1
-   * candidates into the middle of B2.
-   *
-   * The measured pronunciation goes in with the transcripts, because talaffuz
-   * is one of the five criteria and a transcript cannot hear an accent.
+   * The measured pronunciation and fluency go in with the transcripts, because
+   * every part's descriptor names both, and a transcript cannot hear an accent
+   * or a pause.
    *
    * The old average survives as the fallback. It is wrong in the way described
    * above, but it is wrong in a knowable direction, and a marked attempt with a
@@ -1347,9 +1349,9 @@ export async function markAttempt(resultId) {
     result.overallImprovements = overall.areasForImprovement;
     // The bands and the arithmetic that produced the score, kept so the
     // conversion can be corrected later without re-marking anybody.
-    result.criterionBands = overall.bands;
+    result.partBands = overall.bands;
     result.rawTotal = overall.raw;
-    result.denominator = RAW_MAX;
+    result.denominator = SPEAKING_RAW_MAX;
   } else {
     result.calculateOverallScore();
     result.overallLevel = result.determineCEFRLevel();

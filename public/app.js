@@ -4265,21 +4265,17 @@
    * wording, so there is exactly one copy of them in the system.
    */
   const CRITERIA_UZ = {
-    open: "Batafsil — mezonlar bo'yicha ballaringiz",
+    open: "Batafsil — qismlar bo'yicha ballaringiz",
     close: 'Yopish',
     heading: 'Baholash mezonlari',
     intro:
-      "Rasmiy imtihon mezonlari. Har biri 0 dan 6 gacha baholanadi; 4 ball — " +
-      "daraja talabiga mos degani.",
+      "Rasmiy imtihon mezonlari. Har bir qism o'zining shkalasi bo'yicha " +
+      "yagona ball bilan baholanadi (1.1 va 1.2 — 0 dan 5 gacha, 2-qism — 0 " +
+      "dan 5 gacha, 3-qism — 0 dan 6 gacha).",
     next: band => `${band} ball uchun nima kerak`,
     measured: "O'lchangan",
     azure: { accuracy: 'aniqlik', fluency: 'ravonlik', prosody: 'ohang' },
-    // Bands 5 and 2 have no descriptor of their own — the sheet defines them as
-    // the space between their neighbours, so the page shows the band above and
-    // says so rather than printing "between 4 and 6" as if it were advice.
-    between: (band, shown) =>
-      `${band} ball — hozirgi darajangizdan yuqori, ${shown} ball xususiyatlari ko'rina boshlashi kerak:`,
-    top: "Bu mezon bo'yicha eng yuqori ball."
+    top: "Bu qism bo'yicha eng yuqori ball."
   };
 
   /**
@@ -5403,8 +5399,8 @@
    */
   function criteriaCard() {
     const criteria = state.result?.criteria || [];
-    // Attempts marked before criterion bands existed have none. Showing an
-    // empty panel would promise detail that is not there.
+    // Attempts marked before part bands existed have none. Showing an empty
+    // panel would promise detail that is not there.
     if (!criteria.length) return '';
 
     if (!state.criteriaOpen) {
@@ -5415,6 +5411,24 @@
       </div>`;
     }
 
+    // Fluency and pronunciation are measured once, for the whole attempt, and
+    // every part's own descriptor names both — they are no longer a criterion
+    // of their own. So the measurements are shown once, above the four parts,
+    // rather than nested inside one part that no longer represents them.
+    const measuredBlock = `
+      ${state.result?.fluency
+        ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(FLUENCY_UZ.summary(state.result.fluency))}</div>`
+        : ''}
+      ${state.result?.pronunciation?.assessed
+        ? `<div class="muted" style="font-size:13px;margin-top:4px">
+             ${CRITERIA_UZ.measured}:
+             ${['accuracy', 'fluency', 'prosody']
+               .filter(k => Number.isFinite(Number(state.result.pronunciation[k])))
+               .map(k => `${CRITERIA_UZ.azure[k]} ${Math.round(state.result.pronunciation[k])}`)
+               .join(' · ')} / 100
+           </div>`
+        : ''}`;
+
     const rows = criteria.map(c => `
       <div style="padding:16px 0;border-bottom:1px solid var(--line)">
         <div class="row" style="justify-content:space-between;align-items:baseline;gap:12px">
@@ -5422,40 +5436,16 @@
           <span><strong style="font-size:20px">${c.band}</strong><span class="muted"> / ${c.max}</span></span>
         </div>
         <div class="muted" style="font-size:13px;margin-top:2px">${esc(c.label)}</div>
-        ${c.descriptor
-          ? `<p style="margin-top:10px">${esc(c.descriptor)}</p>`
-          : ''}
-        ${c.key === 'fluencyCoherence' && state.result?.fluency
-          // The recording behind the band: what a listener heard that the
-          // transcript cannot show. Pauses and fillers are things a student
-          // can hear in their own recording and work on.
-          ? `<div class="muted" style="font-size:13px;margin-top:8px">
-               ${esc(FLUENCY_UZ.summary(state.result.fluency))}
-             </div>`
-          : ''}
-        ${c.key === 'pronunciation' && state.result?.pronunciation?.assessed
-          // The measurement behind the band, shown where the band is. This is
-          // the one criterion with an instrument rather than an opinion behind
-          // it, and a teacher checking whether the marker respected the
-          // measurement should not have to go hunting for it.
-          ? `<div class="muted" style="font-size:13px;margin-top:8px">
-               ${CRITERIA_UZ.measured}:
-               ${['accuracy', 'fluency', 'prosody']
-                 .filter(k => Number.isFinite(Number(state.result.pronunciation[k])))
-                 .map(k => `${CRITERIA_UZ.azure[k]} ${Math.round(state.result.pronunciation[k])}`)
-                 .join(' · ')} / 100
-             </div>`
+        ${c.descriptor?.length
+          ? `<ul class="pill-list" style="margin-top:10px">${c.descriptor.map(d => `<li>${esc(d)}</li>`).join('')}</ul>`
           : ''}
         ${c.next
           // The actionable half. A band number says where a student is; this
           // says what the next one asks of them, in the words the examiner
           // will be reading when they sit the real exam.
           ? `<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--ground)">
-               <div class="section-title">${esc(CRITERIA_UZ.next(c.next.band))}</div>
-               ${c.next.between
-                 ? `<p class="muted" style="margin-top:6px;font-size:13px">${esc(CRITERIA_UZ.between(c.next.band, c.next.describes))}</p>`
-                 : ''}
-               <p style="margin-top:6px">${esc(c.next.descriptor)}</p>
+               <div class="section-title">${esc(CRITERIA_UZ.next(c.next.band))} — ${esc(c.next.label)}</div>
+               <ul class="pill-list" style="margin-top:6px">${c.next.descriptor.map(d => `<li>${esc(d)}</li>`).join('')}</ul>
              </div>`
           : `<p class="muted" style="margin-top:12px">${esc(CRITERIA_UZ.top)}</p>`}
       </div>`).join('');
@@ -5466,6 +5456,7 @@
         <button class="btn btn-ghost btn-sm" data-action="criteria-close">${CRITERIA_UZ.close}</button>
       </div>
       <p class="muted" style="margin-top:6px">${CRITERIA_UZ.intro}</p>
+      ${measuredBlock}
       <div style="margin-top:8px">${rows}</div>
       ${correctionForm(criteria)}
     </div>`;
@@ -5490,7 +5481,7 @@
     const fields = criteria.map(c => `
       <label style="display:flex;flex-direction:column;gap:4px">
         <span class="muted" style="font-size:12px">${esc(c.name)}</span>
-        <input type="number" min="0" max="6" style="width:68px"
+        <input type="number" min="0" max="${c.max}" style="width:68px"
                data-band="${esc(c.key)}"
                value="${saved?.[c.key] ?? c.band}" />
       </label>`).join('');
