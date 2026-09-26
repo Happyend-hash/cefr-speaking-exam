@@ -944,6 +944,38 @@ router.post('/results/remark', async (req, res, next) => {
 });
 
 /**
+ * @route   POST /api/admin/results/:id/remark
+ * @desc    Mark ONE attempt again with the current scoring — the tool for
+ *          "did this code change actually move this attempt's marks",
+ *          without spending a whole account's worth of AI calls on the
+ *          batch endpoint above to answer that.
+ *
+ * Awaited directly rather than run in the background like the batch version:
+ * one attempt is one wave of AI calls (a few seconds to well under a minute),
+ * short enough to hold the request open for, and the caller gets the answer
+ * immediately instead of having to re-poll.
+ */
+router.post('/results/:id/remark', async (req, res, next) => {
+  try {
+    const result = await ExamResult.findById(req.params.id).select('status');
+    if (!result) throw new APIError('Attempt not found', 404);
+    if (!REMARKABLE.includes(result.status)) {
+      throw new APIError(
+        `Only a completed or submitted attempt can be re-marked (this one is "${result.status}").`,
+        400
+      );
+    }
+
+    if (req.body?.retranscribe === true) await retranscribeAndMark(req.params.id);
+    else await markAttempt(req.params.id);
+
+    res.json({ success: true, message: 'Re-marked.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Rescuing attempts that were never read.
  *
  * A batch of attempts came back as zeros because the recordings arrived with no

@@ -357,6 +357,35 @@
     }
   }
 
+  /**
+   * Re-run today's marker on THIS attempt only.
+   *
+   * The tool for "did that code change actually move this attempt's marks" —
+   * without spending a whole account's worth of AI calls on the blunter admin
+   * endpoint that re-marks every attempt at once. Nothing is re-transcribed;
+   * the same transcript and recordings go through the current marking code.
+   */
+  async function remarkAttempt() {
+    const before = { score: state.result.overallScore, level: state.result.overallLevel };
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      await api(`/admin/results/${state.result.id}/remark`, { method: 'POST' });
+      // Re-read the result so the panel shows what the marker actually
+      // produced rather than assuming the call succeeded silently.
+      const result = await api(`/exam/results/${state.result.id}`);
+      const changed = before.score !== result.overallScore || before.level !== result.overallLevel;
+      setState({
+        result,
+        loading: false,
+        notice: changed
+          ? CORRECT_UZ.remarkChanged(before.score, before.level, result.overallScore, result.overallLevel)
+          : CORRECT_UZ.remarkSame(result.overallScore, result.overallLevel)
+      });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
   async function dismissNotice() {
     setState({ access: { ...(state.access || {}), message: '' } });
     try {
@@ -4292,7 +4321,14 @@
     note: 'Why (optional — the marker reads this)',
     real: 'Confirmed by a real certificate',
     save: 'Save as calibration',
-    savedAt: when => `Recorded ${when}.`
+    savedAt: when => `Recorded ${when}.`,
+    remarkHeading: 'Check a scoring change',
+    remarkIntro: 'Re-run today\'s marker on THIS attempt only — the transcript and recordings are untouched, only the score is recalculated.',
+    remark: 'Re-mark this attempt',
+    remarking: 'Re-marking…',
+    remarkChanged: (beforeScore, beforeLevel, afterScore, afterLevel) =>
+      `Re-marked — ${beforeScore ?? '—'}/75 (${beforeLevel || '—'}) → ${afterScore ?? '—'}/75 (${afterLevel || '—'}).`,
+    remarkSame: (score, level) => `Re-marked — unchanged (${score ?? '—'}/75, ${level || '—'}).`
   };
 
   const ACCESS_UZ = {
@@ -5487,7 +5523,13 @@
       </label>`).join('');
 
     return `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
-      <strong style="font-size:14px">${CORRECT_UZ.heading}</strong>
+      <strong style="font-size:14px">${CORRECT_UZ.remarkHeading}</strong>
+      <p class="muted" style="margin-top:4px;font-size:13px">${CORRECT_UZ.remarkIntro}</p>
+      <button class="btn btn-ghost btn-sm" style="margin-top:10px" data-action="remark-attempt" ${state.loading ? 'disabled' : ''}>
+        ${state.loading ? CORRECT_UZ.remarking : CORRECT_UZ.remark}
+      </button>
+
+      <strong style="font-size:14px;display:block;margin-top:24px">${CORRECT_UZ.heading}</strong>
       <p class="muted" style="margin-top:4px;font-size:13px">${CORRECT_UZ.intro}</p>
 
       <div class="row" style="gap:12px;flex-wrap:wrap;margin-top:12px;align-items:flex-end">
@@ -5812,6 +5854,7 @@
       case 'done-submitting': return loadDashboard();
       case 'notice-seen': return dismissNotice();
       case 'bands-save': return saveBands();
+      case 'remark-attempt': return remarkAttempt();
       case 'criteria-open': return setState({ criteriaOpen: true });
       case 'criteria-close': return setState({ criteriaOpen: false });
       case 'mic-check': return runMicCheck();
