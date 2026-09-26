@@ -164,12 +164,17 @@ router.delete('/results/:resultId', async (req, res, next) => {
   try {
     const result = await loadOwnedResult(req, req.params.resultId);
 
-    // An attempt that was started and never spoken into cost nothing to run, so
-    // it should not have cost a mock either. Deleting it hands the credit back.
-    // Only the untouched ones: once there is a single answer, the transcription
-    // has been paid for and the attempt was used.
+    // An attempt is only charged at submission now (see /results/:id/submit),
+    // so deleting one still in progress is normally nothing to refund — it was
+    // never charged in the first place. `creditCharged` defaults to true for
+    // attempts already in progress when that change shipped (they were charged
+    // the old way, at start), so those still get their credit handed back;
+    // every attempt started after the change carries creditCharged: false and
+    // this is simply a no-op for them, as it should be.
     const refundable =
-      result.status === 'in_progress' && (result.taskResults || []).length === 0;
+      result.creditCharged &&
+      result.status === 'in_progress' &&
+      (result.taskResults || []).length === 0;
 
     const outcome = await removeResult(result);
 
@@ -477,14 +482,14 @@ router.get('/:id', async (req, res, next) => {
  *          creating duplicates when a student reloads mid-exam.
  * @access  Private
  *
- * This is the only door into the paid work. Everything an attempt costs —
- * transcription on every upload, marking and pronunciation on submit — follows
- * from getting through here, so the access check lives here rather than at
- * submit, where the money would already have been spent.
- *
- * A credit is spent when an attempt is CREATED, not when it is resumed. A
- * student who reloads, loses their connection or comes back to finish is not
- * charged twice for the same attempt.
+ * This is the only door into the paid work — transcription on every upload,
+ * marking and pronunciation on submit — so the ACCESS CHECK (does this
+ * student have enough credit at all?) still lives here, before any of that
+ * runs up a bill. But the credit itself is not spent here any more: it is
+ * spent in /results/:id/submit, the moment the student actually hands the
+ * attempt in. A mock abandoned mid-way — closed, lost connection, changed
+ * their mind — was never submitted, so it was never charged; nothing needs
+ * refunding because nothing was taken. See `creditCharged` on ExamResult.
  */
 router.post('/:id/start', async (req, res, next) => {
   try {
@@ -556,6 +561,29 @@ router.post('/:id/start', async (req, res, next) => {
     // Past this point a new attempt is being created, so it has to be paid for.
     if (!gate.allowed) throw new APIError(gate.message, 402, gate.code);
 
+    // The gate above only checked today's balance — but that balance is not
+    // reserved until the attempt is actually charged, at submit. Without this,
+    // a student could open a second, unrelated attempt (a different exam,
+    // mode or part) while the first is still uncharged and in progress, have
+    // both pass the same balance check, and only one would ever actually be
+    // charged when they both got submitted. One uncharged attempt open at a
+    // time closes that gap; finishing, submitting or deleting it frees the
+    // student to start a different one.
+    if (gate.code !== 'staff') {
+      const openElsewhere = await ExamResult.findOne({
+        student: req.user.id,
+        status: 'in_progress',
+        creditCharged: false
+      }).lean();
+      if (openElsewhere) {
+        throw new APIError(
+          'You already have a mock in progress. Finish it or delete it from your results before starting another.',
+          409,
+          'attempt_in_progress'
+        );
+      }
+    }
+
     const result = await ExamResult.create({
       student: req.user.id,
       exam: exam._id,
@@ -564,6 +592,10 @@ router.post('/:id/start', async (req, res, next) => {
       mode,
       part,
       creditCost: gate.code === 'staff' ? 0 : cost,
+      // Not charged yet — charging happens on submit. Staff are never charged
+      // at all, so their attempts are marked as already "charged" (for 0)
+      // to keep /submit from trying to spend anything for them.
+      creditCharged: gate.code === 'staff',
       // overallLevel is the outcome of the test, so it stays unset until evaluated.
       status: 'in_progress',
       startedAt: new Date(),
@@ -571,13 +603,6 @@ router.post('/:id/start', async (req, res, next) => {
       ipAddress: req.ip,
       userAgent: req.get('user-agent')
     });
-
-    // Charged only after the attempt exists. Charging first would take a mock
-    // off a student whose attempt then failed to save. Staff run free — the
-    // teacher checking a test is not a customer.
-    if (gate.code !== 'staff') student.spendCredits(cost);
-    student.stats.totalExamsTaken = (student.stats.totalExamsTaken || 0) + 1;
-    await student.save();
 
     res.status(201).json({
       success: true,
@@ -746,6 +771,27 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
 
     const exam = await Exam.findById(result.exam).lean();
     if (!exam) throw new APIError('The exam for this attempt no longer exists', 404);
+
+    // The credit is spent HERE, not at start — this is the moment the student
+    // actually hands the attempt in, so it is the only moment that should cost
+    // them a mock. `creditCharged` guards against charging twice: it is already
+    // true for staff (never charged) and for a re-submit of an attempt that was
+    // stuck 'evaluating' and already charged the first time through.
+    if (!result.creditCharged) {
+      const student = await User.findById(result.student);
+      const units = Number.isFinite(result.creditCost) ? result.creditCost : UNITS_PER_MOCK;
+      if (student) {
+        // The balance was already checked before the student was allowed to
+        // start; spendCredits() only re-confirms it. If it somehow comes up
+        // short now (a teacher removed credits mid-attempt), the student still
+        // gets their result — the work is done — rather than being blocked at
+        // the last step over a handful of twelfths.
+        student.spendCredits(units);
+        student.stats.totalExamsTaken = (student.stats.totalExamsTaken || 0) + 1;
+        await student.save();
+      }
+      result.creditCharged = true;
+    }
 
     result.submit();
     result.status = 'evaluating';

@@ -386,8 +386,10 @@
         questions,
         micCheck: { phase: 'idle' },
         serverTranscription: Boolean(started.serverTranscription),
-        // The balance the server has just charged, so the dashboard behind this
-        // attempt is already right when the student comes back to it.
+        // The server's own count of what's left. A speaking mock is not
+        // charged until it is submitted, so this is still the untouched
+        // balance; writing charges at start, so its balance already reflects
+        // that.
         access: typeof started.remaining === 'number'
           ? { ...(state.access || {}), remaining: started.remaining, credits: started.credits, units: started.units }
           : state.access,

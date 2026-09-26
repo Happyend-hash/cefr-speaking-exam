@@ -47,11 +47,21 @@ const examResultSchema = new mongoose.Schema(
     // Set only for practice attempts: which part was practised.
     part: String,
 
-    // What this attempt was charged, in twelfths of a mock (see models/User.js):
-    // 12 for a full mock, 3 for one speaking part. Recorded so a refund hands
-    // back exactly what was taken. Absent on attempts made before part pricing,
-    // all of which were charged a whole mock.
+    // What this attempt costs, in twelfths of a mock (see models/User.js): 12
+    // for a full mock, 3 for one speaking part. Recorded at creation so
+    // submission charges exactly what was quoted, and a refund (were one ever
+    // needed) hands back exactly that amount. Absent on attempts made before
+    // part pricing, all of which were charged a whole mock.
     creditCost: Number,
+
+    // Has the student actually been charged creditCost yet? Charging happens
+    // at SUBMISSION, not at start — an attempt abandoned before submitting
+    // costs the student nothing. Defaults to true so attempts already in
+    // progress when this changed (charged at start, under the old rule) are
+    // not charged a second time when they are later submitted; every attempt
+    // created after this change sets it to false explicitly and flips it to
+    // true the moment /submit charges it.
+    creditCharged: { type: Boolean, default: true },
 
     // Status
     status: {
