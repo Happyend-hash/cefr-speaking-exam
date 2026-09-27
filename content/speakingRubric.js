@@ -123,12 +123,24 @@ export const SPEAKING_PARTS = [
       1: 'Lower A2',
       0: 'No meaningful language'
     },
+    /*
+     * Grammar and vocabulary, deliberately eased below the official wording —
+     * Jamshid's call, 2026-09-27. Task achievement, fluency/hesitation,
+     * cohesion and pronunciation are UNCHANGED and still the official text;
+     * only the grammar and vocabulary sentences of bands 2-5 were rewritten,
+     * each one loosened by roughly what used to sit one band down, so a
+     * candidate reaches a band on those two dimensions with more error and
+     * less complex control than OFFICIAL-SPEAKING-PART-SCALES.md asks for.
+     * Bands 0-1 are untouched: they are already the floor, and loosening them
+     * further has nothing left to give. If this ever needs to be reverted to
+     * the official scale, that document has the original wording.
+     */
     bands: {
       5: [
         'Can communicate effectively and relatively fluently when describing, comparing and discussing familiar public, educational or everyday topics.',
         'Can develop ideas beyond a straightforward sequence, give reasons and explanations, and express and support opinions with relevant detail.',
-        'Uses a range of grammatical structures with generally good control, including some more complex forms.',
-        'Vocabulary is sufficiently broad and flexible to express ideas with some precision, although occasional limitations may occur.',
+        'Uses a range of grammatical structures, including some more complex forms, even if errors appear when attempting them.',
+        'Vocabulary is broad enough to express ideas on familiar topics, even with noticeable imprecision or occasional repetition.',
         'Speech is generally fluent, with only occasional hesitation or reformulation.',
         'Ideas are clearly connected and logically organised.',
         'Pronunciation is clear and generally easy to understand.'
@@ -136,8 +148,8 @@ export const SPEAKING_PARTS = [
       4: [
         'Can produce a clear, connected response when describing and comparing the visual information and expressing opinions or preferences.',
         'Can develop main ideas with reasons, explanations or examples, although development may not always be even.',
-        'Uses a range of familiar grammatical structures with reasonable control and some successful use of more complex forms.',
-        'Vocabulary is adequate and shows some flexibility, although repetition or occasional imprecision may occur.',
+        'Uses a range of familiar grammatical structures, with some attempts at more complex forms even where control of them is inconsistent.',
+        'Vocabulary is adequate for the task, even where imprecision or repetition is fairly frequent.',
         'Speech is generally sustained, with noticeable but manageable hesitation.',
         'Ideas are organised into a connected sequence and relationships between ideas are generally clear.',
         'Pronunciation is generally clear and intelligible.'
@@ -145,8 +157,8 @@ export const SPEAKING_PARTS = [
       3: [
         'Can give a straightforward description and comparison and express opinions with simple reasons or explanations.',
         'Can produce a connected response rather than a series of isolated sentences, but development of ideas is limited.',
-        'Uses mainly familiar grammatical structures with reasonable control, although errors become more frequent when attempting more complex forms.',
-        'Vocabulary is adequate for familiar topics but may be repetitive or lack precision.',
+        'Uses mainly familiar grammatical structures; frequent errors are acceptable at this band, including when attempting more complex forms.',
+        'Vocabulary is adequate for familiar topics, even if noticeably repetitive or imprecise.',
         'Hesitation, repetition and reformulation are noticeable but generally do not prevent communication.',
         'Ideas are linked into a simple, linear sequence.',
         'Pronunciation is generally intelligible.'
@@ -154,8 +166,8 @@ export const SPEAKING_PARTS = [
       2: [
         'Can communicate basic information about the visual material and familiar topics using simple sentences and familiar expressions.',
         'Can make simple comparisons and express basic preferences or opinions, but has difficulty providing sufficient reasons or developing ideas.',
-        'Uses a limited range of basic grammatical structures with frequent errors.',
-        'Vocabulary is sufficient for simple, familiar ideas but often repetitive.',
+        'Uses a limited range of basic grammatical structures; frequent errors, including in basic patterns, are expected at this band.',
+        'Vocabulary is sufficient for simple, familiar ideas even where noticeably repetitive or limited.',
         'Speech contains frequent pauses, repetition and reformulation.',
         'Ideas are mainly presented as separate statements or simple sequences.',
         'Pronunciation may sometimes require listener effort.'
