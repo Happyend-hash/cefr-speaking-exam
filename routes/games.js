@@ -110,8 +110,14 @@ router.post('/taboo/stop', handle(async (req, res) => reply(res, taboo.stop(req.
 // with the room code and race through every word in those units at their own
 // pace once the teacher starts it.
 
-router.get('/vocabrace/units', handle(async (req, res) => {
-  res.json({ success: true, data: vocabRace.units.map(u => ({ num: u.num, title: u.title, words: u.words.length })) });
+router.get('/vocabrace/packs', handle(async (req, res) => {
+  res.json({
+    success: true,
+    data: vocabRace.packs.map(p => ({
+      key: p.key, title: p.title,
+      units: p.units.map(u => ({ id: u.id, title: u.title, words: u.words.length }))
+    }))
+  });
 }));
 
 router.get('/vocabrace/stream', handle(async (req, res) => {
@@ -130,7 +136,7 @@ router.get('/vocabrace/stream', handle(async (req, res) => {
 
 router.post('/vocabrace/create', handle(async (req, res) => {
   if (!isStaff(req.user)) throw new APIError('Xona faqat o’qituvchilar uchun', 403);
-  reply(res, vocabRace.create(req.user.id, req.body?.unitNums));
+  reply(res, vocabRace.create(req.user.id, req.body?.packKey, req.body?.unitIds));
 }));
 router.post('/vocabrace/join', handle(async (req, res) => {
   await player(req.user.id);

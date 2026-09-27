@@ -3362,8 +3362,11 @@
     vrBody: "O'qituvchi xona ochadi, o'quvchilar kod bilan qo'shiladi va tanlangan bo'lim(lar)dagi BARCHA so'zlar bo'yicha poyga boshlanadi.",
     vrHostBtn: 'Xona ochish',
     vrJoinTile: "Xonaga qo'shilish",
+    vrPickPack: "Lug'at to'plamini tanlang",
+    vrChangePack: "‹ Boshqa to'plam",
     vrPickUnits: "Bo'lim(lar)ni tanlang",
     vrUnitsHint: "Tanlangan bo'limlardagi barcha so'zlar so'raladi — birortasi ham qoldirilmaydi.",
+    vrUnitsSuffix: "bo'lim",
     vrWordsSuffix: "so'z",
     vrWordsTotal: n => (n ? `${n} ta so'z — har biriga 10 soniya` : "Kamida bitta bo'lim tanlang"),
     vrCreate: 'Xona yaratish',
@@ -3712,15 +3715,15 @@
   const vr = {
     active: false, abort: null, connected: false, me: null, host: false,
     phase: 'setup', // host: setup | lobby | live · student: join | waiting | question | reveal | finished-you · both: podium
-    unitsList: null, picked: [],
-    code: null, words: 0, unitNums: [], roster: [], podium: null,
+    packsList: null, pack: null, picked: [],
+    code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
     q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [],
     deadline: 0, timer: null, busy: false
   };
 
-  async function loadVocabRaceUnits() {
-    try { vr.unitsList = await api('/games/vocabrace/units'); }
-    catch { vr.unitsList = []; }
+  async function loadVocabRacePacks() {
+    try { vr.packsList = await api('/games/vocabrace/packs'); }
+    catch { vr.packsList = []; }
     if (state.screen === 'vr') render();
   }
 
@@ -3728,12 +3731,12 @@
     stopVoice(); stopChat();
     const staff = state.user?.role === 'admin' || state.user?.role === 'teacher';
     Object.assign(vr, {
-      host: staff, phase: staff ? 'setup' : 'join', picked: [],
-      code: null, words: 0, unitNums: [], roster: [], podium: null,
+      host: staff, phase: staff ? 'setup' : 'join', pack: null, picked: [],
+      code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
       q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [], busy: false
     });
     go('vr');
-    if (staff && !vr.unitsList) loadVocabRaceUnits();
+    if (staff && !vr.packsList) loadVocabRacePacks();
     if (!vr.active) {
       vr.active = true;
       (async () => {
@@ -3772,7 +3775,8 @@
   /** A personalized room snapshot from 'hello' — used to pick up where this browser left off after a reconnect. */
   function vrApplyRoomView(r) {
     if (!r) { vr.phase = vr.host ? 'setup' : 'join'; vr.code = null; return; }
-    vr.host = r.isHost; vr.code = r.code; vr.unitNums = r.unitNums; vr.words = r.words; vr.roster = r.roster;
+    vr.host = r.isHost; vr.code = r.code; vr.packKey = r.packKey; vr.packTitle = r.packTitle; vr.unitIds = r.unitIds;
+    vr.words = r.words; vr.roster = r.roster;
     if (r.over) { vr.phase = 'podium'; vr.podium = r.podium; return; }
     if (r.isHost) { vr.phase = r.started ? 'live' : 'lobby'; return; }
     if (!r.started || !r.you) { vr.phase = 'waiting'; return; }
@@ -3790,7 +3794,8 @@
         vrApplyRoomView(data.room);
         break;
       case 'roster':
-        vr.code = data.code; vr.unitNums = data.unitNums; vr.words = data.words; vr.roster = data.roster;
+        vr.code = data.code; vr.packKey = data.packKey; vr.packTitle = data.packTitle; vr.unitIds = data.unitIds;
+        vr.words = data.words; vr.roster = data.roster;
         break;
       case 'started':
         vr.roster = data.roster;
@@ -3822,13 +3827,26 @@
   }
 
   async function vrCreateRoom() {
-    if (!vr.picked.length || vr.busy) return;
+    if (!vr.pack || !vr.picked.length || vr.busy) return;
     vr.busy = true; render();
     try {
-      const out = await api('/games/vocabrace/create', { method: 'POST', body: { unitNums: vr.picked } });
-      vr.code = out.code; vr.words = out.words; vr.unitNums = [...vr.picked]; vr.roster = []; vr.phase = 'lobby';
+      const out = await api('/games/vocabrace/create', { method: 'POST', body: { packKey: vr.pack.key, unitIds: vr.picked } });
+      vr.code = out.code; vr.words = out.words; vr.packKey = vr.pack.key; vr.packTitle = vr.pack.title;
+      vr.unitIds = [...vr.picked]; vr.roster = []; vr.phase = 'lobby';
     } catch (error) { state.error = error.message; }
     vr.busy = false; render();
+  }
+
+  function vrPickPack(key) {
+    vr.pack = (vr.packsList || []).find(p => p.key === key) || null;
+    vr.picked = [];
+    render();
+  }
+
+  function vrBackToPacks() {
+    vr.pack = null;
+    vr.picked = [];
+    render();
   }
 
   async function vrStartRace() {
@@ -3862,24 +3880,47 @@
     try { await api('/games/vocabrace/answer', { method: 'POST', body: { i: vr.q.i, choice: i } }); } catch { /* server timeout settles it */ }
   }
 
-  function vrSetupScreen() {
-    const list = vr.unitsList;
-    const total = (list || []).filter(u => vr.picked.includes(u.num)).reduce((s, u) => s + u.words, 0);
-    const rows = (list || []).map(u => `
-      <label class="vr-unit-row ${vr.picked.includes(u.num) ? 'is-on' : ''}">
-        <input type="checkbox" data-vr-unit="${u.num}" ${vr.picked.includes(u.num) ? 'checked' : ''}>
-        <span class="vr-unit-num">${u.num}</span>
+  function vrPackListScreen() {
+    const list = vr.packsList;
+    const rows = (list || []).map(p => {
+      const words = p.units.reduce((s, u) => s + u.words, 0);
+      return `<button class="vr-unit-row" data-vr-pack="${esc(p.key)}">
+        <span class="vr-unit-title">${esc(p.title)}</span>
+        <span class="vr-unit-count">${p.units.length} ${GM_UZ.vrUnitsSuffix} · ${words} ${GM_UZ.vrWordsSuffix}</span>
+      </button>`;
+    }).join('');
+    return `<section class="card gm-card">
+      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${GM_UZ.vrTitle}</h2></div>
+      <p class="muted">${esc(GM_UZ.vrPickPack)}</p>
+      <div class="vr-units">${list ? (rows || `<p class="muted">—</p>`) : '<span class="spinner"></span>'}</div>
+    </section>`;
+  }
+
+  function vrUnitPickScreen() {
+    const pack = vr.pack;
+    const total = pack.units.filter(u => vr.picked.includes(u.id)).reduce((s, u) => s + u.words, 0);
+    const rows = pack.units.map(u => `
+      <label class="vr-unit-row ${vr.picked.includes(u.id) ? 'is-on' : ''}">
+        <input type="checkbox" data-vr-unit="${esc(u.id)}" ${vr.picked.includes(u.id) ? 'checked' : ''}>
         <span class="vr-unit-title">${esc(u.title)}</span>
         <span class="vr-unit-count">${u.words} ${GM_UZ.vrWordsSuffix}</span>
       </label>`).join('');
     return `<section class="card gm-card">
-      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${GM_UZ.vrTitle}</h2></div>
+      <div class="gm-card-head">
+        <span class="gm-icon is-indigo">${icon('flag')}</span>
+        <h2>${esc(pack.title)}</h2>
+      </div>
+      <button class="link-more" data-gm="vr-pack-back" style="margin:0">${GM_UZ.vrChangePack}</button>
       <p class="muted">${esc(GM_UZ.vrUnitsHint)}</p>
-      <div class="vr-units">${list ? (rows || `<p class="muted">—</p>`) : '<span class="spinner"></span>'}</div>
+      <div class="vr-units">${rows}</div>
       <p class="gm-today vr-total">${esc(GM_UZ.vrWordsTotal(total))}</p>
       <button class="btn btn-lg btn-block" data-gm="vr-create" ${vr.picked.length && !vr.busy ? '' : 'disabled'}>
         ${vr.busy ? GM_UZ.vrCreating : GM_UZ.vrCreate}</button>
     </section>`;
+  }
+
+  function vrSetupScreen() {
+    return vr.pack ? vrUnitPickScreen() : vrPackListScreen();
   }
 
   function vrLobbyScreen() {
@@ -4141,10 +4182,11 @@
       if (a === 'duel') return openDuel();
       if (a === 'vr') return openVocabRace();
       if (a === 'vr-create') return vrCreateRoom();
+      if (a === 'vr-pack-back') return vrBackToPacks();
       if (a === 'vr-start') return vrStartRace();
       if (a === 'vr-end') return vrEndRace();
       if (a === 'vr-again') {
-        Object.assign(vr, { phase: 'setup', picked: [], code: null, words: 0, unitNums: [], roster: [], podium: null });
+        Object.assign(vr, { phase: 'setup', pack: null, picked: [], code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null });
         return render();
       }
       if (a === 'back') { stopDuel(); stopVocabRace(); clearInterval(eh.timer); return openVoice('games'); }
@@ -4165,10 +4207,11 @@
       render();
       api('/games/duel/answer', { method: 'POST', body: { i: dl.q.i, choice: dl.myPick } }).catch(() => {});
     }));
+    root.querySelectorAll('[data-vr-pack]').forEach(el => el.addEventListener('click', () => vrPickPack(el.dataset.vrPack)));
     root.querySelectorAll('[data-vr-unit]').forEach(el => el.addEventListener('change', () => {
-      const num = Number(el.dataset.vrUnit);
-      const i = vr.picked.indexOf(num);
-      if (el.checked && i < 0) vr.picked.push(num);
+      const id = el.dataset.vrUnit;
+      const i = vr.picked.indexOf(id);
+      if (el.checked && i < 0) vr.picked.push(id);
       else if (!el.checked && i >= 0) vr.picked.splice(i, 1);
       render();
     }));

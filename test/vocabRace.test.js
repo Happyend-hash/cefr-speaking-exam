@@ -1,7 +1,7 @@
 /**
  * Word Sprint (vocabulary race): room lifecycle, all-words-at-once question
- * building, scoring, and the podium ranking — including the two bugs this
- * suite is written to catch (see the last two tests).
+ * building, scoring, and the podium ranking — including bugs this suite was
+ * written to catch (see the notes on individual assertions).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,34 +39,53 @@ function clock() {
   };
 }
 
-const UNITS = [
-  { num: 1, title: 'Unit One', words: [
-    { word: 'alpha', pos: 'n', synonym: 'first', uz: 'birinchi' },
-    { word: 'beta', pos: 'n', synonym: 'second', uz: 'ikkinchi' },
-    { word: 'gamma', pos: 'n', synonym: 'third', uz: 'uchinchi' },
-    { word: 'delta', pos: 'n', synonym: 'fourth', uz: "to'rtinchi" }
-  ]},
-  { num: 2, title: 'Unit Two', words: [
-    { word: 'epsilon', pos: 'n', synonym: 'fifth', uz: 'beshinchi' }
-  ]}
-];
+// A pack with part-of-speech and synonym data, like Destination B1.
+const PACK = {
+  key: 'test-pack', title: 'Test Pack', units: [
+    { id: '1', title: 'Unit One', words: [
+      { word: 'alpha', pos: 'n', synonym: 'first', uz: 'birinchi' },
+      { word: 'beta', pos: 'n', synonym: 'second', uz: 'ikkinchi' },
+      { word: 'gamma', pos: 'n', synonym: 'third', uz: 'uchinchi' },
+      { word: 'delta', pos: 'n', synonym: 'fourth', uz: "to'rtinchi" }
+    ]},
+    { id: '2', title: 'Unit Two', words: [
+      { word: 'epsilon', pos: 'n', synonym: 'fifth', uz: 'beshinchi' }
+    ]}
+  ]
+};
+
+// A pack with only word + Uzbek translation, like the English Hub books —
+// no pos, no synonym.
+const BARE_PACK = {
+  key: 'bare-pack', title: 'Bare Pack', units: [
+    { id: '1', title: 'Unit 1', words: [
+      { word: 'one', uz: 'bir' },
+      { word: 'two', uz: 'ikki' },
+      { word: 'three', uz: 'uch' },
+      { word: 'four', uz: "to'rt" }
+    ]}
+  ]
+};
+
+const PACKS = [PACK, BARE_PACK];
 
 test('Word Sprint: a room asks every word in the chosen units, never a sample', () => {
-  const hub = new VocabRaceHub({ units: UNITS, random: () => 0 });
+  const hub = new VocabRaceHub({ packs: PACKS, random: () => 0 });
   const host = stream();
   hub.connect({ id: 'teacher' }, host);
 
-  assert.equal(hub.create('teacher', []).ok, false, 'needs at least one unit');
-  assert.equal(hub.create('teacher', [999]).ok, false, 'an unknown unit is rejected');
+  assert.equal(hub.create('teacher', 'nope', ['1']).ok, false, 'an unknown pack is rejected');
+  assert.equal(hub.create('teacher', 'test-pack', []).ok, false, 'needs at least one unit');
+  assert.equal(hub.create('teacher', 'test-pack', ['999']).ok, false, 'an unknown unit is rejected');
 
-  const made = hub.create('teacher', [1, 2]);
+  const made = hub.create('teacher', 'test-pack', ['1', '2']);
   assert.equal(made.ok, true);
   assert.equal(made.words, 5, 'unit 1 (4 words) + unit 2 (1 word) = 5, all of them');
 });
 
 test('Word Sprint: distractors prefer the same unit, and pad when a unit is too small to fill four options', () => {
-  const hub = new VocabRaceHub({ units: UNITS, random: () => 0 });
-  const room = { pool: hub.pool([1, 2]) };
+  const hub = new VocabRaceHub({ packs: PACKS, random: () => 0 });
+  const room = { pool: hub.pool(PACK, ['1', '2']) };
   const qs = hub.buildQuestions(room);
   assert.equal(qs.length, 5);
   for (const q of qs) {
@@ -86,17 +105,29 @@ test('Word Sprint: distractors prefer the same unit, and pad when a unit is too 
 
   // A pool with just one word anywhere has nothing to draw distractors from —
   // building a question must still produce four options without crashing.
-  const tinyRoom = { pool: [{ unitNum: 9, word: 'solo', pos: 'n', synonym: 'alone', uz: 'yolg‘iz' }] };
+  const tinyRoom = { pool: [{ unitId: '9', word: 'solo', pos: 'n', synonym: 'alone', uz: 'yolg‘iz' }] };
   const [tinyQ] = hub.buildQuestions(tinyRoom);
   assert.equal(tinyQ.options.length, 4);
   assert.equal(tinyQ.options[tinyQ.answer], 'yolg‘iz', 'the correct option is still found among the padded ones');
+});
+
+test('Word Sprint: a pack with no synonym or part of speech (like the English Hub books) still builds valid questions', () => {
+  const hub = new VocabRaceHub({ packs: PACKS, random: () => 0 });
+  const room = { pool: hub.pool(BARE_PACK, ['1']) };
+  const qs = hub.buildQuestions(room);
+  assert.equal(qs.length, 4);
+  for (const q of qs) {
+    assert.equal(q.options.length, 4);
+    assert.notEqual(q.kicker, 'Eng yaqin sinonimni tanlang', 'the synonym question type is never offered when there is no synonym data');
+    assert.ok(!q.pos, 'no part of speech to show either');
+  }
 });
 
 test('Word Sprint: room lifecycle end to end — join, start, race, podium', () => {
   const c = clock();
   const finished = [];
   const hub = new VocabRaceHub({
-    units: UNITS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer,
+    packs: PACKS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer,
     random: () => 0, onFinish: r => finished.push(r)
   });
   const host = stream(); const a = stream(); const b = stream();
@@ -104,7 +135,7 @@ test('Word Sprint: room lifecycle end to end — join, start, race, podium', () 
   hub.connect({ id: 'a', name: 'Aziza' }, a);
   hub.connect({ id: 'b', name: 'Bek' }, b);
 
-  const made = hub.create('teacher', [1, 2]);
+  const made = hub.create('teacher', 'test-pack', ['1', '2']);
   const code = made.code;
 
   assert.equal(hub.join('teacher', code).ok, false, 'the host cannot join their own room');
@@ -114,6 +145,7 @@ test('Word Sprint: room lifecycle end to end — join, start, race, podium', () 
   const rosterForStudent = a.last('roster');
   assert.equal('isHost' in rosterForStudent, false, 'a student must never be told isHost in a shared broadcast');
   assert.equal(rosterForStudent.roster.length, 1);
+  assert.equal(rosterForStudent.packTitle, 'Test Pack');
 
   assert.equal(hub.join('b', code).ok, true);
   assert.equal(host.last('roster').roster.length, 2);
@@ -165,11 +197,11 @@ test('Word Sprint: room lifecycle end to end — join, start, race, podium', () 
 
 test('Word Sprint: scoring is 10 base plus up to 10 for speed, same formula as Word Duel', () => {
   const c = clock();
-  const hub = new VocabRaceHub({ units: UNITS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, random: () => 0 });
+  const hub = new VocabRaceHub({ packs: PACKS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, random: () => 0 });
   const host = stream(); const a = stream();
   hub.connect({ id: 'teacher' }, host);
   hub.connect({ id: 'a', name: 'Aziza' }, a);
-  hub.create('teacher', [1]); // 4 words, one racer — keeps timing unambiguous
+  hub.create('teacher', 'test-pack', ['1']); // 4 words, one racer — keeps timing unambiguous
   const code = [...hub.rooms.keys()][0];
   hub.join('a', code);
   hub.start('teacher');
@@ -193,11 +225,11 @@ test('Word Sprint: scoring is 10 base plus up to 10 for speed, same formula as W
 
 test('Word Sprint: an unanswered question times out as wrong, and the teacher can end a race early', () => {
   const c = clock();
-  const hub = new VocabRaceHub({ units: UNITS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, random: () => 0 });
+  const hub = new VocabRaceHub({ packs: PACKS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, random: () => 0 });
   const host = stream(); const a = stream();
   hub.connect({ id: 'teacher' }, host);
   hub.connect({ id: 'a', name: 'Aziza' }, a);
-  hub.create('teacher', [1]);
+  hub.create('teacher', 'test-pack', ['1']);
   const code = [...hub.rooms.keys()][0];
   hub.join('a', code);
   hub.start('teacher');
@@ -211,7 +243,7 @@ test('Word Sprint: an unanswered question times out as wrong, and the teacher ca
 });
 
 test('Word Sprint: the podium ranks by score, ties broken by who finished first (not by join order)', () => {
-  const hub = new VocabRaceHub({ units: UNITS, now: () => 0 });
+  const hub = new VocabRaceHub({ packs: PACKS, now: () => 0 });
   const room = { hostId: 'teacher', players: new Map() };
   // Inserted in an order that would fool a tie-break bug which silently drops finishedAt.
   room.players.set('a', { user: { id: 'a' }, score: 50, correct: 3, qs: [1, 2, 3], finishedAt: 2000 });

@@ -1,15 +1,19 @@
 import crypto from 'crypto';
-import { VOCAB_RACE_UNITS } from '../content/vocabRace.js';
+import { VOCAB_PACKS } from '../content/vocabPacks.js';
 
 /**
- * Word Sprint: a teacher creates a room from one or more Destination B1
- * units, students join with the room code, and once the teacher starts it
- * everyone races through every word in those units — at their own pace, on
- * their own device. Correct = 10 points + up to 10 for speed, same formula as
- * Word Duel. There is no lockstep and no waiting for anyone else: a fast,
- * accurate student simply finishes sooner. The race ends, and points are
- * awarded, once every joined student has finished or the teacher ends it
- * early.
+ * Word Sprint: a teacher picks a vocabulary pack (Destination B1, or one of
+ * the English Hub books) and one or more of its units, students join with
+ * the room code, and once the teacher starts it everyone races through every
+ * word in those units — at their own pace, on their own device. Correct = 10
+ * points + up to 10 for speed, same formula as Word Duel. There is no
+ * lockstep and no waiting for anyone else: a fast, accurate student simply
+ * finishes sooner. The race ends, and points are awarded, once every joined
+ * student has finished or the teacher ends it early.
+ *
+ * Not every pack has a synonym or part of speech for each word (only
+ * Destination B1 does), so a question type is only offered for a word when
+ * the data for it actually exists — see buildQuestions().
  *
  * Same shape as the other game hubs: one SSE stream per browser, short POSTs
  * back, all live state in memory on this one server process.
@@ -39,16 +43,20 @@ const QUESTION_TYPES = [
 
 export class VocabRaceHub {
   constructor({
-    units = VOCAB_RACE_UNITS,
+    packs = VOCAB_PACKS,
     now = () => Date.now(),
     setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; },
     clearTimer = t => clearTimeout(t),
     random = Math.random,
     onFinish = () => {}
   } = {}) {
-    Object.assign(this, { units, now, setTimer, clearTimer, random, onFinish });
+    Object.assign(this, { packs, now, setTimer, clearTimer, random, onFinish });
     this.clients = new Map(); // id -> { user, streams, roomCode, dropTimer }
     this.rooms = new Map();   // code -> room
+  }
+
+  pack(key) {
+    return this.packs.find(p => p.key === key);
   }
 
   // ---------------------------------------------------------- transport
@@ -91,12 +99,12 @@ export class VocabRaceHub {
     return { id: String(id), name: u.name || "O'quvchi", premium: Boolean(u.premium), avatar: u.avatar || null };
   }
 
-  pool(unitNums) {
-    const wanted = new Set(unitNums.map(Number));
+  pool(pack, unitIds) {
+    const wanted = new Set(unitIds.map(String));
     const out = [];
-    for (const u of this.units) {
-      if (!wanted.has(u.num)) continue;
-      for (const w of u.words) out.push({ unitNum: u.num, word: w.word, pos: w.pos, synonym: w.synonym, uz: w.uz });
+    for (const u of pack.units) {
+      if (!wanted.has(String(u.id))) continue;
+      for (const w of u.words) out.push({ unitId: String(u.id), word: w.word, pos: w.pos, synonym: w.synonym, uz: w.uz });
     }
     return out;
   }
@@ -111,17 +119,19 @@ export class VocabRaceHub {
   }
 
   /** hostId must already be checked as staff by the route. */
-  create(hostId, unitNums) {
+  create(hostId, packKey, unitIds) {
     hostId = String(hostId);
-    const nums = [...new Set((unitNums || []).map(Number))].filter(n => this.units.some(u => u.num === n));
-    if (!nums.length) return { ok: false, reason: 'Kamida bitta bo’lim tanlang' };
-    const pool = this.pool(nums);
+    const pack = this.pack(packKey);
+    if (!pack) return { ok: false, reason: 'Bu lug’at to’plami topilmadi' };
+    const ids = [...new Set((unitIds || []).map(String))].filter(id => pack.units.some(u => String(u.id) === id));
+    if (!ids.length) return { ok: false, reason: 'Kamida bitta bo’lim tanlang' };
+    const pool = this.pool(pack, ids);
     if (!pool.length) return { ok: false, reason: 'Bu bo’limlarda so’z topilmadi' };
 
     this.sweep();
     const code = this.makeCode();
     const room = {
-      code, hostId, unitNums: nums, pool,
+      code, hostId, packKey: pack.key, packTitle: pack.title, unitIds: ids, pool,
       players: new Map(), // id -> { user, qs, cursor, score, correct, streak, best, missed, finished, finishedAt, timer, askedAt }
       started: false, over: false, createdAt: this.now()
     };
@@ -148,7 +158,7 @@ export class VocabRaceHub {
       ...this.person(p.user.id), correct: p.correct, total: p.qs?.length || 0, finished: p.finished, score: p.score
     }));
     const base = {
-      code: room.code, unitNums: room.unitNums, words: room.pool.length,
+      code: room.code, packKey: room.packKey, packTitle: room.packTitle, unitIds: room.unitIds, words: room.pool.length,
       started: room.started, over: room.over, roster
     };
     return room.over ? { ...base, podium: this.podium(room) } : base;
@@ -191,12 +201,15 @@ export class VocabRaceHub {
   buildQuestions(room) {
     const picked = shuffle(room.pool, this.random);
     return picked.map(entry => {
-      const type = QUESTION_TYPES[Math.floor(this.random() * QUESTION_TYPES.length)];
+      // Not every pack has a synonym or part of speech (only Destination B1
+      // does) — only offer a question type this word actually has data for.
+      const available = QUESTION_TYPES.filter(t => entry[t.field] && entry[t.promptField]);
+      const type = available[Math.floor(this.random() * available.length)] || QUESTION_TYPES[0];
       const correctText = entry[type.field];
       const promptText = entry[type.promptField];
       const seen = new Set([correctText]);
-      const sameUnit = shuffle(room.pool.filter(e => e.unitNum === entry.unitNum && e.word !== entry.word), this.random);
-      const others = shuffle(room.pool.filter(e => e.unitNum !== entry.unitNum && e.word !== entry.word), this.random);
+      const sameUnit = shuffle(room.pool.filter(e => e.unitId === entry.unitId && e.word !== entry.word), this.random);
+      const others = shuffle(room.pool.filter(e => e.unitId !== entry.unitId && e.word !== entry.word), this.random);
       const distractors = [];
       for (const src of [sameUnit, others]) {
         for (const cand of src) {
