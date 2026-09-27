@@ -41,6 +41,50 @@ const upload = multer({
 
 const isValidId = id => mongoose.Types.ObjectId.isValid(id);
 
+// An attempt only stays 'evaluating' while a request is actively marking it.
+// If the process restarted mid-marking — a deploy, a crash, Railway cycling
+// the container — the flag is never cleared by the code that would normally
+// clear it (markAttempt's own try/catch never gets a chance to run, because
+// the whole process died), so the attempt is stuck showing "being checked"
+// forever, with no automatic or even manual way back — 'evaluating' is
+// deliberately excluded from admin's re-mark tool, because a genuinely
+// in-flight attempt must not be marked twice. Once this much time has passed
+// with no update, "in flight" is no longer a credible explanation.
+export const STALE_EVALUATION_MS = 10 * 60 * 1000;
+
+export const isStaleEvaluation = result =>
+  result.status === 'evaluating' &&
+  Date.now() - new Date(result.submittedAt || result.updatedAt || 0).getTime() > STALE_EVALUATION_MS;
+
+// Guards against resuming the same attempt twice at once within this process
+// — the same-purpose `marking` Set in routes/writing.js is the precedent.
+const resuming = new Set();
+
+/**
+ * Kick off marking again for an attempt that has been 'evaluating' far longer
+ * than any real marking pass takes — safe to call on every read of a result,
+ * since a fresh attempt never matches `isStaleEvaluation` and the guard above
+ * means only the first caller for a given id actually starts anything.
+ *
+ * This is what turns a permanently stuck "Tekshirilyapti…" into a self-healing
+ * one: the dashboard already polls `GET /exam/results` while anything is
+ * pending, so simply reading the list is enough to notice and repair a
+ * result whose marking was interrupted by a restart.
+ */
+function resumeIfStale(result) {
+  if (!isStaleEvaluation(result)) return;
+  const id = String(result._id);
+  if (resuming.has(id)) return;
+  resuming.add(id);
+  console.warn(`Result ${id} was stuck in 'evaluating' — resuming marking.`);
+  // Bump submittedAt first so a second read landing before this finishes does
+  // not also decide the attempt is stale and resume it a second time.
+  ExamResult.findByIdAndUpdate(id, { submittedAt: new Date() })
+    .then(() => markAttempt(id))
+    .catch(error => console.error(`Resume-marking failed for ${id}:`, error.message))
+    .finally(() => resuming.delete(id));
+}
+
 /**
  * Flatten a stored exam into the ordered question list the runner plays.
  *
@@ -133,6 +177,12 @@ router.get('/results', async (req, res, next) => {
       .sort({ createdAt: -1 })
       .populate('exam', 'title level module')
       .lean();
+
+    // The dashboard polls this endpoint for exactly as long as an attempt is
+    // pending — see watchPending() client-side — so this is the natural place
+    // to notice one that has been stuck in 'evaluating' since before a
+    // restart and get it moving again.
+    results.forEach(resumeIfStale);
 
     res.json({
       success: true,
@@ -270,6 +320,7 @@ router.post('/results/bulk-delete', async (req, res, next) => {
 router.get('/results/:resultId', async (req, res, next) => {
   try {
     const result = await loadOwnedResult(req, req.params.resultId);
+    resumeIfStale(result);
     await result.populate('exam', 'title level description');
 
     res.json({
@@ -758,13 +809,10 @@ router.post('/results/:resultId/submit', async (req, res, next) => {
     // never cleared and the attempt would be locked out of submission forever,
     // with its recordings stranded. Treat a long-stale flag as abandoned and let
     // the student try again.
-    const STALE_EVALUATION_MS = 10 * 60 * 1000;
+    if (result.status === 'evaluating' && !isStaleEvaluation(result)) {
+      throw new APIError('This attempt is currently being evaluated', 409);
+    }
     if (result.status === 'evaluating') {
-      const startedAt = result.submittedAt ? new Date(result.submittedAt).getTime() : 0;
-      const stale = startedAt && Date.now() - startedAt > STALE_EVALUATION_MS;
-      if (!stale) {
-        throw new APIError('This attempt is currently being evaluated', 409);
-      }
       console.warn(`Result ${result._id} was stuck in 'evaluating' — re-marking it.`);
     }
     if (result.taskResults.length === 0) {
@@ -1376,5 +1424,38 @@ export async function markAttempt(resultId) {
   await Exam.findByIdAndUpdate(result.exam, { $inc: { 'statistics.timesUsed': 1 } });
 }
 
+/**
+ * Find every attempt truly abandoned mid-marking and mark it properly.
+ *
+ * This is the fix for a student's mock sitting at "Tekshirilyapti…" forever:
+ * `submit()` starts `markAttempt()` without awaiting it, precisely so an HTTP
+ * request doesn't have to stay open for a minute of AI calls — but that means
+ * nothing clears the 'evaluating' flag if the SERVER PROCESS ITSELF dies
+ * before `markAttempt` finishes (a deploy, a crash, the platform recycling the
+ * container). `markAttempt`'s own try/catch, and the route's `.catch()`
+ * around it, only run if the process survives to run them — a kill from
+ * outside skips both. The result is stuck: not 'submitted' (so nothing here
+ * lands on retry), not 'evaluating' as far as any admin tool will touch (that
+ * status is deliberately excluded from re-marking, to avoid double-marking an
+ * attempt genuinely in flight) — just permanently stuck, exactly matching
+ * what was reported.
+ *
+ * Run this once at boot (whatever was 'evaluating' before this process
+ * started cannot possibly be this process's own in-flight work) and on a
+ * timer thereafter, so an attempt heals itself within minutes of going stale
+ * instead of sitting there until someone notices and asks for a code fix.
+ */
+export async function resumeStuckMarking() {
+  const stuck = await ExamResult.find({
+    status: 'evaluating',
+    submittedAt: { $lt: new Date(Date.now() - STALE_EVALUATION_MS) }
+  }).select('_id status submittedAt').lean();
+
+  if (stuck.length) {
+    console.warn(`Found ${stuck.length} attempt(s) stuck in 'evaluating' at boot — resuming.`);
+  }
+  stuck.forEach(resumeIfStale);
+  return { resumed: stuck.length };
+}
 
 export default router;

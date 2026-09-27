@@ -56,6 +56,7 @@ import voiceRoutes from './routes/voice.js';
 import chatRoutes from './routes/chat.js';
 import avatarRoutes from './routes/avatars.js';
 import gameRoutes from './routes/games.js';
+import { resumeStuckMarking } from './routes/exam.js';
 import { publicRouter as sponsorRoutes, adminRouter as sponsorAdminRoutes } from './routes/sponsors.js';
 
 // Middleware imports
@@ -209,7 +210,26 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // useNewUrlParser / useUnifiedTopology were removed in Mongoose 6+ and are no
 // longer accepted options.
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✓ MongoDB connected successfully'))
+  .then(() => {
+    console.log('✓ MongoDB connected successfully');
+
+    /*
+     * Self-heal any exam result whose marking was cut off by a previous
+     * process ending (a deploy, a crash, the platform recycling the
+     * container) — that leaves the attempt stuck at 'evaluating' forever,
+     * since nothing that would normally clear it gets to run. This is what
+     * showed up as students' mocks stuck at "Tekshirilyapti…" with no result
+     * ever appearing. Every boot is a certainty that any 'evaluating' result
+     * older than the staleness window is not this process's own work, so it
+     * is always safe to resume here. A timer on top covers a result that
+     * goes stale without a restart in between (e.g. AI evaluation crashing
+     * inside a still-running process, outside the outer `.catch`).
+     */
+    resumeStuckMarking().catch(err => console.error('Startup marking-resume failed:', err.message));
+    setInterval(() => {
+      resumeStuckMarking().catch(err => console.error('Periodic marking-resume failed:', err.message));
+    }, 5 * 60 * 1000);
+  })
   .catch((err) => {
     console.error('✗ MongoDB connection error:', err.message);
     process.exit(1);
