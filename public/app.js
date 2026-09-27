@@ -3958,13 +3958,22 @@
     </div>`;
   }
 
-  function vrTrackScreen() {
+  function vrTrackBody() {
     const rows = vr.roster.slice().sort((a, b) => b.correct - a.correct || b.score - a.score).map(vrLaneRow).join('');
+    return `<div class="vr-track-head"><h2>${esc(GM_UZ.vrLive)}</h2><span class="muted">${esc(GM_UZ.vrWordsTotal(vr.words))}</span></div>
+      <div class="vr-track">${rows}</div>`;
+  }
+
+  function vrTrackScreen() {
     return `<section class="card gm-card">
-      <div class="vr-track-head"><h2>${esc(GM_UZ.vrLive)}</h2><span class="muted">${esc(GM_UZ.vrWordsTotal(vr.words))}</span></div>
-      <div class="vr-track">${rows}</div>
+      ${vrTrackBody()}
       <button class="btn btn-ghost" data-gm="vr-end">${GM_UZ.vrEnd}</button>
     </section>`;
+  }
+
+  /** The same live race track, shown under a student's own screen so they can see everyone else racing too. */
+  function vrMiniTrack() {
+    return vr.roster.length ? `<section class="card gm-card vr-mini-track">${vrTrackBody()}</section>` : '';
   }
 
   function vrJoinScreen() {
@@ -4002,7 +4011,8 @@
         <p class="dl-question">${esc(q.prompt)}</p>
         <div class="dl-options">${options}</div>
         <p class="dl-status">${rv ? (rv.gained ? `+${rv.gained}` : '+0') : '&nbsp;'}</p>
-      </section>`;
+      </section>
+      ${vrMiniTrack()}`;
   }
 
   function vrFinishedScreen() {
@@ -4016,7 +4026,8 @@
       <p class="muted">${esc(GM_UZ.vrCorrectOf(vr.correct, vr.total))}</p>
       <span class="spinner"></span>
       ${missed}
-    </section>`;
+    </section>
+    ${vrMiniTrack()}`;
   }
 
   function vrPodiumSpot(entry) {

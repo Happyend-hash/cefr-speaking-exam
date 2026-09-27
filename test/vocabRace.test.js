@@ -195,6 +195,29 @@ test('Word Sprint: room lifecycle end to end — join, start, race, podium', () 
   assert.equal(finished[0].results[1].points, 0, 'no points awarded for a zero score');
 });
 
+test('Word Sprint: every player sees the live race, not just the teacher (a student\'s own screen used to get no progress updates at all)', () => {
+  const c = clock();
+  const hub = new VocabRaceHub({ packs: PACKS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, random: () => 0 });
+  const host = stream(); const a = stream(); const b = stream();
+  hub.connect({ id: 'teacher' }, host);
+  hub.connect({ id: 'a', name: 'Aziza' }, a);
+  hub.connect({ id: 'b', name: 'Bek' }, b);
+  hub.create('teacher', 'test-pack', ['1', '2']);
+  const code = [...hub.rooms.keys()][0];
+  hub.join('a', code); hub.join('b', code);
+  hub.start('teacher');
+
+  const pa = hub.rooms.get(code).players.get('a');
+  hub.answer('a', 0, pa.qs[0].answer);
+
+  for (const [who, s] of [['host', host], ['Aziza herself', a], ['Bek, a fellow student', b]]) {
+    const p = s.last('progress');
+    assert.ok(p, `${who} should receive a progress update, not just the teacher`);
+    assert.equal(p.id, 'a');
+    assert.equal(p.correct, 1);
+  }
+});
+
 test('Word Sprint: scoring is 10 base plus up to 10 for speed, same formula as Word Duel', () => {
   const c = clock();
   const hub = new VocabRaceHub({ packs: PACKS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, random: () => 0 });

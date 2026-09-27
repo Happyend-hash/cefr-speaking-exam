@@ -300,7 +300,9 @@ export class VocabRaceHub {
       player.missed.push({ word: q.word, uz: q.uz });
     }
     this.send(player.user.id, 'reveal', { i: player.cursor, answer: q.answer, picked: pick, gained, score: player.score, streak: player.streak });
-    this.send(room.hostId, 'progress', { id: player.user.id, correct: player.correct, total: player.qs.length, score: player.score, finished: false });
+    // Broadcast (not just to the host) so every player's own screen can show
+    // a live race track too, not only the teacher's.
+    this.broadcast(room, 'progress', { id: player.user.id, correct: player.correct, total: player.qs.length, score: player.score, finished: false });
 
     const next = player.cursor + 1;
     this.setTimer(() => {
@@ -314,7 +316,7 @@ export class VocabRaceHub {
     player.finished = true;
     player.finishedAt = this.now();
     this.send(player.user.id, 'finished-you', { score: player.score, correct: player.correct, total: player.qs.length, missed: player.missed });
-    this.send(room.hostId, 'progress', { id: player.user.id, correct: player.correct, total: player.qs.length, score: player.score, finished: true });
+    this.broadcast(room, 'progress', { id: player.user.id, correct: player.correct, total: player.qs.length, score: player.score, finished: true });
     if ([...room.players.values()].every(p => p.finished)) this.finish(room);
   }
 
