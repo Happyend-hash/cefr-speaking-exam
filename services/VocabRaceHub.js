@@ -132,7 +132,7 @@ export class VocabRaceHub {
     this.sweep();
     const code = this.makeCode();
     const room = {
-      code, hostId, packKey: pack.key, packTitle: pack.title, unitIds: ids, pool,
+      code, hostId, solo: false, packKey: pack.key, packTitle: pack.title, unitIds: ids, pool,
       style: VOCAB_RACE_STYLES.includes(style) ? style : 'track',
       players: new Map(), // id -> { user, qs, cursor, score, correct, streak, best, missed, finished, finishedAt, timer, askedAt }
       started: false, over: false, createdAt: this.now()
@@ -141,6 +141,52 @@ export class VocabRaceHub {
     const c = this.clients.get(hostId);
     if (c) c.roomCode = code;
     return { ok: true, code, words: pool.length, style: room.style };
+  }
+
+  /**
+   * A student practicing on their own: no teacher, no room code, no one to
+   * wait for. Same pack/unit picker as a teacher's room, but it starts the
+   * very first question immediately and hands it back in the response (not
+   * just over SSE) so there's no reconnect race for that first render.
+   * `hostId: null` throughout means every host-only check (`room.hostId ===
+   * userId`) simply never matches a real user id, so a solo room can safely
+   * reuse ask()/answer()/settle()/finishPlayer() unchanged.
+   */
+  solo(userId, packKey, unitIds, style) {
+    userId = String(userId);
+    const pack = this.pack(packKey);
+    if (!pack) return { ok: false, reason: 'Bu lug’at to’plami topilmadi' };
+    const ids = [...new Set((unitIds || []).map(String))].filter(id => pack.units.some(u => String(u.id) === id));
+    if (!ids.length) return { ok: false, reason: 'Kamida bitta bo’lim tanlang' };
+    const pool = this.pool(pack, ids);
+    if (!pool.length) return { ok: false, reason: 'Bu bo’limlarda so’z topilmadi' };
+
+    this.sweep();
+    const c = this.clients.get(userId);
+    // A second solo practice started while an earlier one of this student's
+    // own is still open (e.g. a double-click) -- there's no teacher who'll
+    // ever end that one, so close it out now instead of leaking it.
+    const prev = c?.roomCode ? this.rooms.get(c.roomCode) : null;
+    if (prev && prev.solo && !prev.over) this.finish(prev);
+
+    const code = this.makeCode();
+    const player = {
+      user: { id: userId, name: c?.user?.name, premium: c?.user?.premium, avatar: c?.user?.avatar },
+      qs: null, cursor: 0, score: 0, correct: 0, streak: 0, best: 0, missed: [],
+      finished: false, finishedAt: null, timer: null, askedAt: 0
+    };
+    const room = {
+      code, hostId: null, solo: true, packKey: pack.key, packTitle: pack.title, unitIds: ids, pool,
+      style: VOCAB_RACE_STYLES.includes(style) ? style : 'track',
+      players: new Map([[userId, player]]),
+      started: true, over: false, createdAt: this.now(), startedAt: this.now()
+    };
+    this.rooms.set(code, room);
+    if (c) c.roomCode = code;
+    player.qs = this.buildQuestions(room);
+    this.send(userId, 'start', { total: player.qs.length });
+    this.ask(room, player, 0);
+    return { ok: true, code, words: pool.length, style: room.style, question: this.questionView(player) };
   }
 
   /** The teacher picking a visual race style, any time before the race starts. */
@@ -175,7 +221,7 @@ export class VocabRaceHub {
     }));
     const base = {
       code: room.code, packKey: room.packKey, packTitle: room.packTitle, unitIds: room.unitIds, words: room.pool.length,
-      style: room.style, started: room.started, over: room.over, roster
+      style: room.style, started: room.started, over: room.over, solo: Boolean(room.solo), roster
     };
     return room.over ? { ...base, podium: this.podium(room) } : base;
   }
@@ -360,7 +406,10 @@ export class VocabRaceHub {
     room.over = true;
     for (const player of room.players.values()) if (player.timer) this.clearTimer(player.timer);
     const podium = this.podium(room);
-    this.broadcast(room, 'over', this.roomSummary(room));
+    // A solo student already got their own 'finished-you' (score + missed
+    // words) -- there's no one else's podium to show them, so skip 'over'
+    // and let them stay on that recap instead of flashing to a 1-name podium.
+    if (!room.solo) this.broadcast(room, 'over', this.roomSummary(room));
     for (const id of room.players.keys()) {
       const c = this.clients.get(id);
       if (c) c.roomCode = null;
@@ -386,7 +435,12 @@ export class VocabRaceHub {
     if (!c || !c.roomCode) return;
     const room = this.rooms.get(c.roomCode);
     c.roomCode = null;
-    if (!room || room.hostId === userId) return;
+    if (!room) return;
+    // No teacher will ever end a solo room, so leaving it early is the only
+    // signal that it's abandoned -- close it out (awarding whatever score
+    // was earned so far) instead of leaving it in memory until its TTL.
+    if (room.solo) { this.finish(room); return; }
+    if (room.hostId === userId) return;
     const player = room.players.get(userId);
     if (player?.timer) this.clearTimer(player.timer);
   }

@@ -138,6 +138,10 @@ router.post('/vocabrace/create', handle(async (req, res) => {
   if (!isStaff(req.user)) throw new APIError('Xona faqat o’qituvchilar uchun', 403);
   reply(res, vocabRace.create(req.user.id, req.body?.packKey, req.body?.unitIds, req.body?.style));
 }));
+router.post('/vocabrace/solo', handle(async (req, res) => {
+  await player(req.user.id);
+  reply(res, vocabRace.solo(req.user.id, req.body?.packKey, req.body?.unitIds, req.body?.style));
+}));
 router.post('/vocabrace/style', handle(async (req, res) => reply(res, vocabRace.setStyle(req.user.id, req.body?.style))));
 router.post('/vocabrace/join', handle(async (req, res) => {
   await player(req.user.id);

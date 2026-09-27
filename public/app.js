@@ -3361,7 +3361,7 @@
     vrTitle: 'Word Sprint',
     vrBody: "O'qituvchi xona ochadi, o'quvchilar kod bilan qo'shiladi va tanlangan bo'lim(lar)dagi BARCHA so'zlar bo'yicha poyga boshlanadi.",
     vrHostBtn: 'Xona ochish',
-    vrJoinTile: "Xonaga qo'shilish",
+    vrJoinTile: "O'ynash", // students: opens the join-or-practice-alone choice, not straight to the join form
     vrPickPack: "Lug'at to'plamini tanlang",
     vrChangePack: "‹ Boshqa to'plam",
     vrPickUnits: "Bo'lim(lar)ni tanlang",
@@ -3382,6 +3382,14 @@
     vrJoinBtn: "Qo'shilish",
     vrJoining: "Qo'shilinmoqda…",
     vrWaiting: "O'qituvchi boshlashini kutmoqdasiz…",
+    vrChooseHint: 'Nima qilmoqchisiz?',
+    vrSoloOption: 'Yakka mashq qilish',
+    vrSoloOptionDesc: "So'zlarni o'zingiz mashq qiling — hech kimni kutmaysiz",
+    vrJoinOptionDesc: "O'qituvchingiz ochgan xonaga kod bilan qo'shiling",
+    vrSoloStart: 'Mashqni boshlash',
+    vrSoloStarting: 'Boshlanmoqda…',
+    vrSoloDone: 'Mashq tugadi!',
+    vrSoloAgain: 'Yana mashq qilish',
     vrYouFinished: 'Siz tugatdingiz — qolganlarni kuting',
     vrPodium: 'Poyga yakunlandi!',
     vrYourScore: n => `Sizning ballingiz: ${n}`,
@@ -3719,8 +3727,8 @@
   // the room this browser is on; `vr.phase` tracks that side's own screen.
 
   const vr = {
-    active: false, abort: null, connected: false, me: null, host: false,
-    phase: 'setup', // host: setup | lobby | live · student: join | waiting | question | reveal | finished-you · both: podium
+    active: false, abort: null, connected: false, me: null, host: false, solo: false,
+    phase: 'setup', // host: setup | lobby | live · student: choose | join | solo-setup | waiting | question | reveal | finished-you · both: podium
     packsList: null, pack: null, picked: [], style: 'track',
     code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
     q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [],
@@ -3737,7 +3745,7 @@
     stopVoice(); stopChat();
     const staff = state.user?.role === 'admin' || state.user?.role === 'teacher';
     Object.assign(vr, {
-      host: staff, phase: staff ? 'setup' : 'join', pack: null, picked: [], style: 'track',
+      host: staff, solo: false, phase: staff ? 'setup' : 'choose', pack: null, picked: [], style: 'track',
       code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
       q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [], busy: false
     });
@@ -3764,7 +3772,7 @@
     vr.active = false;
     vr.abort?.abort();
     clearInterval(vr.timer);
-    vr.phase = vr.host ? 'setup' : 'join';
+    vr.phase = vr.host ? 'setup' : 'choose';
   }
 
   function vrTicker() {
@@ -3780,8 +3788,8 @@
 
   /** A personalized room snapshot from 'hello' — used to pick up where this browser left off after a reconnect. */
   function vrApplyRoomView(r) {
-    if (!r) { vr.phase = vr.host ? 'setup' : 'join'; vr.code = null; return; }
-    vr.host = r.isHost; vr.code = r.code; vr.packKey = r.packKey; vr.packTitle = r.packTitle; vr.unitIds = r.unitIds;
+    if (!r) { vr.phase = vr.host ? 'setup' : 'choose'; vr.code = null; return; }
+    vr.host = r.isHost; vr.solo = Boolean(r.solo); vr.code = r.code; vr.packKey = r.packKey; vr.packTitle = r.packTitle; vr.unitIds = r.unitIds;
     vr.words = r.words; vr.roster = r.roster; vr.style = r.style || 'track';
     if (r.over) { vr.phase = 'podium'; vr.podium = r.podium; return; }
     if (r.isHost) { vr.phase = r.started ? 'live' : 'lobby'; return; }
@@ -3842,6 +3850,37 @@
       const out = await api('/games/vocabrace/create', { method: 'POST', body: { packKey: vr.pack.key, unitIds: vr.picked, style: vr.style } });
       vr.code = out.code; vr.words = out.words; vr.packKey = vr.pack.key; vr.packTitle = vr.pack.title;
       vr.unitIds = [...vr.picked]; vr.roster = []; vr.phase = 'lobby'; vr.style = out.style || vr.style;
+    } catch (error) { state.error = error.message; }
+    vr.busy = false; render();
+  }
+
+  /** A student picking "join with a code" from the choose screen. */
+  function vrChooseJoin() {
+    vr.phase = 'join';
+    render();
+  }
+
+  /** A student picking "practice alone" from the choose screen. */
+  function vrChooseSolo() {
+    vr.phase = 'solo-setup';
+    vr.pack = null; vr.picked = [];
+    if (!vr.packsList) loadVocabRacePacks();
+    render();
+  }
+
+  /** Starts a solo practice race — same pack/unit picker a teacher uses, but
+   *  no room code and no one to wait for: the first question comes back in
+   *  this response directly, same trick vrCreateRoom() relies on. */
+  async function vrStartSolo() {
+    if (!vr.pack || !vr.picked.length || vr.busy) return;
+    vr.busy = true; render();
+    try {
+      const out = await api('/games/vocabrace/solo', { method: 'POST', body: { packKey: vr.pack.key, unitIds: vr.picked, style: vr.style } });
+      vr.host = false; vr.solo = true; vr.code = null; vr.words = out.words;
+      vr.packKey = vr.pack.key; vr.packTitle = vr.pack.title; vr.unitIds = [...vr.picked]; vr.roster = [];
+      vr.style = out.style || vr.style; vr.total = out.question.total; vr.correct = 0; vr.score = 0; vr.missed = [];
+      vr.phase = 'question'; vr.q = out.question; vr.myPick = null; vr.reveal = null;
+      vr.deadline = Date.now() + out.question.seconds * 1000;
     } catch (error) { state.error = error.message; }
     vr.busy = false; render();
   }
@@ -3917,6 +3956,7 @@
 
   function vrUnitPickScreen() {
     const pack = vr.pack;
+    const solo = vr.phase === 'solo-setup';
     const total = pack.units.filter(u => vr.picked.includes(u.id)).reduce((s, u) => s + u.words, 0);
     const rows = pack.units.map(u => `
       <label class="vr-unit-row ${vr.picked.includes(u.id) ? 'is-on' : ''}">
@@ -3933,13 +3973,31 @@
       <p class="muted">${esc(GM_UZ.vrUnitsHint)}</p>
       <div class="vr-units">${rows}</div>
       <p class="gm-today vr-total">${esc(GM_UZ.vrWordsTotal(total))}</p>
-      <button class="btn btn-lg btn-block" data-gm="vr-create" ${vr.picked.length && !vr.busy ? '' : 'disabled'}>
-        ${vr.busy ? GM_UZ.vrCreating : GM_UZ.vrCreate}</button>
+      <button class="btn btn-lg btn-block" data-gm="${solo ? 'vr-solo-start' : 'vr-create'}" ${vr.picked.length && !vr.busy ? '' : 'disabled'}>
+        ${vr.busy ? (solo ? GM_UZ.vrSoloStarting : GM_UZ.vrCreating) : (solo ? GM_UZ.vrSoloStart : GM_UZ.vrCreate)}</button>
     </section>`;
   }
 
   function vrSetupScreen() {
     return vr.pack ? vrUnitPickScreen() : vrPackListScreen();
+  }
+
+  /** A student's entry point: join a teacher's room, or practice alone. */
+  function vrChooseScreen() {
+    return `<section class="card gm-card">
+      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${GM_UZ.vrTitle}</h2></div>
+      <p class="muted">${esc(GM_UZ.vrChooseHint)}</p>
+      <div class="vr-units">
+        <button class="vr-unit-row" data-gm="vr-mode-solo">
+          <span class="vr-unit-title">${esc(GM_UZ.vrSoloOption)}</span>
+          <span class="vr-unit-count">${esc(GM_UZ.vrSoloOptionDesc)}</span>
+        </button>
+        <button class="vr-unit-row" data-gm="vr-mode-join">
+          <span class="vr-unit-title">${esc(GM_UZ.vrJoinTile)}</span>
+          <span class="vr-unit-count">${esc(GM_UZ.vrJoinOptionDesc)}</span>
+        </button>
+      </div>
+    </section>`;
   }
 
   function vrStylePicker() {
@@ -4114,11 +4172,14 @@
          <ul class="vr-missed">${vr.missed.map(m => `<li><span>${esc(m.word)}</span><span>${esc(m.uz)}</span></li>`).join('')}</ul>`
       : '';
     return `<section class="card gm-summary">
-      <h2>${esc(GM_UZ.vrYouFinished)}</h2>
+      <h2>${esc(vr.solo ? GM_UZ.vrSoloDone : GM_UZ.vrYouFinished)}</h2>
       <div class="gm-big">${vr.score}<span> ball</span></div>
       <p class="muted">${esc(GM_UZ.vrCorrectOf(vr.correct, vr.total))}</p>
-      <span class="spinner"></span>
+      ${vr.solo ? '' : '<span class="spinner"></span>'}
       ${missed}
+      ${vr.solo ? `<div class="gm-actions" style="margin-top:16px">
+        <button class="btn btn-lg" data-gm="vr-solo-again">${GM_UZ.vrSoloAgain}</button>
+      </div>` : ''}
     </section>
     ${vrMiniTrack()}`;
   }
@@ -4177,6 +4238,8 @@
       if (vr.phase === 'live') return `${back}${vrTrackScreen()}`;
       return `${back}${vrSetupScreen()}`;
     }
+    if (vr.phase === 'choose') return `${back}${vrChooseScreen()}`;
+    if (vr.phase === 'solo-setup') return `${back}${vrSetupScreen()}`;
     if (vr.phase === 'waiting') return `${back}${vrWaitingScreen()}`;
     if (vr.phase === 'question' || vr.phase === 'reveal') return `${back}${vrQuestionScreen()}`;
     if (vr.phase === 'finished-you') return `${back}${vrFinishedScreen()}`;
@@ -4286,6 +4349,10 @@
       if (a === 'duel') return openDuel();
       if (a === 'vr') return openVocabRace();
       if (a === 'vr-create') return vrCreateRoom();
+      if (a === 'vr-mode-solo') return vrChooseSolo();
+      if (a === 'vr-mode-join') return vrChooseJoin();
+      if (a === 'vr-solo-start') return vrStartSolo();
+      if (a === 'vr-solo-again') { vr.phase = 'solo-setup'; return render(); }
       if (a === 'vr-pack-back') return vrBackToPacks();
       if (a === 'vr-start') return vrStartRace();
       if (a === 'vr-end') return vrEndRace();
