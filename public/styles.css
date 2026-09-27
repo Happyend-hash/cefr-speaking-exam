@@ -1723,9 +1723,13 @@ button.home-result:hover { background: var(--ground); }
 .vr-lane-score { flex: 0 0 auto; font-weight: 800; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 
 /* A student sees the same track under their own question/result, sized down
-   so it doesn't dominate the screen in a big class. */
+   so it doesn't dominate the screen in a big class. Scrolling on one axis
+   forces the browser to clip the other too, so the runner circle at the very
+   start or end of a lane (it's centered on `left`, so it straddles the edge)
+   would otherwise get sliced in half -- the side padding below gives that
+   overflow somewhere to go before the scroll container's edge clips it. */
 .vr-mini-track .vr-track-head h2 { font-size: 16px; }
-.vr-mini-track .vr-track { max-height: 280px; overflow-y: auto; gap: 12px; }
+.vr-mini-track .vr-track { max-height: 280px; overflow-y: auto; gap: 12px; padding: 4px 14px; margin: 6px -14px; }
 .vr-mini-track .vr-lane-track { height: 30px; }
 .vr-mini-track .vr-lane-runner { width: 26px; height: 26px; font-size: 10px; }
 
