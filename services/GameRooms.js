@@ -1,6 +1,7 @@
 import { ErrorHunt } from './ErrorHunt.js';
 import { DuelHub } from './DuelHub.js';
 import { TabooGame } from './TabooGame.js';
+import { VocabRaceHub } from './VocabRaceHub.js';
 import { voiceHub } from './VoiceRooms.js';
 import { award } from './Games.js';
 
@@ -35,4 +36,15 @@ export const taboo = new TabooGame({
   }
 });
 
-export default { errorHunt, duelHub, taboo };
+export const vocabRace = new VocabRaceHub({
+  onFinish({ code, results }) {
+    for (const r of results) {
+      if (r.points > 0) {
+        award(r.id, 'vocab-race', r.points, { code, rank: r.rank })
+          .catch(error => console.error('Games: vocab-race points not saved:', error.message));
+      }
+    }
+  }
+});
+
+export default { errorHunt, duelHub, taboo, vocabRace };

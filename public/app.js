@@ -3356,7 +3356,36 @@
     tbSkipped: w => `⤼ O'tkazildi: ${w}`,
     tbBuzzed: (by, w) => `🚫 ${by} "Taboo!" bosdi — so'z: ${w}`,
     tbStarted: by => `🎲 ${by} Taboo o'yinini boshladi`,
-    tbEnd: 'Taboo tugadi — natijalar reytingga qo\'shildi:'
+    tbEnd: 'Taboo tugadi — natijalar reytingga qo\'shildi:',
+    // word sprint
+    vrTitle: 'Word Sprint',
+    vrBody: "O'qituvchi xona ochadi, o'quvchilar kod bilan qo'shiladi va tanlangan bo'lim(lar)dagi BARCHA so'zlar bo'yicha poyga boshlanadi.",
+    vrHostBtn: 'Xona ochish',
+    vrJoinTile: "Xonaga qo'shilish",
+    vrPickUnits: "Bo'lim(lar)ni tanlang",
+    vrUnitsHint: "Tanlangan bo'limlardagi barcha so'zlar so'raladi — birortasi ham qoldirilmaydi.",
+    vrWordsSuffix: "so'z",
+    vrWordsTotal: n => (n ? `${n} ta so'z — har biriga 10 soniya` : "Kamida bitta bo'lim tanlang"),
+    vrCreate: 'Xona yaratish',
+    vrCreating: 'Ochilmoqda…',
+    vrCodeLabel: 'Xona kodi — sinfga ayting',
+    vrRoster: n => (n ? `${n} kishi qo'shildi` : "Hali hech kim qo'shilmadi"),
+    vrStart: 'Poygani boshlash',
+    vrStarting: 'Boshlanmoqda…',
+    vrNeedPlayer: 'Boshlash uchun kamida bitta o\'quvchi qo\'shilishi kerak',
+    vrEnd: 'Poygani yakunlash',
+    vrLive: 'Poyga davom etmoqda',
+    vrJoinCode: "O'qituvchi bergan kodni kiriting",
+    vrJoinBtn: "Qo'shilish",
+    vrJoining: "Qo'shilinmoqda…",
+    vrWaiting: "O'qituvchi boshlashini kutmoqdasiz…",
+    vrYouFinished: 'Siz tugatdingiz — qolganlarni kuting',
+    vrPodium: 'Poyga yakunlandi!',
+    vrYourScore: n => `Sizning ballingiz: ${n}`,
+    vrCorrectOf: (c, t) => `${c} / ${t} to'g'ri`,
+    vrMissed: "Xato ketgan so'zlar",
+    vrPlayAgain: 'Yana xona ochish',
+    vrRoomGone: 'Bu xona endi mavjud emas'
   };
 
   const gm = { today: null, caps: null, week: null, loading: false };
@@ -3389,10 +3418,15 @@
             <button class="link-more" data-rank-games="1">${GM_UZ.fullRank}</button></div>
         </section>`
       : '';
+    const staff = state.user?.role === 'admin' || state.user?.role === 'teacher';
+    const vrButton = staff
+      ? `<button class="btn" data-gm="vr">${GM_UZ.vrHostBtn}</button>`
+      : `<button class="btn" data-gm="vr">${GM_UZ.vrJoinTile}</button>`;
     return `
       ${card('is-indigo', 'search', GM_UZ.ehTitle, GM_UZ.ehBody, 'error-hunter', `<button class="btn" data-gm="eh">${GM_UZ.play}</button>`)}
       ${card('is-gold', 'target', GM_UZ.duelTitle, GM_UZ.duelBody, 'duel', `<button class="btn" data-gm="duel">${GM_UZ.findOpponent}</button>`)}
       ${card('is-green', 'users', GM_UZ.tabooTitle, GM_UZ.tabooBody, 'taboo', `<button class="btn btn-ghost" data-ch-tab="voice">${GM_UZ.toRooms}</button>`)}
+      ${card('is-indigo', 'flag', GM_UZ.vrTitle, GM_UZ.vrBody, 'vocab-race', vrButton)}
       ${leaders}`;
   }
 
@@ -3668,6 +3702,342 @@
       </section>`;
   }
 
+  // -------------------------------------------------------- word sprint
+  //
+  // A teacher opens a room from one or more vocabulary units; students join
+  // with the 4-letter code and race through every word in those units at
+  // their own pace once the teacher starts it. `vr.host` says which side of
+  // the room this browser is on; `vr.phase` tracks that side's own screen.
+
+  const vr = {
+    active: false, abort: null, connected: false, me: null, host: false,
+    phase: 'setup', // host: setup | lobby | live · student: join | waiting | question | reveal | finished-you · both: podium
+    unitsList: null, picked: [],
+    code: null, words: 0, unitNums: [], roster: [], podium: null,
+    q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [],
+    deadline: 0, timer: null, busy: false
+  };
+
+  async function loadVocabRaceUnits() {
+    try { vr.unitsList = await api('/games/vocabrace/units'); }
+    catch { vr.unitsList = []; }
+    if (state.screen === 'vr') render();
+  }
+
+  function openVocabRace() {
+    stopVoice(); stopChat();
+    const staff = state.user?.role === 'admin' || state.user?.role === 'teacher';
+    Object.assign(vr, {
+      host: staff, phase: staff ? 'setup' : 'join', picked: [],
+      code: null, words: 0, unitNums: [], roster: [], podium: null,
+      q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [], busy: false
+    });
+    go('vr');
+    if (staff && !vr.unitsList) loadVocabRaceUnits();
+    if (!vr.active) {
+      vr.active = true;
+      (async () => {
+        while (vr.active) {
+          try { await readEvents('/games/vocabrace/stream', vr, onVocabRaceEvent); }
+          catch (error) { if (error.fatal) { vr.active = false; return setState({ error: error.message }); } }
+          vr.connected = false;
+          if (!vr.active) return;
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      })();
+    }
+    vrTicker();
+  }
+
+  function stopVocabRace() {
+    if (!vr.active) return;
+    if (['lobby', 'waiting', 'question', 'reveal'].includes(vr.phase)) api('/games/vocabrace/leave', { method: 'POST' }).catch(() => {});
+    vr.active = false;
+    vr.abort?.abort();
+    clearInterval(vr.timer);
+    vr.phase = vr.host ? 'setup' : 'join';
+  }
+
+  function vrTicker() {
+    clearInterval(vr.timer);
+    vr.timer = setInterval(() => {
+      if (state.screen !== 'vr') return;
+      const bar = document.getElementById('vr-bar');
+      if (bar && vr.phase === 'question' && vr.q) {
+        bar.style.width = `${Math.max(0, (vr.deadline - Date.now()) / (vr.q.seconds * 10))}%`;
+      }
+    }, 200);
+  }
+
+  /** A personalized room snapshot from 'hello' — used to pick up where this browser left off after a reconnect. */
+  function vrApplyRoomView(r) {
+    if (!r) { vr.phase = vr.host ? 'setup' : 'join'; vr.code = null; return; }
+    vr.host = r.isHost; vr.code = r.code; vr.unitNums = r.unitNums; vr.words = r.words; vr.roster = r.roster;
+    if (r.over) { vr.phase = 'podium'; vr.podium = r.podium; return; }
+    if (r.isHost) { vr.phase = r.started ? 'live' : 'lobby'; return; }
+    if (!r.started || !r.you) { vr.phase = 'waiting'; return; }
+    if (r.you.finished) {
+      vr.phase = 'finished-you'; vr.score = r.you.score; vr.correct = r.you.correct; vr.total = r.you.total; vr.missed = [];
+      return;
+    }
+    vr.phase = 'question'; vr.q = r.you; vr.myPick = null; vr.reveal = null; vr.deadline = Date.now() + r.you.seconds * 1000;
+  }
+
+  function onVocabRaceEvent(event, data) {
+    switch (event) {
+      case 'hello':
+        vr.me = data.you;
+        vrApplyRoomView(data.room);
+        break;
+      case 'roster':
+        vr.code = data.code; vr.unitNums = data.unitNums; vr.words = data.words; vr.roster = data.roster;
+        break;
+      case 'started':
+        vr.roster = data.roster;
+        if (vr.host) vr.phase = 'live';
+        break;
+      case 'start':
+        vr.total = data.total; vr.correct = 0; vr.score = 0; vr.missed = [];
+        break;
+      case 'question':
+        vr.phase = 'question'; vr.q = data; vr.myPick = null; vr.reveal = null; vr.deadline = Date.now() + data.seconds * 1000;
+        break;
+      case 'reveal':
+        vr.phase = 'reveal'; vr.reveal = data; vr.score = data.score;
+        break;
+      case 'finished-you':
+        vr.phase = 'finished-you'; vr.score = data.score; vr.correct = data.correct; vr.total = data.total; vr.missed = data.missed || [];
+        break;
+      case 'progress': {
+        const row = vr.roster.find(r => r.id === data.id);
+        if (row) Object.assign(row, { correct: data.correct, total: data.total, score: data.score, finished: data.finished });
+        break;
+      }
+      case 'over':
+        vr.phase = 'podium'; vr.roster = data.roster; vr.podium = data.podium;
+        loadGamesHub();
+        break;
+    }
+    if (state.screen === 'vr') render();
+  }
+
+  async function vrCreateRoom() {
+    if (!vr.picked.length || vr.busy) return;
+    vr.busy = true; render();
+    try {
+      const out = await api('/games/vocabrace/create', { method: 'POST', body: { unitNums: vr.picked } });
+      vr.code = out.code; vr.words = out.words; vr.unitNums = [...vr.picked]; vr.roster = []; vr.phase = 'lobby';
+    } catch (error) { state.error = error.message; }
+    vr.busy = false; render();
+  }
+
+  async function vrStartRace() {
+    if (vr.busy) return;
+    vr.busy = true; render();
+    try { await api('/games/vocabrace/start', { method: 'POST' }); }
+    catch (error) { state.error = error.message; }
+    vr.busy = false; render();
+  }
+
+  async function vrEndRace() {
+    try { await api('/games/vocabrace/end', { method: 'POST' }); } catch (error) { state.error = error.message; }
+    render();
+  }
+
+  async function vrJoinRoom(input) {
+    const code = input.value.trim().toUpperCase();
+    if (!code || vr.busy) return;
+    vr.busy = true; input.value = ''; render();
+    try {
+      const out = await api('/games/vocabrace/join', { method: 'POST', body: { code } });
+      vr.code = out.code; vr.phase = 'waiting';
+    } catch (error) { state.error = error.message; }
+    vr.busy = false; render();
+  }
+
+  async function vrPick(i) {
+    if (vr.myPick !== null || !vr.q) return;
+    vr.myPick = i;
+    render();
+    try { await api('/games/vocabrace/answer', { method: 'POST', body: { i: vr.q.i, choice: i } }); } catch { /* server timeout settles it */ }
+  }
+
+  function vrSetupScreen() {
+    const list = vr.unitsList;
+    const total = (list || []).filter(u => vr.picked.includes(u.num)).reduce((s, u) => s + u.words, 0);
+    const rows = (list || []).map(u => `
+      <label class="vr-unit-row ${vr.picked.includes(u.num) ? 'is-on' : ''}">
+        <input type="checkbox" data-vr-unit="${u.num}" ${vr.picked.includes(u.num) ? 'checked' : ''}>
+        <span class="vr-unit-num">${u.num}</span>
+        <span class="vr-unit-title">${esc(u.title)}</span>
+        <span class="vr-unit-count">${u.words} ${GM_UZ.vrWordsSuffix}</span>
+      </label>`).join('');
+    return `<section class="card gm-card">
+      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${GM_UZ.vrTitle}</h2></div>
+      <p class="muted">${esc(GM_UZ.vrUnitsHint)}</p>
+      <div class="vr-units">${list ? (rows || `<p class="muted">—</p>`) : '<span class="spinner"></span>'}</div>
+      <p class="gm-today vr-total">${esc(GM_UZ.vrWordsTotal(total))}</p>
+      <button class="btn btn-lg btn-block" data-gm="vr-create" ${vr.picked.length && !vr.busy ? '' : 'disabled'}>
+        ${vr.busy ? GM_UZ.vrCreating : GM_UZ.vrCreate}</button>
+    </section>`;
+  }
+
+  function vrLobbyScreen() {
+    const rows = vr.roster.map(p => `
+      <div class="vr-roster-row">
+        <span class="dl-av${premiumClass(p)}">${picInner(p)}</span>
+        <span class="vr-roster-name">${nameMarkup(p)}</span>
+      </div>`).join('');
+    return `<section class="card gm-card">
+      <div class="vr-code-banner">
+        <span class="vr-code-label">${esc(GM_UZ.vrCodeLabel)}</span>
+        <span class="vr-code">${esc(vr.code || '')}</span>
+      </div>
+      <p class="muted">${esc(GM_UZ.vrWordsTotal(vr.words))}</p>
+      <h3>${esc(GM_UZ.vrRoster(vr.roster.length))}</h3>
+      <div class="vr-roster">${rows || `<p class="muted gm-empty">${esc(GM_UZ.vrRoster(0))}</p>`}</div>
+      <button class="btn btn-lg btn-block" data-gm="vr-start" ${vr.roster.length && !vr.busy ? '' : 'disabled'}>
+        ${vr.busy ? GM_UZ.vrStarting : GM_UZ.vrStart}</button>
+      ${!vr.roster.length ? `<p class="muted" style="text-align:center">${esc(GM_UZ.vrNeedPlayer)}</p>` : ''}
+    </section>`;
+  }
+
+  function vrLaneRow(p) {
+    const pct = p.total ? Math.min(100, Math.round((p.correct / p.total) * 100)) : 0;
+    const runnerPct = Math.min(92, pct);
+    return `<div class="vr-lane ${p.finished ? 'is-finished' : ''}">
+      <div class="vr-lane-track">
+        <span class="vr-lane-fill" style="width:${pct}%"></span>
+        <span class="vr-lane-runner${premiumClass(p)}" style="left:${runnerPct}%">${picInner(p)}</span>
+      </div>
+      <div class="vr-lane-meta">
+        <span class="vr-lane-name">${nameMarkup(p)}</span>
+        <span class="vr-lane-score">${p.score} ball</span>
+      </div>
+    </div>`;
+  }
+
+  function vrTrackScreen() {
+    const rows = vr.roster.slice().sort((a, b) => b.correct - a.correct || b.score - a.score).map(vrLaneRow).join('');
+    return `<section class="card gm-card">
+      <div class="vr-track-head"><h2>${esc(GM_UZ.vrLive)}</h2><span class="muted">${esc(GM_UZ.vrWordsTotal(vr.words))}</span></div>
+      <div class="vr-track">${rows}</div>
+      <button class="btn btn-ghost" data-gm="vr-end">${GM_UZ.vrEnd}</button>
+    </section>`;
+  }
+
+  function vrJoinScreen() {
+    return `<section class="card gm-card">
+      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${GM_UZ.vrTitle}</h2></div>
+      <p class="muted">${esc(GM_UZ.vrJoinCode)}</p>
+      <form class="vr-join-form" data-vr-join autocomplete="off">
+        <input type="text" id="vr-join-input" class="vr-code-input" data-keep maxlength="4" autocapitalize="characters" placeholder="ABCD">
+        <button class="btn btn-lg" type="submit" ${vr.busy ? 'disabled' : ''}>${vr.busy ? GM_UZ.vrJoining : GM_UZ.vrJoinBtn}</button>
+      </form>
+    </section>`;
+  }
+
+  function vrWaitingScreen() {
+    return `<section class="card gm-summary">
+      <span class="gm-icon is-indigo big">${icon('flag')}</span>
+      <h2>${esc(GM_UZ.vrWaiting)}</h2>
+      <span class="spinner"></span>
+      <p class="muted">${esc(GM_UZ.vrWordsTotal(vr.words))}</p>
+    </section>`;
+  }
+
+  function vrQuestionScreen() {
+    const q = vr.q;
+    const rv = vr.phase === 'reveal' ? vr.reveal : null;
+    const options = q.options.map((o, i) => {
+      let cls = '';
+      if (rv) { if (i === rv.answer) cls = 'is-right'; else if (i === rv.picked && i !== rv.answer) cls = 'is-wrong'; }
+      else if (i === vr.myPick) cls = 'is-picked';
+      return `<button class="dl-option ${cls}" data-vr-pick="${i}" ${vr.myPick !== null || rv ? 'disabled' : ''}>${esc(o)}</button>`;
+    }).join('');
+    return `<div class="gm-bar"><span id="vr-bar" style="width:${rv ? 0 : 100}%"></span></div>
+      <section class="card dl-card">
+        <p class="muted">${esc(q.kicker)}${q.pos ? ` · ${esc(q.pos)}` : ''}</p>
+        <p class="dl-question">${esc(q.prompt)}</p>
+        <div class="dl-options">${options}</div>
+        <p class="dl-status">${rv ? (rv.gained ? `+${rv.gained}` : '+0') : '&nbsp;'}</p>
+      </section>`;
+  }
+
+  function vrFinishedScreen() {
+    const missed = vr.missed.length
+      ? `<h3 class="vr-missed-head">${esc(GM_UZ.vrMissed)}</h3>
+         <ul class="vr-missed">${vr.missed.map(m => `<li><span>${esc(m.word)}</span><span>${esc(m.uz)}</span></li>`).join('')}</ul>`
+      : '';
+    return `<section class="card gm-summary">
+      <h2>${esc(GM_UZ.vrYouFinished)}</h2>
+      <div class="gm-big">${vr.score}<span> ball</span></div>
+      <p class="muted">${esc(GM_UZ.vrCorrectOf(vr.correct, vr.total))}</p>
+      <span class="spinner"></span>
+      ${missed}
+    </section>`;
+  }
+
+  function vrPodiumSpot(entry) {
+    if (!entry) return '<div class="lb-spot is-empty"></div>';
+    const medal = MEDAL[entry.rank];
+    const isMe = entry.id === vr.me;
+    return `<div class="lb-spot lb-${medal} ${isMe ? 'is-you' : ''}">
+      <div class="lb-avatar${premiumClass(entry)}">${picInner(entry)}<b class="lb-medal">${entry.rank}</b></div>
+      <div class="lb-name" title="${esc(entry.name)}">${nameMarkup(entry)}${isMe ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</div>
+      <div class="lb-score">${entry.points}</div>
+      <div class="lb-meta">${esc(GM_UZ.vrCorrectOf(entry.correct, entry.total))}</div>
+      <div class="lb-step"><span>${entry.rank}</span></div>
+    </div>`;
+  }
+
+  function vrPodiumScreen() {
+    const top = vr.podium || [];
+    const byRank = r => top.find(e => e.rank === r);
+    const rest = top.filter(e => e.rank > 3);
+    const podium = top.length
+      ? `<div class="lb-podium">${vrPodiumSpot(byRank(2))}${vrPodiumSpot(byRank(1))}${vrPodiumSpot(byRank(3))}</div>`
+      : `<div class="lb-empty">${icon('trophy')}<p>${esc(GM_UZ.vrRoomGone)}</p></div>`;
+    const list = rest.length
+      ? `<ol class="lb-list" start="4">${rest.map(e => `
+          <li class="${e.id === vr.me ? 'is-you' : ''}">
+            <span class="lb-rank">${e.rank}</span>
+            <span class="lb-mini${premiumClass(e)}">${picInner(e)}</span>
+            <span class="lb-row-name">${nameMarkup(e)}${e.id === vr.me ? ` <span class="lb-you">${LB_UZ.you}</span>` : ''}</span>
+            <span class="lb-row-meta">${esc(GM_UZ.vrCorrectOf(e.correct, e.total))}</span>
+            <span class="lb-row-score">${e.points} ball</span>
+          </li>`).join('')}</ol>`
+      : '';
+    const mine = top.find(e => e.id === vr.me);
+    return `<section class="card">
+      <h2>${esc(GM_UZ.vrPodium)}</h2>
+      ${podium}
+      ${list}
+      <div class="gm-actions" style="margin-top:16px">
+        ${mine ? `<p class="muted" style="width:100%;text-align:center">${esc(GM_UZ.vrYourScore(mine.points))}</p>` : ''}
+        ${vr.host ? `<button class="btn btn-lg" data-gm="vr-again">${GM_UZ.vrPlayAgain}</button>` : ''}
+        <button class="btn btn-ghost btn-lg" data-gm="back">${GM_UZ.back}</button>
+      </div>
+    </section>`;
+  }
+
+  function vrScreen() {
+    const showProgress = !vr.host && vr.q && ['question', 'reveal'].includes(vr.phase);
+    const back = `<div class="gm-top"><button class="crumb" data-gm="back">${icon('left')} ${GM_UZ.back}</button>
+      ${showProgress ? `<span class="gm-progress">${vr.q.i + 1} / ${vr.q.total}</span>` : '<span></span>'}<span></span></div>`;
+
+    if (vr.phase === 'podium') return `${back}${vrPodiumScreen()}`;
+    if (vr.host) {
+      if (vr.phase === 'lobby') return `${back}${vrLobbyScreen()}`;
+      if (vr.phase === 'live') return `${back}${vrTrackScreen()}`;
+      return `${back}${vrSetupScreen()}`;
+    }
+    if (vr.phase === 'waiting') return `${back}${vrWaitingScreen()}`;
+    if (vr.phase === 'question' || vr.phase === 'reveal') return `${back}${vrQuestionScreen()}`;
+    if (vr.phase === 'finished-you') return `${back}${vrFinishedScreen()}`;
+    return `${back}${vrJoinScreen()}`;
+  }
+
   // ------------------------------------------------------------- taboo
 
   function tabooPanel() {
@@ -3769,7 +4139,15 @@
       const a = el.dataset.gm;
       if (a === 'eh') return startErrorHunt();
       if (a === 'duel') return openDuel();
-      if (a === 'back') { stopDuel(); clearInterval(eh.timer); return openVoice('games'); }
+      if (a === 'vr') return openVocabRace();
+      if (a === 'vr-create') return vrCreateRoom();
+      if (a === 'vr-start') return vrStartRace();
+      if (a === 'vr-end') return vrEndRace();
+      if (a === 'vr-again') {
+        Object.assign(vr, { phase: 'setup', picked: [], code: null, words: 0, unitNums: [], roster: [], podium: null });
+        return render();
+      }
+      if (a === 'back') { stopDuel(); stopVocabRace(); clearInterval(eh.timer); return openVoice('games'); }
       if (a === 'eh-next') {
         if (eh.result?.done) { eh.phase = 'summary'; return render(); }
         eh.index += 1;
@@ -3787,6 +4165,18 @@
       render();
       api('/games/duel/answer', { method: 'POST', body: { i: dl.q.i, choice: dl.myPick } }).catch(() => {});
     }));
+    root.querySelectorAll('[data-vr-unit]').forEach(el => el.addEventListener('change', () => {
+      const num = Number(el.dataset.vrUnit);
+      const i = vr.picked.indexOf(num);
+      if (el.checked && i < 0) vr.picked.push(num);
+      else if (!el.checked && i >= 0) vr.picked.splice(i, 1);
+      render();
+    }));
+    root.querySelectorAll('[data-vr-pick]').forEach(el => el.addEventListener('click', () => vrPick(Number(el.dataset.vrPick))));
+    root.querySelectorAll('[data-vr-join]').forEach(form => form.addEventListener('submit', event => {
+      event.preventDefault();
+      vrJoinRoom(form.querySelector('input'));
+    }));
     root.querySelectorAll('[data-gm-open]').forEach(el => el.addEventListener('click', () => openVoice('games')));
     root.querySelectorAll('[data-home-wr]').forEach(el => el.addEventListener('click', () => openWritingResult(el.dataset.homeWr)));
     root.querySelectorAll('[data-tb]').forEach(el => el.addEventListener('click', () => tabooAction(el.dataset.tb)));
@@ -3802,6 +4192,7 @@
     // Leaving the game screens stops their timers and streams.
     if (state.screen !== 'eh') clearInterval(eh.timer);
     if (state.screen !== 'duel' && dl.active) stopDuel();
+    if (state.screen !== 'vr' && vr.active) stopVocabRace();
   }
 
   // ------------------------------------------------------------ rendering
@@ -4003,6 +4394,7 @@
       profile: profileScreen,
       eh: ehScreen,
       duel: duelScreen,
+      vr: vrScreen,
       install: installScreen
     }[state.screen] || landingScreen;
 
@@ -4091,7 +4483,8 @@
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
     lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
-    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><path d="M12 15V3"/>'
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><path d="M12 15V3"/>',
+    flag: '<path d="M4 22V4"/><path d="M4 4h13l-2.5 4L17 12H4"/>'
   };
 
   const icon = name =>

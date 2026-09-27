@@ -1679,6 +1679,61 @@ button.home-result:hover { background: var(--ground); }
 .tb-stop { align-self: flex-start; margin: 0; font-size: 13px; }
 .ch-system { align-self: center; max-width: 92%; text-align: center; font-size: 13px; font-weight: 600; color: #9f1239; background: #fff1f2; padding: 5px 12px; border-radius: var(--radius-pill); }
 
+/* Word Sprint: a teacher's room and the live vocabulary race in it */
+.vr-units { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+.vr-unit-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); cursor: pointer;
+}
+.vr-unit-row input { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--indigo-600); }
+.vr-unit-row.is-on { border-color: var(--indigo-600); background: var(--indigo-50); }
+.vr-unit-num { flex: 0 0 22px; text-align: center; font-weight: 800; color: var(--indigo-600); }
+.vr-unit-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vr-unit-count { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+.vr-total { text-align: center; }
+
+.vr-code-banner {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 20px; border-radius: var(--radius); background: var(--indigo-50); text-align: center;
+}
+.vr-code-label { font-size: 13px; font-weight: 600; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; }
+.vr-code { font-size: 40px; font-weight: 800; letter-spacing: .14em; color: var(--indigo-700); }
+
+.vr-roster { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+.vr-roster-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; }
+.vr-roster-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.vr-track-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.vr-track { display: flex; flex-direction: column; gap: 18px; margin: 6px 0; }
+.vr-lane-track {
+  position: relative; height: 40px; border-radius: var(--radius-pill);
+  background: var(--ground); overflow: visible;
+}
+.vr-lane-track::after { content: ''; position: absolute; right: 6px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--amber); }
+.vr-lane-fill { position: absolute; inset: 0; border-radius: inherit; background: var(--indigo-100); transition: width .3s ease; }
+.vr-lane-runner {
+  position: absolute; top: 50%; width: 32px; height: 32px; border-radius: 50%;
+  transform: translate(-50%, -50%); transition: left .3s ease;
+  display: grid; place-items: center; font-weight: 800; font-size: 11px;
+  background: var(--indigo-600); color: #fff; box-shadow: 0 2px 6px rgba(15, 23, 42, .18);
+}
+.vr-lane.is-finished .vr-lane-runner { background: var(--green); }
+.vr-lane-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 4px; font-size: 13px; }
+.vr-lane-name { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vr-lane-score { flex: 0 0 auto; font-weight: 800; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+.vr-join-form { display: flex; gap: 10px; flex-wrap: wrap; }
+.vr-code-input {
+  flex: 1; min-width: 0; font-size: 26px; font-weight: 800; letter-spacing: .22em; text-align: center;
+  text-transform: uppercase; padding: 12px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink);
+}
+.vr-code-input:focus { outline: none; border-color: var(--indigo-500); box-shadow: 0 0 0 3px var(--indigo-100); }
+
+.vr-missed-head { font-size: 14px; font-weight: 700; margin-top: 4px; }
+.vr-missed { list-style: none; display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 360px; }
+.vr-missed li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 12px; border-radius: 8px; background: var(--ground); font-size: 14px; }
+
 /* ================================================================ logo */
 
 .brand { display: inline-flex; align-items: center; gap: 9px; color: var(--indigo-600); text-decoration: none; }

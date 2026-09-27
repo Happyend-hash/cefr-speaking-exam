@@ -1,7 +1,7 @@
 import express from 'express';
 import User from '../models/User.js';
 import ExamResult from '../models/ExamResult.js';
-import { errorHunt, duelHub, taboo } from '../services/GameRooms.js';
+import { errorHunt, duelHub, taboo, vocabRace } from '../services/GameRooms.js';
 import { award, gameLeaderboard, todayPoints, DAILY_CAP } from '../services/Games.js';
 import { fallbackName } from '../services/Leaderboard.js';
 import { badgeOf, BADGE_FIELDS } from '../services/Premium.js';
@@ -103,5 +103,43 @@ router.post('/taboo/start', handle(async (req, res) => reply(res, taboo.start(re
 router.post('/taboo/skip', handle(async (req, res) => reply(res, taboo.skip(req.user.id))));
 router.post('/taboo/buzz', handle(async (req, res) => reply(res, taboo.buzz(req.user.id))));
 router.post('/taboo/stop', handle(async (req, res) => reply(res, taboo.stop(req.user.id))));
+
+// ----------------------------------------------------------- word sprint
+//
+// A teacher creates a room from one or more vocabulary units; students join
+// with the room code and race through every word in those units at their own
+// pace once the teacher starts it.
+
+router.get('/vocabrace/units', handle(async (req, res) => {
+  res.json({ success: true, data: vocabRace.units.map(u => ({ num: u.num, title: u.title, words: u.words.length })) });
+}));
+
+router.get('/vocabrace/stream', handle(async (req, res) => {
+  const me = await player(req.user.id);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders?.();
+  vocabRace.connect(me, res);
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 15000);
+  req.on('close', () => { clearInterval(heartbeat); vocabRace.disconnect(me.id, res); });
+}));
+
+router.post('/vocabrace/create', handle(async (req, res) => {
+  if (!isStaff(req.user)) throw new APIError('Xona faqat o’qituvchilar uchun', 403);
+  reply(res, vocabRace.create(req.user.id, req.body?.unitNums));
+}));
+router.post('/vocabrace/join', handle(async (req, res) => {
+  await player(req.user.id);
+  reply(res, vocabRace.join(req.user.id, req.body?.code));
+}));
+router.post('/vocabrace/start', handle(async (req, res) => reply(res, vocabRace.start(req.user.id))));
+router.post('/vocabrace/answer', handle(async (req, res) =>
+  reply(res, vocabRace.answer(req.user.id, req.body?.i, req.body?.choice))));
+router.post('/vocabrace/end', handle(async (req, res) => reply(res, vocabRace.end(req.user.id))));
+router.post('/vocabrace/leave', handle(async (req, res) => { vocabRace.leave(req.user.id); reply(res, { ok: true }); }));
 
 export default router;

@@ -15,7 +15,10 @@ import { badgeOf, BADGE_FIELDS } from './Premium.js';
 export const DAILY_CAP = Object.freeze({
   'error-hunter': Number(process.env.GAME_CAP_ERROR_HUNTER) || 1000,
   duel: Number(process.env.GAME_CAP_DUEL) || 800,
-  taboo: Number(process.env.GAME_CAP_TABOO) || 500
+  taboo: Number(process.env.GAME_CAP_TABOO) || 500,
+  // A whole unit in one race can be 50+ words, so this cap is generous —
+  // it exists to keep the ranking about playing well, not grinding all night.
+  'vocab-race': Number(process.env.GAME_CAP_VOCAB_RACE) || 1500
 });
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -109,7 +112,7 @@ export async function gameLeaderboard(viewerId, period = 'week', now = Date.now(
 /** Points already counted today, per game — shown so students know where they stand. */
 export async function todayPoints(userId, now = Date.now()) {
   const rows = await GamePoint.find({ user: userId, at: { $gte: startOfDay(now) } }).select('game points').lean();
-  const out = { 'error-hunter': 0, duel: 0, taboo: 0 };
+  const out = { 'error-hunter': 0, duel: 0, taboo: 0, 'vocab-race': 0 };
   for (const r of rows) out[r.game] = (out[r.game] || 0) + r.points;
   return out;
 }
