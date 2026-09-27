@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { VocabRaceHub, QUESTION_MS } from '../services/VocabRaceHub.js';
+import { VocabRaceHub, QUESTION_MS, NEXT_MS } from '../services/VocabRaceHub.js';
 
 function stream() {
   const events = [];
@@ -276,4 +276,79 @@ test('Word Sprint: the podium ranks by score, ties broken by who finished first 
   const ranked = hub.podium(room);
   assert.deepEqual(ranked.map(r => r.id), ['c', 'b', 'a'], 'highest score first; equal score goes to whoever finished earlier');
   assert.deepEqual(ranked.map(r => r.rank), [1, 2, 3]);
+});
+
+test('Word Sprint: the teacher picks a race style, defaulting to "track" and rejecting anything unknown', () => {
+  const hub = new VocabRaceHub({ packs: PACKS, now: () => 0, random: () => 0 });
+  const host = stream();
+  hub.connect({ id: 'teacher' }, host);
+
+  const created = hub.create('teacher', 'test-pack', ['1', '2'], 'rocket');
+  assert.equal(created.style, 'rocket', 'a valid style is stored on the room');
+  let code = created.code;
+  assert.equal(hub.roomSummary(hub.rooms.get(code)).style, 'rocket');
+
+  const bad = hub.create('teacher', 'test-pack', ['1', '2'], 'not-a-real-style');
+  assert.equal(bad.style, 'track', 'an unrecognized style silently falls back to the default rather than breaking room creation');
+
+  code = bad.code;
+  assert.equal(hub.setStyle('teacher', 'animal').ok, true);
+  assert.equal(hub.roomSummary(hub.rooms.get(code)).style, 'animal', 'the teacher can change styles again before starting');
+  assert.equal(hub.setStyle('teacher', 'not-a-real-style').ok, false, 'setStyle rejects an unknown style');
+
+  hub.connect({ id: 'a', name: 'Aziza' }, stream());
+  hub.join('a', code);
+  hub.start('teacher');
+  assert.equal(hub.setStyle('teacher', 'kart').ok, false, 'the style is locked in once the race has started');
+});
+
+test('Word Sprint: finishers carry a finishedAt so a live "kelish tartibi" (finish order) list can rank them by when they actually crossed the line, not by score', () => {
+  const c = clock();
+  const hub = new VocabRaceHub({ packs: PACKS, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, random: () => 0 });
+  const host = stream(); const a = stream(); const b = stream();
+  hub.connect({ id: 'teacher' }, host);
+  hub.connect({ id: 'a', name: 'Aziza' }, a);
+  hub.connect({ id: 'b', name: 'Bek' }, b);
+  hub.create('teacher', 'test-pack', ['1', '2']);
+  const code = [...hub.rooms.keys()][0];
+  hub.join('a', code); hub.join('b', code);
+  hub.start('teacher');
+
+  const room = hub.rooms.get(code);
+
+  /** Answers every remaining question for a player, correctly, until finished. */
+  const finishAll = playerId => {
+    const p = room.players.get(playerId);
+    while (!p.finished) {
+      hub.answer(playerId, p.cursor, p.qs[p.cursor].answer);
+      c.advance(NEXT_MS);
+    }
+  };
+
+  // Aziza races through all her words first; Bek hasn't touched his yet.
+  finishAll('a');
+
+  const midRoster = hub.roomSummary(room).roster;
+  const aRow = midRoster.find(r => r.id === 'a');
+  const bRow = midRoster.find(r => r.id === 'b');
+  assert.equal(aRow.finished, true);
+  assert.equal(typeof aRow.finishedAt, 'number', 'a finished player carries a finishedAt timestamp for ranking');
+  assert.equal(bRow.finished, false);
+  assert.equal(bRow.finishedAt, null, 'a still-racing player has no finishedAt yet');
+  assert.ok(bRow.cursor >= 0, 'roster carries a cursor (words attempted) for positioning on the shared track');
+
+  // Bek finishes later -- his finishedAt must be strictly after Aziza's, so a
+  // client sorting by finishedAt puts her first in "kelish tartibi".
+  c.advance(1000);
+  finishAll('b');
+
+  const finalRoster = hub.roomSummary(room).roster;
+  const aFinal = finalRoster.find(r => r.id === 'a');
+  const bFinal = finalRoster.find(r => r.id === 'b');
+  assert.ok(bFinal.finishedAt > aFinal.finishedAt, 'Bek finished strictly after Aziza');
+
+  // The 'progress' broadcast itself (not just roomSummary) also carries
+  // finishedAt/cursor, since that's what the live client applies in place.
+  const lastProgressForB = [...b.events].reverse().find(e => e.event === 'progress' && e.data.id === 'b' && e.data.finished);
+  assert.equal(typeof lastProgressForB.data.finishedAt, 'number');
 });

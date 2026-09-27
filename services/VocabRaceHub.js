@@ -21,6 +21,7 @@ import { VOCAB_PACKS } from '../content/vocabPacks.js';
 
 export const QUESTION_MS = 10000;
 export const NEXT_MS = 900; // brief pause after an answer before the next word
+export const VOCAB_RACE_STYLES = ['track', 'kart', 'rocket', 'animal'];
 const DROP_GRACE_MS = 10000;
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
 const CODE_LEN = 4;
@@ -119,7 +120,7 @@ export class VocabRaceHub {
   }
 
   /** hostId must already be checked as staff by the route. */
-  create(hostId, packKey, unitIds) {
+  create(hostId, packKey, unitIds, style) {
     hostId = String(hostId);
     const pack = this.pack(packKey);
     if (!pack) return { ok: false, reason: 'Bu lug’at to’plami topilmadi' };
@@ -132,13 +133,27 @@ export class VocabRaceHub {
     const code = this.makeCode();
     const room = {
       code, hostId, packKey: pack.key, packTitle: pack.title, unitIds: ids, pool,
+      style: VOCAB_RACE_STYLES.includes(style) ? style : 'track',
       players: new Map(), // id -> { user, qs, cursor, score, correct, streak, best, missed, finished, finishedAt, timer, askedAt }
       started: false, over: false, createdAt: this.now()
     };
     this.rooms.set(code, room);
     const c = this.clients.get(hostId);
     if (c) c.roomCode = code;
-    return { ok: true, code, words: pool.length };
+    return { ok: true, code, words: pool.length, style: room.style };
+  }
+
+  /** The teacher picking a visual race style, any time before the race starts. */
+  setStyle(hostId, style) {
+    hostId = String(hostId);
+    const c = this.clients.get(hostId);
+    const room = c?.roomCode ? this.rooms.get(c.roomCode) : null;
+    if (!room || room.hostId !== hostId) return { ok: false, reason: 'Xona topilmadi' };
+    if (room.started) return { ok: false, reason: 'Poyga allaqachon boshlangan' };
+    if (!VOCAB_RACE_STYLES.includes(style)) return { ok: false, reason: 'Noma’lum uslub' };
+    room.style = style;
+    this.broadcast(room, 'roster', this.roomSummary(room));
+    return { ok: true, style };
   }
 
   sweep() {
@@ -155,11 +170,12 @@ export class VocabRaceHub {
    */
   roomSummary(room) {
     const roster = [...room.players.values()].map(p => ({
-      ...this.person(p.user.id), correct: p.correct, total: p.qs?.length || 0, finished: p.finished, score: p.score
+      ...this.person(p.user.id), correct: p.correct, total: p.qs?.length || 0, cursor: p.cursor,
+      finished: p.finished, finishedAt: p.finishedAt, score: p.score
     }));
     const base = {
       code: room.code, packKey: room.packKey, packTitle: room.packTitle, unitIds: room.unitIds, words: room.pool.length,
-      started: room.started, over: room.over, roster
+      style: room.style, started: room.started, over: room.over, roster
     };
     return room.over ? { ...base, podium: this.podium(room) } : base;
   }
@@ -300,11 +316,16 @@ export class VocabRaceHub {
       player.missed.push({ word: q.word, uz: q.uz });
     }
     this.send(player.user.id, 'reveal', { i: player.cursor, answer: q.answer, picked: pick, gained, score: player.score, streak: player.streak });
-    // Broadcast (not just to the host) so every player's own screen can show
-    // a live race track too, not only the teacher's.
-    this.broadcast(room, 'progress', { id: player.user.id, correct: player.correct, total: player.qs.length, score: player.score, finished: false });
-
     const next = player.cursor + 1;
+    // Broadcast (not just to the host) so every player's own screen can show
+    // a live race track too, not only the teacher's. `cursor` is words
+    // completed so far (right or wrong) -- what places a runner on the
+    // shared track, since a fast-but-wrong student still moved forward.
+    this.broadcast(room, 'progress', {
+      id: player.user.id, correct: player.correct, total: player.qs.length, cursor: next,
+      score: player.score, finished: false, finishedAt: null
+    });
+
     this.setTimer(() => {
       if (room.over) return;
       if (next >= player.qs.length) this.finishPlayer(room, player);
@@ -316,7 +337,10 @@ export class VocabRaceHub {
     player.finished = true;
     player.finishedAt = this.now();
     this.send(player.user.id, 'finished-you', { score: player.score, correct: player.correct, total: player.qs.length, missed: player.missed });
-    this.broadcast(room, 'progress', { id: player.user.id, correct: player.correct, total: player.qs.length, score: player.score, finished: true });
+    this.broadcast(room, 'progress', {
+      id: player.user.id, correct: player.correct, total: player.qs.length, cursor: player.qs.length,
+      score: player.score, finished: true, finishedAt: player.finishedAt
+    });
     if ([...room.players.values()].every(p => p.finished)) this.finish(room);
   }
 

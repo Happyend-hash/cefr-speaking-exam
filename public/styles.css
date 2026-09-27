@@ -1704,34 +1704,79 @@ button.home-result:hover { background: var(--ground); }
 .vr-roster-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 .vr-track-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.vr-track { display: flex; flex-direction: column; gap: 18px; margin: 6px 0; }
-.vr-lane-track {
-  position: relative; height: 40px; border-radius: var(--radius-pill);
-  background: var(--ground); overflow: visible;
+.vr-status-row { display: flex; justify-content: space-between; align-items: center; margin: 6px 0 2px; font-size: 12.5px; color: var(--ink-soft); }
+
+/* One shared lane for the whole class instead of a row per student -- the
+   track stays a fixed height no matter how many students are racing, so
+   nobody has to scroll to find themselves (vrJitterFor spreads runners onto
+   different vertical slots when several land at a similar progress %). */
+.vr-shared-track {
+  position: relative; height: 130px; border-radius: var(--radius);
+  background: var(--ground); overflow: hidden; margin: 8px 0;
 }
-.vr-lane-track::after { content: ''; position: absolute; right: 6px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--amber); }
-.vr-lane-fill { position: absolute; inset: 0; border-radius: inherit; background: var(--indigo-100); transition: width .3s ease; }
-.vr-lane-runner {
-  position: absolute; top: 50%; width: 32px; height: 32px; border-radius: 50%;
-  transform: translate(-50%, -50%); transition: left .3s ease;
-  display: grid; place-items: center; font-weight: 800; font-size: 11px;
-  background: var(--indigo-600); color: #fff; box-shadow: 0 2px 6px rgba(15, 23, 42, .18);
+.vr-shared-track::after { content: ''; position: absolute; right: 6px; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--amber); }
+.vr-runner { position: absolute; top: 50%; width: 34px; height: 34px; transform: translate(-50%, -50%); transition: left .3s ease, top .3s ease; }
+.vr-chip {
+  position: relative; width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 800; font-size: 11px; color: #fff; background: var(--indigo-600);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .18); overflow: hidden;
 }
-.vr-lane.is-finished .vr-lane-runner { background: var(--green); }
-.vr-lane-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 4px; font-size: 13px; }
-.vr-lane-name { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vr-lane-score { flex: 0 0 auto; font-weight: 800; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+/* .av-pic is `position: absolute; inset: 0` site-wide, sized to its nearest
+   positioned ancestor -- without .vr-chip being `position: relative` this
+   escapes to the page's containing block and covers the whole screen. */
+.vr-chip img.av-pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vr-chip-glyph { background: none; box-shadow: none; font-size: 24px; }
+
+/* Finishers peel off the shared track into this ranked list, oldest finish
+   first -- a fixed, scrollable height so it never grows past the card no
+   matter how many students have finished. */
+.vr-finish-head {
+  margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line);
+  font-size: 13px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .03em;
+}
+.vr-finish-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; margin-top: 8px; padding: 3px 6px; margin-inline: -6px; }
+.vr-finish-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 5px 4px; border-radius: 8px; }
+.vr-finish-rank { width: 22px; text-align: center; font-weight: 800; color: var(--ink-soft); }
+.vr-finish-rank.is-medal { font-size: 15px; }
+.vr-finish-chip {
+  position: relative; width: 26px; height: 26px; border-radius: 50%; flex: 0 0 auto; overflow: hidden;
+  display: grid; place-items: center; font-weight: 800; font-size: 10px; color: #fff; background: var(--indigo-600);
+}
+.vr-finish-chip img.av-pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vr-finish-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vr-finish-score { flex: 0 0 auto; font-weight: 800; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+/* Track & Field literally shows a runner, so a student's real photo (when
+   they have one) appears there; the other styles show a vehicle/animal
+   glyph instead of a person. */
+.vr-style-kart .vr-chip-glyph, .vr-style-rocket .vr-chip-glyph, .vr-style-animal .vr-chip-glyph { background: none; box-shadow: none; }
+.vr-style-rocket .vr-shared-track { background: #10142b; }
+.vr-style-rocket .vr-shared-track::after { background: #6366f1; }
+.vr-style-animal .vr-shared-track { background: #e7f5e1; }
+
+@keyframes vr-bob { 0%, 100% { transform: translate(-50%, -50%) translateY(0); } 50% { transform: translate(-50%, -50%) translateY(-4px); } }
+.vr-style-track .vr-runner { animation: vr-bob .4s ease-in-out infinite; }
 
 /* A student sees the same track under their own question/result, sized down
    so it doesn't dominate the screen in a big class. Scrolling on one axis
-   forces the browser to clip the other too, so the runner circle at the very
-   start or end of a lane (it's centered on `left`, so it straddles the edge)
-   would otherwise get sliced in half -- the side padding below gives that
+   forces the browser to clip the other too, so a runner circle near the
+   very edge (it's centered on `left`, so it can straddle the boundary)
+   would otherwise get sliced -- the padding/margin pair below gives that
    overflow somewhere to go before the scroll container's edge clips it. */
 .vr-mini-track .vr-track-head h2 { font-size: 16px; }
-.vr-mini-track .vr-track { max-height: 280px; overflow-y: auto; gap: 12px; padding: 4px 14px; margin: 6px -14px; }
-.vr-mini-track .vr-lane-track { height: 30px; }
-.vr-mini-track .vr-lane-runner { width: 26px; height: 26px; font-size: 10px; }
+.vr-mini-track .vr-shared-track { height: 100px; }
+.vr-mini-track .vr-runner { width: 28px; height: 28px; }
+.vr-mini-track .vr-finish-list { max-height: 200px; padding: 3px 14px; margin-inline: -14px; }
+
+.vr-style-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0 4px; }
+.vr-style-card {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  padding: 12px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); cursor: pointer;
+}
+.vr-style-card.is-on { border-color: var(--indigo-600); background: var(--indigo-50); }
+.vr-style-card .vr-style-glyph { font-size: 22px; }
+.vr-style-card b { font-size: 13px; }
+.vr-style-desc { text-align: center; margin-top: 2px; }
 
 .vr-join-form { display: flex; gap: 10px; flex-wrap: wrap; }
 .vr-code-input {

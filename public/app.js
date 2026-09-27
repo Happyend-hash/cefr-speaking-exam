@@ -3388,7 +3388,13 @@
     vrCorrectOf: (c, t) => `${c} / ${t} to'g'ri`,
     vrMissed: "Xato ketgan so'zlar",
     vrPlayAgain: 'Yana xona ochish',
-    vrRoomGone: 'Bu xona endi mavjud emas'
+    vrRoomGone: 'Bu xona endi mavjud emas',
+    vrStyleHeading: "Poyga uslubini tanlang",
+    vrKelishTartibi: 'Kelish tartibi',
+    vrNoFinishersYet: 'Hali hech kim yakunlamadi',
+    vrStillRacing: n => `${n} hali poygada`,
+    vrAllFinished: 'Poyga tugadi',
+    vrInProgress: 'Davom etmoqda'
   };
 
   const gm = { today: null, caps: null, week: null, loading: false };
@@ -3715,7 +3721,7 @@
   const vr = {
     active: false, abort: null, connected: false, me: null, host: false,
     phase: 'setup', // host: setup | lobby | live · student: join | waiting | question | reveal | finished-you · both: podium
-    packsList: null, pack: null, picked: [],
+    packsList: null, pack: null, picked: [], style: 'track',
     code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
     q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [],
     deadline: 0, timer: null, busy: false
@@ -3731,7 +3737,7 @@
     stopVoice(); stopChat();
     const staff = state.user?.role === 'admin' || state.user?.role === 'teacher';
     Object.assign(vr, {
-      host: staff, phase: staff ? 'setup' : 'join', pack: null, picked: [],
+      host: staff, phase: staff ? 'setup' : 'join', pack: null, picked: [], style: 'track',
       code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
       q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [], busy: false
     });
@@ -3776,7 +3782,7 @@
   function vrApplyRoomView(r) {
     if (!r) { vr.phase = vr.host ? 'setup' : 'join'; vr.code = null; return; }
     vr.host = r.isHost; vr.code = r.code; vr.packKey = r.packKey; vr.packTitle = r.packTitle; vr.unitIds = r.unitIds;
-    vr.words = r.words; vr.roster = r.roster;
+    vr.words = r.words; vr.roster = r.roster; vr.style = r.style || 'track';
     if (r.over) { vr.phase = 'podium'; vr.podium = r.podium; return; }
     if (r.isHost) { vr.phase = r.started ? 'live' : 'lobby'; return; }
     if (!r.started || !r.you) { vr.phase = 'waiting'; return; }
@@ -3795,10 +3801,10 @@
         break;
       case 'roster':
         vr.code = data.code; vr.packKey = data.packKey; vr.packTitle = data.packTitle; vr.unitIds = data.unitIds;
-        vr.words = data.words; vr.roster = data.roster;
+        vr.words = data.words; vr.roster = data.roster; vr.style = data.style || vr.style;
         break;
       case 'started':
-        vr.roster = data.roster;
+        vr.roster = data.roster; vr.style = data.style || vr.style;
         if (vr.host) vr.phase = 'live';
         break;
       case 'start':
@@ -3815,7 +3821,10 @@
         break;
       case 'progress': {
         const row = vr.roster.find(r => r.id === data.id);
-        if (row) Object.assign(row, { correct: data.correct, total: data.total, score: data.score, finished: data.finished });
+        if (row) Object.assign(row, {
+          correct: data.correct, total: data.total, cursor: data.cursor,
+          score: data.score, finished: data.finished, finishedAt: data.finishedAt
+        });
         break;
       }
       case 'over':
@@ -3830,9 +3839,9 @@
     if (!vr.pack || !vr.picked.length || vr.busy) return;
     vr.busy = true; render();
     try {
-      const out = await api('/games/vocabrace/create', { method: 'POST', body: { packKey: vr.pack.key, unitIds: vr.picked } });
+      const out = await api('/games/vocabrace/create', { method: 'POST', body: { packKey: vr.pack.key, unitIds: vr.picked, style: vr.style } });
       vr.code = out.code; vr.words = out.words; vr.packKey = vr.pack.key; vr.packTitle = vr.pack.title;
-      vr.unitIds = [...vr.picked]; vr.roster = []; vr.phase = 'lobby';
+      vr.unitIds = [...vr.picked]; vr.roster = []; vr.phase = 'lobby'; vr.style = out.style || vr.style;
     } catch (error) { state.error = error.message; }
     vr.busy = false; render();
   }
@@ -3860,6 +3869,16 @@
   async function vrEndRace() {
     try { await api('/games/vocabrace/end', { method: 'POST' }); } catch (error) { state.error = error.message; }
     render();
+  }
+
+  /** The teacher picking a visual race style in the lobby, any time before start. */
+  async function vrSetStyle(key) {
+    if (!vr.host || vr.busy || vr.style === key) return;
+    const prev = vr.style;
+    vr.style = key;
+    render();
+    try { await api('/games/vocabrace/style', { method: 'POST', body: { style: key } }); }
+    catch { vr.style = prev; render(); }
   }
 
   async function vrJoinRoom(input) {
@@ -3923,6 +3942,18 @@
     return vr.pack ? vrUnitPickScreen() : vrPackListScreen();
   }
 
+  function vrStylePicker() {
+    const cards = VR_STYLES.map(s => `
+      <button type="button" class="vr-style-card ${vr.style === s.key ? 'is-on' : ''}" data-vr-style="${s.key}">
+        <span class="vr-style-glyph">${s.glyph}</span>
+        <b>${esc(s.label)}</b>
+      </button>`).join('');
+    const active = VR_STYLES.find(s => s.key === vr.style) || VR_STYLES[0];
+    return `<h3>${esc(GM_UZ.vrStyleHeading)}</h3>
+      <div class="vr-style-picker">${cards}</div>
+      <p class="muted vr-style-desc">${esc(active.desc)}</p>`;
+  }
+
   function vrLobbyScreen() {
     const rows = vr.roster.map(p => `
       <div class="vr-roster-row">
@@ -3937,35 +3968,97 @@
       <p class="muted">${esc(GM_UZ.vrWordsTotal(vr.words))}</p>
       <h3>${esc(GM_UZ.vrRoster(vr.roster.length))}</h3>
       <div class="vr-roster">${rows || `<p class="muted gm-empty">${esc(GM_UZ.vrRoster(0))}</p>`}</div>
+      ${vrStylePicker()}
       <button class="btn btn-lg btn-block" data-gm="vr-start" ${vr.roster.length && !vr.busy ? '' : 'disabled'}>
         ${vr.busy ? GM_UZ.vrStarting : GM_UZ.vrStart}</button>
       ${!vr.roster.length ? `<p class="muted" style="text-align:center">${esc(GM_UZ.vrNeedPlayer)}</p>` : ''}
     </section>`;
   }
 
-  function vrLaneRow(p) {
-    const pct = p.total ? Math.min(100, Math.round((p.correct / p.total) * 100)) : 0;
-    const runnerPct = Math.min(92, pct);
-    return `<div class="vr-lane ${p.finished ? 'is-finished' : ''}">
-      <div class="vr-lane-track">
-        <span class="vr-lane-fill" style="width:${pct}%"></span>
-        <span class="vr-lane-runner${premiumClass(p)}" style="left:${runnerPct}%">${picInner(p)}</span>
-      </div>
-      <div class="vr-lane-meta">
-        <span class="vr-lane-name">${nameMarkup(p)}</span>
-        <span class="vr-lane-score">${p.score} ball</span>
-      </div>
+  const VR_STYLES = [
+    { key: 'track', glyph: '🏃', label: "Yugurish yo'lagi", desc: "Yuguruvchilar bitta yo'lakda — chiziqqa birinchi yetgan g'olib." },
+    { key: 'kart', glyph: '🏎️', label: 'Go-kart', desc: "Mashinalar bitta yo'lda poyga qiladi, orqasidan tutun chiqadi." },
+    { key: 'rocket', glyph: '🚀', label: 'Raketa', desc: 'Yulduzli tungi osmon fonida raketalar poygasi.' },
+    { key: 'animal', glyph: '🐇', label: 'Hayvonlar poygasi', desc: 'Maysazorda sakrab boruvchi hayvonlar poygasi.' }
+  ];
+  const VR_EMOJI = { kart: ['🏎️', '🚙', '🚗', '🚕'], rocket: ['🚀', '🛸'], animal: ['🐇', '🦊', '🐢', '🐿️'] };
+  const VR_JITTER_SLOTS = [0, -16, 16, -28, 28, -38, 38];
+
+  /** A stable emoji for this student out of the style's list, so it doesn't
+      change from one render to the next (there's no server-side seat for it). */
+  function vrEmojiFor(p, style) {
+    const list = VR_EMOJI[style] || VR_EMOJI.kart;
+    let h = 0;
+    const s = String(p.id);
+    for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return list[h % list.length];
+  }
+
+  /** Spreads runners bunched at a similar progress % onto different vertical
+      slots so they don't sit on top of each other -- the shared track stays
+      one fixed height no matter how many students are racing, so nobody has
+      to scroll to find their own row. */
+  function vrJitterFor(pctList, i) {
+    const bucketOf = pct => Math.round(pct / 6);
+    const myBucket = bucketOf(pctList[i]);
+    let slot = 0;
+    for (let j = 0; j < i; j += 1) if (bucketOf(pctList[j]) === myBucket) slot += 1;
+    return VR_JITTER_SLOTS[slot % VR_JITTER_SLOTS.length];
+  }
+
+  function vrPctOf(p) {
+    if (!p.total) return 4;
+    return Math.max(4, Math.min(94, Math.round((p.correct / p.total) * 100)));
+  }
+
+  function vrRunnerChip(p) {
+    if (vr.style === 'track') return `<div class="vr-chip${premiumClass(p)}">${picInner(p)}</div>`;
+    return `<div class="vr-chip vr-chip-glyph">${vrEmojiFor(p, vr.style)}</div>`;
+  }
+
+  /** One shared lane for the whole class instead of a row per student --
+      finishers peel off into the ranked list below instead of staying in it. */
+  function vrSharedTrack() {
+    const active = vr.roster.filter(p => !p.finished);
+    const pctList = active.map(vrPctOf);
+    const dots = active.map((p, i) => `
+      <div class="vr-runner" style="left:${pctList[i]}%;top:calc(50% + ${vrJitterFor(pctList, i)}px)">
+        ${vrRunnerChip(p)}
+      </div>`).join('');
+    return `<div class="vr-shared-track">${dots}</div>`;
+  }
+
+  function vrFinishRow(p, i) {
+    const rank = i + 1;
+    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null;
+    return `<div class="vr-finish-row">
+      <span class="vr-finish-rank ${medal ? 'is-medal' : ''}">${medal || rank}</span>
+      <span class="vr-finish-chip${premiumClass(p)}">${picInner(p)}</span>
+      <span class="vr-finish-name">${nameMarkup(p)}</span>
+      <span class="vr-finish-score">${p.score} ball</span>
     </div>`;
   }
 
+  function vrFinishList() {
+    const finishers = vr.roster.filter(p => p.finished)
+      .sort((a, b) => (a.finishedAt ?? Infinity) - (b.finishedAt ?? Infinity));
+    return `<div class="vr-finish-head">${esc(GM_UZ.vrKelishTartibi)}</div>
+      <div class="vr-finish-list">${finishers.length
+        ? finishers.map(vrFinishRow).join('')
+        : `<p class="muted" style="margin:2px 4px">${esc(GM_UZ.vrNoFinishersYet)}</p>`}</div>`;
+  }
+
   function vrTrackBody() {
-    const rows = vr.roster.slice().sort((a, b) => b.correct - a.correct || b.score - a.score).map(vrLaneRow).join('');
+    const racing = vr.roster.filter(p => !p.finished).length;
+    const allDone = vr.roster.length > 0 && racing === 0;
     return `<div class="vr-track-head"><h2>${esc(GM_UZ.vrLive)}</h2><span class="muted">${esc(GM_UZ.vrWordsTotal(vr.words))}</span></div>
-      <div class="vr-track">${rows}</div>`;
+      <div class="vr-status-row"><span>${esc(GM_UZ.vrStillRacing(racing))}</span><span>${allDone ? esc(GM_UZ.vrAllFinished) : esc(GM_UZ.vrInProgress)}</span></div>
+      ${vrSharedTrack()}
+      ${vrFinishList()}`;
   }
 
   function vrTrackScreen() {
-    return `<section class="card gm-card">
+    return `<section class="card gm-card vr-race vr-style-${esc(vr.style)}">
       ${vrTrackBody()}
       <button class="btn btn-ghost" data-gm="vr-end">${GM_UZ.vrEnd}</button>
     </section>`;
@@ -3973,7 +4066,7 @@
 
   /** The same live race track, shown under a student's own screen so they can see everyone else racing too. */
   function vrMiniTrack() {
-    return vr.roster.length ? `<section class="card gm-card vr-mini-track">${vrTrackBody()}</section>` : '';
+    return vr.roster.length ? `<section class="card gm-card vr-mini-track vr-race vr-style-${esc(vr.style)}">${vrTrackBody()}</section>` : '';
   }
 
   function vrJoinScreen() {
@@ -4227,6 +4320,7 @@
       render();
     }));
     root.querySelectorAll('[data-vr-pick]').forEach(el => el.addEventListener('click', () => vrPick(Number(el.dataset.vrPick))));
+    root.querySelectorAll('[data-vr-style]').forEach(el => el.addEventListener('click', () => vrSetStyle(el.dataset.vrStyle)));
     root.querySelectorAll('[data-vr-join]').forEach(form => form.addEventListener('submit', event => {
       event.preventDefault();
       vrJoinRoom(form.querySelector('input'));
