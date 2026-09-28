@@ -46,6 +46,9 @@
     mockStatus: 'all', // mocks screen: status filter
     mockSort: 'recommended',
     partsMockId: null, // mocks screen: which mock's parts the student is browsing
+    clickPackages: null, // topup screen: Click package list, once fetched
+    clickLive: false,    // topup screen: are CLICK_* credentials configured on the server
+    buyingPkg: '',        // topup screen: package key mid-checkout, disables its button
     loading: false,
     error: '',
     notice: ''
@@ -2831,7 +2834,7 @@
   function wirePremium() {
     document.getElementById('pr-file')?.addEventListener('change', event => uploadPicture(event.target.files?.[0]));
     root.querySelectorAll('[data-pr="remove"]').forEach(el => el.addEventListener('click', removePicture));
-    root.querySelectorAll('[data-pr="buy"]').forEach(el => el.addEventListener('click', () => go('topup', { topupReason: 'premium' })));
+    root.querySelectorAll('[data-pr="buy"]').forEach(el => el.addEventListener('click', () => openTopup({ topupReason: 'premium' })));
   }
 
   // ============================================================ text chat
@@ -4972,6 +4975,18 @@
     premiumTitle: "Premium olish",
     premiumBody: "Premium paket bilan birga beriladi. To'lovdan keyin ustoz paketni qo'shadi va Premium darhol yoqiladi.",
 
+    // Click checkout — shown only once CLICK_* env vars are set on the
+    // server (state.clickLive); until then the manual/teacher flow below
+    // stays the only path, unchanged.
+    onlineTitle: "Click orqali to'lov",
+    onlineSub: "Kartangiz bilan darhol to'lang — mocklar hisobingizga shu zahoti qo'shiladi.",
+    mocksLabel: n => `${n} ta mock`,
+    perMock: n => `${n.toLocaleString('uz-UZ')} so'm / mock`,
+    buyNow: "Sotib olish",
+    buying: "Yo'naltirilmoqda…",
+    orManual: "Yoki ustoz orqali",
+    som: n => `${n.toLocaleString('uz-UZ')} so'm`,
+
     blockedTitle: 'Ruxsat vaqtincha to\'xtatilgan',
     blockedBody:
       "Ustozingiz hisobingizni vaqtincha to'xtatib qo'ygan. Natijalaringiz saqlanib qoladi — " +
@@ -5030,6 +5045,31 @@
         )}" target="_blank" rel="noopener noreferrer">${esc(contact)}</a>`
       : `<p class="muted">${ACCESS_UZ.noContact}</p>`;
 
+    // Click checkout cards. Only shown once the server has real Click
+    // credentials (state.clickLive) — until the merchant application is
+    // approved, this whole block is simply absent and the manual/teacher
+    // flow below is the only way to top up, same as before.
+    const packages = !blocked && state.clickLive && Array.isArray(state.clickPackages)
+      ? state.clickPackages : [];
+    const packagesBlock = packages.length
+      ? `<div style="margin-top:18px">
+          <h3 style="font-size:15px;margin-bottom:4px">${ACCESS_UZ.onlineTitle}</h3>
+          <p class="muted" style="margin-bottom:12px">${ACCESS_UZ.onlineSub}</p>
+          <div class="pkg-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+            ${packages.map(pkg => `
+              <div class="card pkg-card" style="position:relative;padding:16px 12px;text-align:center">
+                ${pkg.badge ? `<span class="chip chip-speaking" style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);white-space:nowrap">${esc(pkg.badge)}</span>` : ''}
+                <div style="font-weight:700;font-size:16px">${esc(ACCESS_UZ.mocksLabel(pkg.mocks))}</div>
+                <div style="font-size:19px;font-weight:800;margin:4px 0">${esc(ACCESS_UZ.som(pkg.price))}</div>
+                <div class="muted" style="font-size:12px;margin-bottom:10px">${esc(ACCESS_UZ.perMock(Math.round(pkg.price / pkg.mocks)))}</div>
+                <button class="btn btn-block" data-buy-pkg="${esc(pkg.key)}" ${state.buyingPkg ? 'disabled' : ''}>
+                  ${state.buyingPkg === pkg.key ? esc(ACCESS_UZ.buying) : esc(ACCESS_UZ.buyNow)}
+                </button>
+              </div>`).join('')}
+          </div>
+        </div>`
+      : '';
+
     return `
       <div class="card form-card" style="max-width:560px">
         <h2 style="margin-bottom:8px">${blocked ? ACCESS_UZ.blockedTitle : forPremium ? ACCESS_UZ.premiumTitle : ACCESS_UZ.outTitle}</h2>
@@ -5037,7 +5077,9 @@
         ${blocked ? '' : `<p style="margin-top:10px;font-weight:600">${ACCESS_UZ.packageLine}</p>
           <p class="pr-topup">${CROWN} ${ACCESS_UZ.premiumLine}</p>`}
 
-        <h3 style="font-size:15px;margin-top:22px">${ACCESS_UZ.how}</h3>
+        ${packagesBlock}
+
+        <h3 style="font-size:15px;margin-top:22px">${packagesBlock ? ACCESS_UZ.orManual : ACCESS_UZ.how}</h3>
         <ol style="margin:10px 0 0 18px;line-height:1.7">
           <li>${ACCESS_UZ.step1}</li>
           <li>${ACCESS_UZ.step2}</li>
@@ -5050,6 +5092,43 @@
           ${ACCESS_UZ.later}
         </button>
       </div>`;
+  }
+
+  /**
+   * Loads the topup screen and, alongside it, the Click package list — kept
+   * separate from the generic `go()` because this is the one screen with its
+   * own server data to fetch. Silently leaves state.clickLive false on any
+   * failure (offline, or Click not configured yet): the screen still works,
+   * it just shows the manual/teacher flow instead of buy buttons.
+   */
+  async function openTopup(patch = {}) {
+    go('topup', patch);
+    try {
+      const { packages, live } = await api('/payment/click/packages');
+      state.clickPackages = packages || [];
+      state.clickLive = Boolean(live);
+    } catch {
+      state.clickLive = false;
+    }
+    if (state.screen === 'topup') render();
+  }
+
+  /**
+   * Starts a Click checkout for one package and hands the browser off to
+   * Click's own payment page. There is nothing more to do here afterwards —
+   * Click redirects back to return_url once the student finishes there, and
+   * the actual crediting happens server-side via the Prepare/Complete
+   * webhooks once the charge clears.
+   */
+  async function buyPackage(key) {
+    if (state.buyingPkg) return;
+    setState({ buyingPkg: key, error: '' });
+    try {
+      const { url } = await api('/payment/click/checkout', { method: 'POST', body: { packageKey: key } });
+      window.location.href = url;
+    } catch (error) {
+      setState({ buyingPkg: '', error: error.message });
+    }
   }
 
   function verifyEmailScreen() {
@@ -6415,9 +6494,13 @@
         else if (target === 'tests') openTests(state.testsTab || 'speaking');
         else if (target === 'rank') openRank();
         else if (target === 'profile') openProfile();
+        else if (target === 'topup') openTopup();
         else go(target);
       });
     });
+
+    root.querySelectorAll('[data-buy-pkg]').forEach(el =>
+      el.addEventListener('click', () => buyPackage(el.dataset.buyPkg)));
 
     root.querySelectorAll('[data-tests]').forEach(el =>
       el.addEventListener('click', () => openTests(el.dataset.tests)));

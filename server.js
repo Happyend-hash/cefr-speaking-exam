@@ -34,8 +34,13 @@ function checkEnvironment() {
   if (!process.env.REFRESH_TOKEN_SECRET) {
     warnings.push('⚠ REFRESH_TOKEN_SECRET is not set — refresh tokens fall back to JWT_SECRET.');
   }
-  if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.length < 40) {
-    warnings.push('⚠ STRIPE_SECRET_KEY is too short to be a real Stripe key — payments will fail.');
+  // Click credentials arrive together once the merchant application is
+  // approved. Silent while none are set (that's just "not approved yet"),
+  // but a partial set means someone mistyped one during setup.
+  const clickVars = ['CLICK_MERCHANT_ID', 'CLICK_SERVICE_ID', 'CLICK_SECRET_KEY'];
+  const clickSet = clickVars.filter(name => process.env[name]);
+  if (clickSet.length > 0 && clickSet.length < clickVars.length) {
+    warnings.push(`⚠ Only some Click payment variables are set (${clickSet.join(', ')}) — checkout will refuse until all of ${clickVars.join(', ')} are configured.`);
   }
   if (!process.env.OPENAI_API_KEY) {
     warnings.push('ℹ OPENAI_API_KEY not set — transcription relies on the browser (Chrome/Edge only).');
