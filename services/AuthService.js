@@ -41,11 +41,18 @@ class AuthService {
 
       await user.save();
 
-      // Best-effort: a mail hiccup must not stop an account being created —
-      // the student can always ask for a fresh code from the verify screen,
-      // and if SMTP isn't configured at all, examAccess() doesn't enforce
-      // verification in the first place.
-      await this.sendVerificationEmail(user);
+      // Fire-and-forget: a slow or unreachable SMTP server must not stall
+      // sign-up itself. This used to be awaited, which meant a hung mail
+      // connection (nodemailer's own default timeouts run to several
+      // minutes) blocked the whole /auth/signup request -- the "Create
+      // account" button sat on "Working..." until Railway's proxy gave up
+      // and killed the connection, even though the account above was
+      // already created. The student can always ask for a fresh code from
+      // the verify screen, and if SMTP isn't configured at all, examAccess()
+      // doesn't enforce verification in the first place.
+      this.sendVerificationEmail(user).catch(error => {
+        console.error('Background verification email failed:', error.message);
+      });
 
       return {
         id: user._id,

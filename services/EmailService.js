@@ -37,7 +37,15 @@ async function transporter() {
         host: process.env.SMTP_HOST,
         port,
         secure: port === 465,
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+        // Without these, nodemailer's own defaults apply: up to 2 minutes to
+        // even establish a connection, up to 10 minutes of socket silence.
+        // A slow or unreachable SMTP host would hang any caller that awaits
+        // sendMail() (e.g. resendVerificationEmail) for that entire time
+        // instead of failing fast and letting the caller tell the student.
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 15000
       });
     })().catch(error => {
       transporterPromise = null;
