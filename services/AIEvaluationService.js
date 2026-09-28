@@ -219,6 +219,14 @@ HOW TO AWARD A BAND:
   connect, and pronunciation — and you weigh them into the ONE band whose
   description fits the performance best overall. Do not score them separately
   and average.
+- PART 1.2 SPECIFICALLY: weigh fluency and the ability to form sentences
+  naturally above grammar and vocabulary precision. A candidate who speaks
+  naturally and constructs sentences, even with frequent grammar or
+  vocabulary errors, should not be pulled down to a lower band for those
+  errors alone — count grammar or vocabulary against the band only when it
+  is severe enough to actually get in the way of understanding what the
+  candidate means, not merely imperfect. This is the school's own priority
+  for this part; the other three parts are unaffected.
 - Use the whole scale. A performance that matches the top descriptor gets the
   top band; hedging toward the middle for safety is a marking error.
 - A performance that is memorised, largely off-topic, or mostly in another
@@ -680,7 +688,12 @@ ${a.notes ? `Why: ${a.notes}` : ''}`).join('\n')}
       '1.2': 'Part 1.2 — the student sees two pictures and describes them, then answers two ' +
              'short follow-ups. Reward accurate description, comparison and the language of ' +
              'speculation. The transcript is all you have, so judge the description on its own ' +
-             'internal coherence and detail, not on whether it matches an image you cannot see.',
+             'internal coherence and detail, not on whether it matches an image you cannot see. ' +
+             'The school\'s priority for this part is fluency and the ability to form sentences ' +
+             'naturally, not grammatical precision: when scoring the grammar and vocabulary ' +
+             'criteria below, frequent errors are expected and should not pull the score down on ' +
+             'their own — only mark grammar or vocabulary down when the errors are severe enough ' +
+             'to actually obscure the candidate\'s meaning, not merely when they are imperfect.',
       '2': 'Part 2 — one long turn of up to 2 minutes answering three linked questions together. ' +
            'Expect all three to be covered, with extended, connected discourse.',
       '3': 'Part 3 — a 2-minute argued opinion on a statement, with arguments for and against ' +
