@@ -45,6 +45,7 @@
     mockSearch: '',    // mocks screen: search box
     mockStatus: 'all', // mocks screen: status filter
     mockSort: 'recommended',
+    partsMockId: null, // mocks screen: which mock's parts the student is browsing
     loading: false,
     error: '',
     notice: ''
@@ -5410,6 +5411,7 @@
       '3': ['Part 3', 'Munozara: tarafdor va qarshi']
     },
     quarter: '¼ mock',
+    chooseMock: 'Qaysi mockdan mashq qilmoqchisiz?',
     one: '1 mock',
     all: 'Barcha mocklar',
     done: score => `Eng yaxshi: ${score} ball`,
@@ -5453,13 +5455,25 @@
       ${typeof acc.remaining === 'number' ? `<span class="tests-have">${esc(TESTS_UZ.have(acc.credits ?? acc.remaining))}</span>` : ''}
     </section>`;
 
-    const parts = (next.parts || []).length ? next.parts : ['1.1', '1.2', '2', '3'];
+    // Part practice isn't tied to the featured mock: the student can practise
+    // parts from any mock in the list, not just the recommended "next" one.
+    const partsExam = list.find(e => e.id === state.partsMockId) || next;
+    const parts = (partsExam.parts || []).length ? partsExam.parts : ['1.1', '1.2', '2', '3'];
+    const partsPicker = list.length > 1
+      ? `<label class="field" style="margin-bottom:10px">
+          <span class="muted" style="font-size:13px">${TESTS_UZ.chooseMock}</span>
+          <select id="parts-mock-select">
+            ${list.map(e => `<option value="${esc(e.id)}" ${e.id === partsExam.id ? 'selected' : ''}>${esc(e.title)}</option>`).join('')}
+          </select>
+        </label>`
+      : '';
     const partList = `<section class="card list-card">
       <h2>${TESTS_UZ.parts}</h2>
+      ${partsPicker}
       ${parts.map(p => {
         const [name, desc] = TESTS_UZ.partNames[p] || [`Part ${p}`, ''];
         return listRow({
-          attrs: `data-start="${esc(next.id)}" data-mode="practice" data-part="${esc(p)}"`,
+          attrs: `data-start="${esc(partsExam.id)}" data-mode="practice" data-part="${esc(p)}"`,
           badge: esc(p), title: esc(name), sub: esc(desc), end: TESTS_UZ.quarter
         });
       }).join('')}
@@ -6450,6 +6464,9 @@
 
     document.getElementById('mock-sort')?.addEventListener('change', event =>
       setState({ mockSort: event.target.value }));
+
+    document.getElementById('parts-mock-select')?.addEventListener('change', event =>
+      setState({ partsMockId: event.target.value }));
 
     root.querySelectorAll('[data-delete]').forEach(el =>
       el.addEventListener('click', () => setState({ confirmDelete: el.dataset.delete, error: '' })));

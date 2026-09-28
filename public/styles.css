@@ -234,13 +234,14 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 32px 32px 80px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .field label { font-size: 14px; font-weight: 600; color: var(--ink-soft); }
-.field input {
+.field input, .field select {
   padding: 11px 13px;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: #fff;
+  font: inherit;
 }
-.field input:focus { outline: none; border-color: var(--indigo-500); box-shadow: 0 0 0 3px var(--indigo-100); }
+.field input:focus, .field select:focus { outline: none; border-color: var(--indigo-500); box-shadow: 0 0 0 3px var(--indigo-100); }
 .form-card { max-width: 26rem; margin: 40px auto; }
 
 /* ---------- feedback ---------- */
