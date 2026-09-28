@@ -200,7 +200,12 @@ class AuthService {
         user: user.getPublicProfile(),
         accessToken,
         refreshToken,
-        expiresIn: '7d'
+        expiresIn: '7d',
+        // Reuses examAccess()'s own "unverified" check (staff bypass, and
+        // fails open when SMTP isn't configured) rather than re-deriving the
+        // same rule here, so signup/login and starting a mock can never
+        // disagree about who still needs to verify.
+        requiresVerification: user.examAccess().code === 'unverified'
       };
     } catch (error) {
       console.error('Error logging in user:', error);

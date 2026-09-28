@@ -259,6 +259,14 @@
     state.user = data.user;
     store.set('token', data.accessToken);
     store.set('user', JSON.stringify(data.user));
+    // A fresh signup (or a login before ever completing an earlier one)
+    // lands on the verify screen instead of the dashboard -- the server
+    // already worked out whether this account still needs to (staff and
+    // already-verified accounts never get this flag).
+    if (data.requiresVerification) {
+      state.screen = 'verify-email';
+      return render();
+    }
     loadDashboard();
   }
 
@@ -4458,6 +4466,11 @@
     fillAds();
   }
 
+  /** Signed in, but still required to enter the code emailed at sign-up. */
+  const needsVerification = () =>
+    Boolean(state.user) && state.user.role !== 'admin' && state.user.role !== 'teacher' &&
+    state.user.emailVerificationRequired && !state.user.isEmailVerified;
+
   /**
    * May the student navigate away right now?
    *
@@ -4466,10 +4479,16 @@
    * errored, or is waiting to start, there is nothing left to protect and
    * leaving must be possible. Blocking on the whole exam screen instead used to
    * strand a student with no way back whenever an attempt ended badly.
+   *
+   * Also false on the verify-email screen while still unverified — nav
+   * links, the tab bar and the brand logo all route "leaving" through this
+   * one check, so gating it here is what stops any of them from being a
+   * side door past a gate that is otherwise enforced.
    */
   function canLeave() {
-    if (state.screen !== 'exam') return true;
-    return !['prep', 'answer', 'saving'].includes(run.phase);
+    if (state.screen === 'exam') return !['prep', 'answer', 'saving'].includes(run.phase);
+    if (state.screen === 'verify-email') return !needsVerification();
+    return true;
   }
 
   // ------------------------------------------------------------ navigation
@@ -5038,7 +5057,7 @@
         <h2 style="margin-bottom:8px">Verify your email</h2>
         <p class="muted">
           We sent a 6-digit code to <strong>${esc(state.user?.email || '')}</strong>.
-          Enter it below to unlock your free mock.
+          Enter it below to continue.
         </p>
         <form id="verify-form" style="margin-top:18px">
           <div class="field">
@@ -5053,8 +5072,8 @@
         <p class="muted" style="text-align:center;margin-top:16px">
           Didn't get it? <a href="#" data-action="resend-code">Resend code</a>
         </p>
-        <button class="btn btn-ghost btn-block" style="margin-top:8px" data-go="dashboard">
-          Do this later
+        <button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="signout">
+          Sign out — wrong email address?
         </button>
       </div>`;
   }
@@ -6622,6 +6641,16 @@
         const writingId = new URLSearchParams(window.location.search).get('writing');
         if (writingId) {
           openWritingResult(writingId);
+          return;
+        }
+
+        // Reloading (or reopening) before finishing verification must not
+        // slip past it -- the flags saved at sign-in are enough to decide
+        // this without a round trip, since they can only ever go from
+        // "needs verifying" to "verified", never back.
+        if (needsVerification()) {
+          state.screen = 'verify-email';
+          render();
           return;
         }
 
