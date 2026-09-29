@@ -1,0 +1,155 @@
+From 8148e56fa72a22cf4d7173891223d9550920d69d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 19:28:14 +0000
+Subject: [PATCH] Add a per-attempt re-mark button for admins
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The only existing re-mark tool (POST /api/admin/results/remark) re-marks an
+entire account's worth of completed attempts at once — the right tool for
+"re-mark everybody after a scoring change", but overkill and imprecise for
+"did this one code change actually move this one attempt's marks", which is
+what checking a fix in place actually calls for.
+
+- routes/admin.js: POST /api/admin/results/:id/remark re-marks a single
+  attempt (same markAttempt/retranscribeAndMark path as the batch route,
+  same REMARKABLE status guard), awaited directly since one attempt is a
+  short enough wait to hold the request open for.
+- public/app.js: a "Re-mark this attempt" button next to the existing
+  admin-only band-correction panel on the result screen. Reports the
+  before/after score and level so the admin can see at a glance whether
+  anything moved.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01LgKXYQSxMY9AyY5uyuhSbh
+---
+ public/app.js   | 47 +++++++++++++++++++++++++++++++++++++++++++++--
+ routes/admin.js | 32 ++++++++++++++++++++++++++++++++
+ 2 files changed, 77 insertions(+), 2 deletions(-)
+
+diff --git a/public/app.js b/public/app.js
+index c205227..7876551 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -357,6 +357,35 @@
+     }
+   }
+ 
++  /**
++   * Re-run today's marker on THIS attempt only.
++   *
++   * The tool for "did that code change actually move this attempt's marks" —
++   * without spending a whole account's worth of AI calls on the blunter admin
++   * endpoint that re-marks every attempt at once. Nothing is re-transcribed;
++   * the same transcript and recordings go through the current marking code.
++   */
++  async function remarkAttempt() {
++    const before = { score: state.result.overallScore, level: state.result.overallLevel };
++    setState({ loading: true, error: '', notice: '' });
++    try {
++      await api(`/admin/results/${state.result.id}/remark`, { method: 'POST' });
++      // Re-read the result so the panel shows what the marker actually
++      // produced rather than assuming the call succeeded silently.
++      const result = await api(`/exam/results/${state.result.id}`);
++      const changed = before.score !== result.overallScore || before.level !== result.overallLevel;
++      setState({
++        result,
++        loading: false,
++        notice: changed
++          ? CORRECT_UZ.remarkChanged(before.score, before.level, result.overallScore, result.overallLevel)
++          : CORRECT_UZ.remarkSame(result.overallScore, result.overallLevel)
++      });
++    } catch (error) {
++      setState({ loading: false, error: error.message });
++    }
++  }
++
+   async function dismissNotice() {
+     setState({ access: { ...(state.access || {}), message: '' } });
+     try {
+@@ -4292,7 +4321,14 @@
+     note: 'Why (optional — the marker reads this)',
+     real: 'Confirmed by a real certificate',
+     save: 'Save as calibration',
+-    savedAt: when => `Recorded ${when}.`
++    savedAt: when => `Recorded ${when}.`,
++    remarkHeading: 'Check a scoring change',
++    remarkIntro: 'Re-run today\'s marker on THIS attempt only — the transcript and recordings are untouched, only the score is recalculated.',
++    remark: 'Re-mark this attempt',
++    remarking: 'Re-marking…',
++    remarkChanged: (beforeScore, beforeLevel, afterScore, afterLevel) =>
++      `Re-marked — ${beforeScore ?? '—'}/75 (${beforeLevel || '—'}) → ${afterScore ?? '—'}/75 (${afterLevel || '—'}).`,
++    remarkSame: (score, level) => `Re-marked — unchanged (${score ?? '—'}/75, ${level || '—'}).`
+   };
+ 
+   const ACCESS_UZ = {
+@@ -5487,7 +5523,13 @@
+       </label>`).join('');
+ 
+     return `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
+-      <strong style="font-size:14px">${CORRECT_UZ.heading}</strong>
++      <strong style="font-size:14px">${CORRECT_UZ.remarkHeading}</strong>
++      <p class="muted" style="margin-top:4px;font-size:13px">${CORRECT_UZ.remarkIntro}</p>
++      <button class="btn btn-ghost btn-sm" style="margin-top:10px" data-action="remark-attempt" ${state.loading ? 'disabled' : ''}>
++        ${state.loading ? CORRECT_UZ.remarking : CORRECT_UZ.remark}
++      </button>
++
++      <strong style="font-size:14px;display:block;margin-top:24px">${CORRECT_UZ.heading}</strong>
+       <p class="muted" style="margin-top:4px;font-size:13px">${CORRECT_UZ.intro}</p>
+ 
+       <div class="row" style="gap:12px;flex-wrap:wrap;margin-top:12px;align-items:flex-end">
+@@ -5812,6 +5854,7 @@
+       case 'done-submitting': return loadDashboard();
+       case 'notice-seen': return dismissNotice();
+       case 'bands-save': return saveBands();
++      case 'remark-attempt': return remarkAttempt();
+       case 'criteria-open': return setState({ criteriaOpen: true });
+       case 'criteria-close': return setState({ criteriaOpen: false });
+       case 'mic-check': return runMicCheck();
+diff --git a/routes/admin.js b/routes/admin.js
+index b0ff7c4..19b5d63 100644
+--- a/routes/admin.js
++++ b/routes/admin.js
+@@ -943,6 +943,38 @@ router.post('/results/remark', async (req, res, next) => {
+   }
+ });
+ 
++/**
++ * @route   POST /api/admin/results/:id/remark
++ * @desc    Mark ONE attempt again with the current scoring — the tool for
++ *          "did this code change actually move this attempt's marks",
++ *          without spending a whole account's worth of AI calls on the
++ *          batch endpoint above to answer that.
++ *
++ * Awaited directly rather than run in the background like the batch version:
++ * one attempt is one wave of AI calls (a few seconds to well under a minute),
++ * short enough to hold the request open for, and the caller gets the answer
++ * immediately instead of having to re-poll.
++ */
++router.post('/results/:id/remark', async (req, res, next) => {
++  try {
++    const result = await ExamResult.findById(req.params.id).select('status');
++    if (!result) throw new APIError('Attempt not found', 404);
++    if (!REMARKABLE.includes(result.status)) {
++      throw new APIError(
++        `Only a completed or submitted attempt can be re-marked (this one is "${result.status}").`,
++        400
++      );
++    }
++
++    if (req.body?.retranscribe === true) await retranscribeAndMark(req.params.id);
++    else await markAttempt(req.params.id);
++
++    res.json({ success: true, message: 'Re-marked.' });
++  } catch (error) {
++    next(error);
++  }
++});
++
+ /**
+  * Rescuing attempts that were never read.
+  *
+-- 
+2.43.0
+
