@@ -49,6 +49,7 @@
     clickPackages: null, // topup screen: Click package list, once fetched
     clickLive: false,    // topup screen: are CLICK_* credentials configured on the server
     buyingPkg: '',        // topup screen: package key mid-checkout, disables its button
+    cardCopied: false,    // topup screen: briefly true right after "copy card number"
     loading: false,
     error: '',
     notice: ''
@@ -4987,6 +4988,13 @@
     orManual: "Yoki ustoz orqali",
     som: n => `${n.toLocaleString('uz-UZ')} so'm`,
 
+    // Manual card-transfer flow.
+    cardTitle: "Kartaga to'lov",
+    cardSub: "Kerakli summani quyidagi kartaga o'tkazing.",
+    copyCard: "Nusxalash",
+    copied: "Nusxalandi ✓",
+    sendProof: "To'lov skrinshotini va ro'yxatdan o'tgan pochtangizni shu yerga yuboring:",
+
     blockedTitle: 'Ruxsat vaqtincha to\'xtatilgan',
     blockedBody:
       "Ustozingiz hisobingizni vaqtincha to'xtatib qo'ygan. Natijalaringiz saqlanib qoladi — " +
@@ -5035,23 +5043,24 @@
     const access = state.access || {};
     const blocked = Boolean(access.blocked);
     const contact = access.contact || '';
+    const card = access.card || {};
     // Arrived from "Premium bo'ling", not from running out of mocks.
     const forPremium = state.topupReason === 'premium' && !blocked;
     state.topupReason = '';
 
-    const contactBlock = contact
+    const contactLink = contact
       ? `<a class="btn btn-lg" href="${esc(
           contact.startsWith('http') ? contact : `https://t.me/${contact.replace(/^@/, '')}`
         )}" target="_blank" rel="noopener noreferrer">${esc(contact)}</a>`
-      : `<p class="muted">${ACCESS_UZ.noContact}</p>`;
+      : '';
+
+    const packages = Array.isArray(state.clickPackages) ? state.clickPackages : [];
 
     // Click checkout cards. Only shown once the server has real Click
-    // credentials (state.clickLive) — until the merchant application is
-    // approved, this whole block is simply absent and the manual/teacher
-    // flow below is the only way to top up, same as before.
-    const packages = !blocked && state.clickLive && Array.isArray(state.clickPackages)
-      ? state.clickPackages : [];
-    const packagesBlock = packages.length
+    // credentials (state.clickLive) — until then this whole block is simply
+    // absent and the manual card-transfer flow below is the only way to top
+    // up.
+    const clickBlock = !blocked && state.clickLive && packages.length
       ? `<div style="margin-top:18px">
           <h3 style="font-size:15px;margin-bottom:4px">${ACCESS_UZ.onlineTitle}</h3>
           <p class="muted" style="margin-bottom:12px">${ACCESS_UZ.onlineSub}</p>
@@ -5070,6 +5079,39 @@
         </div>`
       : '';
 
+    // Manual card-transfer flow — the primary way to pay right now. Shown
+    // whenever the teacher has set PAYMENT_CARD_NUMBER; a compact price
+    // table so the student knows the exact amount to send, the card itself
+    // with a copy button, then where to send the proof.
+    const cardBlock = !blocked && card.number
+      ? `<div style="margin-top:18px">
+          <h3 style="font-size:15px;margin-bottom:4px">${ACCESS_UZ.cardTitle}</h3>
+          ${packages.length ? `
+            <div class="pkg-table" style="margin:10px 0;border:1px solid var(--line,#e5e7eb);border-radius:10px;overflow:hidden">
+              ${packages.map(pkg => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-top:1px solid var(--line,#e5e7eb);font-size:14px">
+                  <span>${esc(ACCESS_UZ.mocksLabel(pkg.mocks))}${pkg.badge ? ` <span class="chip chip-speaking" style="font-size:11px;padding:1px 8px">${esc(pkg.badge)}</span>` : ''}</span>
+                  <span style="font-weight:700;font-variant-numeric:tabular-nums">${esc(ACCESS_UZ.som(pkg.price))}</span>
+                </div>`).join('')}
+            </div>` : ''}
+          <p class="muted" style="margin-bottom:6px">${ACCESS_UZ.cardSub}</p>
+          <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px">
+            <div>
+              <div style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:0.5px">${esc(card.number)}</div>
+              ${card.holder ? `<div class="muted" style="font-size:13px;margin-top:2px">${esc(card.holder)}</div>` : ''}
+            </div>
+            <button class="btn btn-ghost btn-sm" data-copy-card="${esc(card.number)}">
+              ${state.cardCopied ? esc(ACCESS_UZ.copied) : esc(ACCESS_UZ.copyCard)}
+            </button>
+          </div>
+          <p style="margin-top:14px">${ACCESS_UZ.sendProof} ${contactLink || `<strong>${esc(contact)}</strong>`}</p>
+        </div>`
+      : '';
+
+    // Neither the card nor a Click checkout is configured yet, and there's
+    // no Telegram contact either — nothing to show but "ask your teacher".
+    const nothingConfigured = !blocked && !clickBlock && !cardBlock && !contact;
+
     return `
       <div class="card form-card" style="max-width:560px">
         <h2 style="margin-bottom:8px">${blocked ? ACCESS_UZ.blockedTitle : forPremium ? ACCESS_UZ.premiumTitle : ACCESS_UZ.outTitle}</h2>
@@ -5077,16 +5119,19 @@
         ${blocked ? '' : `<p style="margin-top:10px;font-weight:600">${ACCESS_UZ.packageLine}</p>
           <p class="pr-topup">${CROWN} ${ACCESS_UZ.premiumLine}</p>`}
 
-        ${packagesBlock}
+        ${clickBlock}
+        ${cardBlock}
 
-        <h3 style="font-size:15px;margin-top:22px">${packagesBlock ? ACCESS_UZ.orManual : ACCESS_UZ.how}</h3>
-        <ol style="margin:10px 0 0 18px;line-height:1.7">
-          <li>${ACCESS_UZ.step1}</li>
-          <li>${ACCESS_UZ.step2}</li>
-          <li>${ACCESS_UZ.step3} <strong>${esc(state.user?.email || '')}</strong></li>
-        </ol>
+        ${blocked || cardBlock || nothingConfigured ? '' : `
+          <h3 style="font-size:15px;margin-top:22px">${ACCESS_UZ.how}</h3>
+          <ol style="margin:10px 0 0 18px;line-height:1.7">
+            <li>${ACCESS_UZ.step1}</li>
+            <li>${ACCESS_UZ.step2}</li>
+            <li>${ACCESS_UZ.step3} <strong>${esc(state.user?.email || '')}</strong></li>
+          </ol>
+          <div style="margin-top:20px">${contactLink}</div>`}
 
-        <div style="margin-top:20px">${contactBlock}</div>
+        ${nothingConfigured ? `<p class="muted" style="margin-top:16px">${ACCESS_UZ.noContact}</p>` : ''}
 
         <button class="btn btn-ghost btn-block" style="margin-top:14px" data-go="dashboard">
           ${ACCESS_UZ.later}
@@ -5095,22 +5140,37 @@
   }
 
   /**
-   * Loads the topup screen and, alongside it, the Click package list — kept
+   * Loads the topup screen and, alongside it, the package price list — kept
    * separate from the generic `go()` because this is the one screen with its
-   * own server data to fetch. Silently leaves state.clickLive false on any
-   * failure (offline, or Click not configured yet): the screen still works,
-   * it just shows the manual/teacher flow instead of buy buttons.
+   * own server data to fetch. Silently leaves the list empty on any failure
+   * (offline): the screen still works, it just shows the card/contact
+   * without a price table.
    */
   async function openTopup(patch = {}) {
     go('topup', patch);
     try {
-      const { packages, live } = await api('/payment/click/packages');
+      const { packages, live } = await api('/payment/packages');
       state.clickPackages = packages || [];
       state.clickLive = Boolean(live);
     } catch {
       state.clickLive = false;
     }
     if (state.screen === 'topup') render();
+  }
+
+  /**
+   * Copies the teacher's card number to the clipboard and flashes the
+   * button label to confirm it, the same pattern as a "copy link" button
+   * anywhere else. Falls back silently if the browser denies clipboard
+   * access (e.g. no HTTPS in some embedded contexts) — the number is still
+   * right there to select by hand.
+   */
+  async function copyCardNumber(number) {
+    try {
+      await navigator.clipboard.writeText(number);
+      setState({ cardCopied: true });
+      setTimeout(() => setState({ cardCopied: false }), 1500);
+    } catch { /* clipboard unavailable — the number is still shown as text */ }
   }
 
   /**
@@ -6501,6 +6561,9 @@
 
     root.querySelectorAll('[data-buy-pkg]').forEach(el =>
       el.addEventListener('click', () => buyPackage(el.dataset.buyPkg)));
+
+    root.querySelectorAll('[data-copy-card]').forEach(el =>
+      el.addEventListener('click', () => copyCardNumber(el.dataset.copyCard)));
 
     root.querySelectorAll('[data-tests]').forEach(el =>
       el.addEventListener('click', () => openTests(el.dataset.tests)));

@@ -111,10 +111,13 @@ router.post('/click/checkout', authenticate, async (req, res, next) => {
 });
 
 /**
- * @route   GET /api/payment/click/packages
- * @desc    Public package list, so the frontend never hardcodes prices.
+ * @route   GET /api/payment/packages
+ * @desc    Public package list (mocks + price), so the frontend never
+ *          hardcodes prices. Used for the manual card-transfer price table
+ *          regardless of whether Click is live, and also for the Click "buy
+ *          now" cards once it is.
  */
-router.get('/click/packages', (req, res) => {
+router.get('/packages', (req, res) => {
   res.json({ packages: PACKAGES, live: clickConfigured() });
 });
 

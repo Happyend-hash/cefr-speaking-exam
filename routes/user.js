@@ -143,6 +143,14 @@ router.get('/profile', async (req, res, next) => {
           // environment, so the contact can change without a deploy of the app
           // code and without the address being baked into the page.
           contact: process.env.TELEGRAM_CONTACT || '',
+          // The teacher's card for manual transfer — same reasoning as
+          // contact above: set once in the environment, never in the
+          // committed source, so it can change without a deploy and never
+          // ends up in git history.
+          card: {
+            number: process.env.PAYMENT_CARD_NUMBER || '',
+            holder: process.env.PAYMENT_CARD_HOLDER || ''
+          },
           // A one-off note from the teacher — normally the confirmation that a
           // payment landed. Cleared by the student dismissing it.
           message: user.access?.message || ''
