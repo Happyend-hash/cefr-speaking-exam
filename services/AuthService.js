@@ -289,6 +289,27 @@ class AuthService {
   }
 
   /**
+   * Issue and email a new code on log-in, unless the student already holds a
+   * code with at least 5 minutes left, or one was sent within the resend
+   * cool-down (logging in twice in a row sends one email, not two).
+   */
+  async sendFreshCodeIfNeeded(user) {
+    const now = Date.now();
+    const stillValid = user.emailVerificationToken &&
+      user.emailVerificationExpires &&
+      user.emailVerificationExpires.getTime() - now > 5 * 60 * 1000;
+    const justSent = user.emailVerificationLastSentAt &&
+      now - user.emailVerificationLastSentAt.getTime() < RESEND_COOLDOWN_MS;
+    if (stillValid || justSent) return { sent: false, reason: 'current code still valid' };
+
+    user.emailVerificationToken = this.generateVerificationCode();
+    user.emailVerificationExpires = new Date(now + VERIFICATION_CODE_TTL_MS);
+    user.emailVerificationLastSentAt = new Date(now);
+    await user.save();
+    return this.sendVerificationEmail(user);
+  }
+
+  /**
    * Login user and generate tokens
    */
   async login(email, password) {
@@ -310,7 +331,19 @@ class AuthService {
         throw new APIError('Invalid email or password', 401);
       }
 
-      return await this.startSession(user);
+      const session = await this.startSession(user);
+
+      // The code from signup lasts 30 minutes. A student who comes back later
+      // lands on the code screen with nothing valid in their inbox, so log-in
+      // sends a fresh one — unless the current code is still good. In the
+      // background, like signup: a slow mail provider must not slow log-in.
+      if (session.requiresVerification) {
+        this.sendFreshCodeIfNeeded(user).catch(error => {
+          console.error('Background verification email on login failed:', error.message);
+        });
+      }
+
+      return session;
     } catch (error) {
       console.error('Error logging in user:', error);
       throw error;

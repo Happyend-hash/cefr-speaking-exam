@@ -197,3 +197,46 @@ test('resendVerificationEmail: an already-verified account is told so and nothin
   assert.equal(result.sent, false);
   assert.match(result.message, /already verified/i);
 });
+
+// Log-in sends a fresh code when the student has none still usable — the
+// code from signup is long expired by the time most students come back.
+
+test('sendFreshCodeIfNeeded: an expired code is replaced and saved on log-in', async () => {
+  let saved = false;
+  const fakeUser = {
+    emailVerificationToken: 'old-token',
+    emailVerificationExpires: new Date(Date.now() - 60_000),
+    emailVerificationLastSentAt: new Date(Date.now() - 31 * 60_000),
+    save: async () => { saved = true; }
+  };
+
+  await withMailConfigured(false, () => AuthService.sendFreshCodeIfNeeded(fakeUser));
+  assert.equal(saved, true);
+  assert.match(fakeUser.emailVerificationToken, /^\d{6}$/);
+  assert.ok(fakeUser.emailVerificationExpires > new Date());
+});
+
+test('sendFreshCodeIfNeeded: a code with plenty of time left is kept (no second email)', async () => {
+  const fakeUser = {
+    emailVerificationToken: '123456',
+    emailVerificationExpires: new Date(Date.now() + 20 * 60_000),
+    emailVerificationLastSentAt: new Date(Date.now() - 10 * 60_000),
+    save: async () => { throw new Error('must not save'); }
+  };
+
+  const result = await AuthService.sendFreshCodeIfNeeded(fakeUser);
+  assert.equal(result.sent, false);
+  assert.equal(fakeUser.emailVerificationToken, '123456');
+});
+
+test('sendFreshCodeIfNeeded: logging in twice within the cooldown sends only one code', async () => {
+  const fakeUser = {
+    emailVerificationToken: undefined,
+    emailVerificationExpires: undefined,
+    emailVerificationLastSentAt: new Date(Date.now() - 10_000),
+    save: async () => { throw new Error('must not save'); }
+  };
+
+  const result = await AuthService.sendFreshCodeIfNeeded(fakeUser);
+  assert.equal(result.sent, false);
+});
