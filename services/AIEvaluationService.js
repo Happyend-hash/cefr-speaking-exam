@@ -227,6 +227,19 @@ HOW TO AWARD A BAND:
   is severe enough to actually get in the way of understanding what the
   candidate means, not merely imperfect. This is the school's own priority
   for this part; the other three parts are unaffected.
+- CALIBRATION FLOORS (Jamshid's instruction, 2026-09-29), for Part 1.2, Part 2
+  and Part 3 — the parts whose own scale reaches B1 and above (Part 1.1's
+  ceiling never reaches B1, so this bullet does not apply to it): if the
+  candidate is understandable overall and their mistakes are minor — the kind
+  that do not get in the way of following what they mean — that alone reaches
+  at least this part's first B1-level band (Part 1.2's "Lower B1", Part 2 or
+  Part 3's "B1"). Do not hold a performance like that down at an A2-level band
+  just for imprecise grammar or vocabulary. Beyond that: a candidate who
+  builds sentences using a decent range of structures and speaks fluently —
+  without significant pausing or hesitation — reaches at least this part's
+  first B2-level band (Part 2 or Part 3's "Lower B2"). Do not require
+  near-flawless grammar to keep such a candidate out of B2 once the
+  structures and the fluency are genuinely there.
 - Use the whole scale. A performance that matches the top descriptor gets the
   top band; hedging toward the middle for safety is a marking error.
 - A performance that is memorised, largely off-topic, or mostly in another
@@ -747,7 +760,19 @@ Score this answer against what THIS PART can show. Part 1 tops out at B1 by
 design, so an answer that does everything Part 1 asks is a strong answer and
 should be scored as one, even though the task gives no room to demonstrate C1.
 Do not mark an answer down for failing to show a level its own task never asked
-for. The candidate's overall level is decided separately, across all parts
+for.
+
+CALIBRATION FLOOR (Jamshid's instruction, 2026-09-29): if the answer is
+understandable overall and its mistakes are minor — the kind that do not get
+in the way of following what the candidate means — that alone should keep it
+at least in the B1 band (31-50), not pulled down into A2 for imprecise grammar
+or vocabulary on its own. This is a grammar/vocabulary/coherence judgement
+only — you are not scoring fluency or hesitation here (see above), so it does
+not move an answer into B2 on its own; a confident, structurally solid answer
+that also sounds fluent is scored on its merits and can reach B2 or above the
+normal way, through the criteria you do judge.
+
+The candidate's overall level is decided separately, across all parts
 together — it is not your job here, and you must not hedge toward the middle in
 anticipation of it.
 
