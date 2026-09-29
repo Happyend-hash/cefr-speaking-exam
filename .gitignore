@@ -44,3 +44,11 @@ coverage/
 
 # Production
 .env.production
+
+# Local-only helper and scratch (bundles, patches, screenshots) — these were
+# accidentally committed once already (see "Update", 2026-09-29); this stops
+# push-update.bat's `git add -A` from picking them up again. Not removed from
+# history here since that needs a force-push and isn't worth disrupting the
+# repo for.
+Claude outputs/
+push-update.bat
