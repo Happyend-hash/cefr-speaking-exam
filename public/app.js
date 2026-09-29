@@ -4971,7 +4971,6 @@
       "Har bir mock yozuvni matnga o'girish va tekshirish uchun haqiqiy pul talab qiladi, " +
       "shuning uchun birinchi bepul mockdan keyin ustoz ruxsat beradi.",
 
-    packageLine: "Bitta paket: 4 ta speaking va 3 ta writing mock.",
     premiumLine: "Har bir paket bilan 30 kun Premium: toj belgisi, GIF avatar, oltin ism va xonalarda ustunlik.",
     premiumTitle: "Premium olish",
     premiumBody: "Premium paket bilan birga beriladi. To'lovdan keyin ustoz paketni qo'shadi va Premium darhol yoqiladi.",
@@ -5116,8 +5115,7 @@
       <div class="card form-card" style="max-width:560px">
         <h2 style="margin-bottom:8px">${blocked ? ACCESS_UZ.blockedTitle : forPremium ? ACCESS_UZ.premiumTitle : ACCESS_UZ.outTitle}</h2>
         <p class="muted">${blocked ? ACCESS_UZ.blockedBody : forPremium ? ACCESS_UZ.premiumBody : ACCESS_UZ.outBody}</p>
-        ${blocked ? '' : `<p style="margin-top:10px;font-weight:600">${ACCESS_UZ.packageLine}</p>
-          <p class="pr-topup">${CROWN} ${ACCESS_UZ.premiumLine}</p>`}
+        ${blocked ? '' : `<p class="pr-topup" style="margin-top:10px">${CROWN} ${ACCESS_UZ.premiumLine}</p>`}
 
         ${clickBlock}
         ${cardBlock}
@@ -5425,7 +5423,7 @@
     balance: 'Balans',
     speaking: 'Speaking',
     writing: 'Writing',
-    buy: (sp, wr) => `Paket olish · ${sp} speaking + ${wr} writing`,
+    buy: 'Paket olish',
     results: 'Natijalarim',
     resultsSub: n => (n ? `${n} ta urinish` : "Hali natija yo'q"),
     writingResults: 'Writing natijalari',
@@ -5459,7 +5457,7 @@
             <div class="prof-bal is-indigo"><span>${PROF_UZ.speaking}</span><strong>${esc(String(acc.credits ?? acc.remaining))}</strong></div>
             <div class="prof-bal is-green"><span>${PROF_UZ.writing}</span><strong>${esc(String(acc.writing?.credits ?? 0))}</strong></div>
           </div>
-          <button class="btn btn-gold btn-block" data-go="topup">${esc(PROF_UZ.buy(4, 3))}</button>
+          <button class="btn btn-gold btn-block" data-go="topup">${esc(PROF_UZ.buy)}</button>
         </section>`
       : '';
 

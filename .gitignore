@@ -52,3 +52,7 @@ coverage/
 # repo for.
 Claude outputs/
 push-update.bat
+
+# Scratch bundles/patches from Claude sessions, wherever they land
+*.bundle
+*.patch
