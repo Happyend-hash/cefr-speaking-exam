@@ -337,6 +337,12 @@ userSchema.methods.getPublicProfile = function () {
   delete obj.emailVerificationLastSentAt;
   delete obj.emailVerificationAttempts;
   delete obj.loginHistory;
+  // What the page reads to decide on the code screen: required RIGHT NOW,
+  // not "was required when the account was made". Same rule as the
+  // examAccess() gate — only while email can actually be sent — so turning
+  // email off really does let everyone in, instead of the page sending them
+  // back to a code screen whose code can never arrive.
+  obj.emailVerificationRequired = Boolean(this.emailVerificationRequired && emailConfigured());
   return obj;
 };
 

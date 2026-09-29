@@ -309,6 +309,10 @@
       // Premium and the picture come with the profile: the avatar in the
       // top bar and the Profil tab both use them.
       if (profile?.premium) pr.state = profile.premium;
+      // Keep the saved copy current too, so the next reload starts from what
+      // the server says now (e.g. verification switched off) and not from
+      // whatever was true at sign-in.
+      if (profile?.user) store.set('user', JSON.stringify(profile.user));
       setState({
         exams,
         history,
@@ -6859,6 +6863,28 @@
     }
   });
 
+  /**
+   * The saved account says "verify first" — confirm with the server before
+   * believing it, and keep whatever it answers as the new saved copy.
+   * Offline, the saved flags stand, as before.
+   */
+  async function recheckVerification() {
+    try {
+      const profile = await api('/user/profile');
+      if (profile?.user) {
+        state.user = profile.user;
+        store.set('user', JSON.stringify(profile.user));
+      }
+    } catch { /* keep the saved flags */ }
+
+    if (needsVerification()) {
+      state.screen = 'verify-email';
+      render();
+    } else {
+      loadDashboard();
+    }
+  }
+
   (function boot() {
     const token = store.get('token');
     const user = store.get('user');
@@ -6894,12 +6920,11 @@
         }
 
         // Reloading (or reopening) before finishing verification must not
-        // slip past it -- the flags saved at sign-in are enough to decide
-        // this without a round trip, since they can only ever go from
-        // "needs verifying" to "verified", never back.
+        // slip past it. But the flags saved at sign-in are only a snapshot:
+        // the server stops requiring verification while email is switched
+        // off, so ask it before putting the student on the code screen.
         if (needsVerification()) {
-          state.screen = 'verify-email';
-          render();
+          recheckVerification();
           return;
         }
 

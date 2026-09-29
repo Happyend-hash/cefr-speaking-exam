@@ -240,3 +240,17 @@ test('sendFreshCodeIfNeeded: logging in twice within the cooldown sends only one
   const result = await AuthService.sendFreshCodeIfNeeded(fakeUser);
   assert.equal(result.sent, false);
 });
+
+// The page decides on the code screen from getPublicProfile(), so it must say
+// "required" only while email can actually be sent — otherwise switching
+// email off lets students in at log-in and then sends them back on reload.
+
+test('getPublicProfile: emailVerificationRequired is true only while mail is configured', () => {
+  const student = baseStudent({ emailVerificationRequired: true, isEmailVerified: false });
+  withMailConfigured(true, () => {
+    assert.equal(student.getPublicProfile().emailVerificationRequired, true);
+  });
+  withMailConfigured(false, () => {
+    assert.equal(student.getPublicProfile().emailVerificationRequired, false);
+  });
+});
