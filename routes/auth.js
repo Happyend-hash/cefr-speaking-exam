@@ -62,14 +62,14 @@ router.post('/signup', async (req, res, next) => {
       throw new APIError('Password must be at least 8 characters', 400);
     }
 
-    await AuthService.register({
+    // Also finishes an earlier sign-up that never entered its code, rather
+    // than refusing it as "already exists" — see AuthService.signup.
+    const result = await AuthService.signup({
       email,
       firstName,
       lastName: lastName || firstName,
       password
     });
-
-    const result = await AuthService.login(email, password);
 
     res.status(201).json({
       success: true,
@@ -99,6 +99,31 @@ router.post('/login', async (req, res, next) => {
     res.json({
       success: true,
       message: 'Login successful',
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/auth/login-with-code
+ * @desc    Sign in with the 6-digit code emailed at sign-up, verifying the
+ *          account. For a student who signs up again before finishing, with
+ *          a different password (or none they remember): the code is how
+ *          they prove the address is theirs. `newPassword` is optional.
+ * @access  Public
+ */
+router.post('/login-with-code', async (req, res, next) => {
+  try {
+    const { email, code, newPassword } = req.body;
+    if (!email || !code) throw new APIError('Enter the code from your email', 400);
+
+    const result = await AuthService.loginWithCode(email, code, newPassword);
+
+    res.json({
+      success: true,
+      message: 'Email verified',
       data: result
     });
   } catch (error) {

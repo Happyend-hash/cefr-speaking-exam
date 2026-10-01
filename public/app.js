@@ -4621,6 +4621,7 @@
       briefing: briefingScreen,
       topup: topupScreen,
       'verify-email': verifyEmailScreen,
+      'code-login': codeLoginScreen,
       exam: examScreen,
       submitted: submittedScreen,
       result: resultScreen,
@@ -4673,7 +4674,8 @@
           </div>` : ''}
           <div class="field">
             <label for="email">Email</label>
-            <input id="email" name="email" type="email" autocomplete="email" required />
+            <input id="email" name="email" type="email" autocomplete="email" required
+                   value="${esc(state.prefillEmail || '')}" />
           </div>
           <div class="field">
             <label for="password">Password</label>
@@ -5212,6 +5214,35 @@
         </p>
         <button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="signout">
           Sign out — wrong email address?
+        </button>
+      </div>`;
+  }
+
+  /** Not signed in yet: the emailed code is what signs them in. */
+  function codeLoginScreen() {
+    if (!state.pendingSignup) return authScreen('signup');
+    return `
+      <div class="card form-card">
+        <h2 style="margin-bottom:8px">Enter your code</h2>
+        <p class="muted">
+          We sent a 6-digit code to <strong>${esc(state.pendingSignup.email)}</strong>.
+          Enter it below to finish signing up.
+        </p>
+        <form id="code-login-form" style="margin-top:18px">
+          <div class="field">
+            <label for="code-login-code">Verification code</label>
+            <input id="code-login-code" name="code" inputmode="numeric" autocomplete="one-time-code"
+                   maxlength="6" placeholder="000000" required autofocus />
+          </div>
+          <button class="btn btn-block" type="submit" ${state.loading ? 'disabled' : ''}>
+            ${state.loading ? 'Checking…' : 'Continue'}
+          </button>
+        </form>
+        <p class="muted" style="text-align:center;margin-top:16px">
+          Didn't get it? <a href="#" data-action="resend-signup-code">Resend code</a>
+        </p>
+        <button class="btn btn-ghost btn-block" style="margin-top:8px" data-go="signup">
+          Back — wrong email address?
         </button>
       </div>`;
   }
@@ -6653,6 +6684,7 @@
 
     document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit);
     document.getElementById('verify-form')?.addEventListener('submit', handleVerifyCodeSubmit);
+    document.getElementById('code-login-form')?.addEventListener('submit', handleCodeLoginSubmit);
 
     wireWriting();
     wireLeaderboard();
@@ -6666,6 +6698,7 @@
     switch (action) {
       case 'signout': return signOut();
       case 'resend-code': return resendVerificationCode();
+      case 'resend-signup-code': return resendSignupCode();
       case 'done-submitting': return loadDashboard();
       case 'notice-seen': return dismissNotice();
       case 'bands-save': return saveBands();
@@ -6728,6 +6761,55 @@
       state.loading = false;
       signIn(data);
     } catch (error) {
+      // Signed up before but never entered the emailed code, and typed a
+      // different password this time: the code signs them in instead. The
+      // form is kept in memory only, so the password they just chose can be
+      // set once the code proves the address is theirs.
+      if (isSignup && error.code === 'verify_by_code') {
+        state.loading = false;
+        return go('code-login', { pendingSignup: payload, notice: error.message });
+      }
+      if (isSignup && error.code === 'account_exists') {
+        state.loading = false;
+        return go('login', { prefillEmail: payload.email, notice: error.message });
+      }
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  async function handleCodeLoginSubmit(event) {
+    event.preventDefault();
+    const pending = state.pendingSignup;
+    if (!pending) return go('signup');
+    const code = event.target.code.value.trim();
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const data = await api('/auth/login-with-code', {
+        method: 'POST',
+        body: { email: pending.email, code, newPassword: pending.password }
+      });
+      state.loading = false;
+      state.pendingSignup = null;
+      signIn(data);
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  /** Signing up again is what (re)sends the code for an unfinished sign-up. */
+  async function resendSignupCode() {
+    const pending = state.pendingSignup;
+    if (!pending) return go('signup');
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const data = await api('/auth/signup', { method: 'POST', body: pending });
+      state.loading = false;
+      state.pendingSignup = null;
+      signIn(data);
+    } catch (error) {
+      if (error.code === 'verify_by_code') {
+        return setState({ loading: false, notice: 'If a minute has passed since the last one, a code is on its way — check your inbox and spam folder.' });
+      }
       setState({ loading: false, error: error.message });
     }
   }

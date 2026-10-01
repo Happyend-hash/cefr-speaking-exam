@@ -104,6 +104,9 @@ const userSchema = new mongoose.Schema(
     // Throttles "resend the code" so a student mashing the button can't spam
     // the mail server with one account.
     emailVerificationLastSentAt: Date,
+    // Wrong guesses at the current code when signing in by code; the code is
+    // burned at the limit (AuthService.loginWithCode).
+    emailVerificationAttempts: { type: Number, default: 0 },
 
     // Whether THIS account is actually required to verify before spending a
     // mock. Deliberately separate from isEmailVerified, and deliberately
@@ -332,6 +335,7 @@ userSchema.methods.getPublicProfile = function () {
   delete obj.emailVerificationToken;
   delete obj.emailVerificationExpires;
   delete obj.emailVerificationLastSentAt;
+  delete obj.emailVerificationAttempts;
   delete obj.loginHistory;
   return obj;
 };

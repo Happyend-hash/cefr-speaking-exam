@@ -3,10 +3,14 @@ import crypto from 'crypto';
 import User from '../models/User.js';
 import { v4 as uuidv4 } from 'uuid';
 import { APIError } from '../middleware/errorHandler.js';
-import { sendMail } from './EmailService.js';
+import { sendMail, emailConfigured } from './EmailService.js';
 
 const VERIFICATION_CODE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resend requests
+// Wrong guesses allowed at signing in by code before that code is burned.
+// The sign-in-by-code endpoint is public, so this — not the per-address rate
+// limit alone — is what stops a 6-digit code being guessed.
+const MAX_CODE_ATTEMPTS = 5;
 
 /**
  * Authentication Service - Handles user registration, login, and token management
@@ -66,6 +70,128 @@ class AuthService {
       console.error('Error registering user:', error);
       throw error;
     }
+  }
+
+  /**
+   * Sign up, or pick up a sign-up that was never finished.
+   *
+   * Signing up with an email that already had an account used to be a flat
+   * 409, which stranded every student who had signed up once but never
+   * entered their emailed code — they closed the tab, pressed "Sign out —
+   * wrong email address?", or retried after a slow first attempt. Such an
+   * account has never proven who owns it, so signing up again is treated as
+   * finishing it: the right password signs straight in (to the code screen);
+   * any other password gets the code instead, which signs in by itself (see
+   * loginWithCode). Accounts that are verified, or predate verification,
+   * still get the 409.
+   */
+  async signup(userData) {
+    const { email, password } = userData;
+
+    const existing = await User.findOne({ email }).select('+password');
+    if (!existing) {
+      await this.register(userData);
+      return this.login(email, password);
+    }
+
+    if (!this.isPendingVerification(existing) || existing.status === 'suspended') {
+      throw new APIError('An account with this email already exists — sign in instead.', 409, 'account_exists');
+    }
+
+    if (await existing.comparePassword(password)) {
+      await this.refreshVerificationCode(existing);
+      return this.login(email, password);
+    }
+
+    // Without mail there is no code to enter; pointing at one would be a
+    // dead end. (examAccess() doesn't require verification then anyway.)
+    if (!emailConfigured()) {
+      throw new APIError('An account with this email already exists — sign in instead.', 409, 'account_exists');
+    }
+
+    await this.refreshVerificationCode(existing);
+    throw new APIError(
+      'You already started signing up with this email. Enter the 6-digit code we sent to your email to finish.',
+      409,
+      'verify_by_code'
+    );
+  }
+
+  /** Signed up after verification shipped, and never entered the code. */
+  isPendingVerification(user) {
+    return Boolean(user.emailVerificationRequired && !user.isEmailVerified);
+  }
+
+  /**
+   * Make sure the student has a live code in their inbox. A code that is
+   * still valid is re-sent as it is rather than replaced, so whichever of
+   * their emails they open works. Re-sends respect the resend cooldown, and
+   * go out in the background for the same reason as in register().
+   */
+  async refreshVerificationCode(user) {
+    const expired = !user.emailVerificationToken ||
+      !user.emailVerificationExpires || user.emailVerificationExpires < new Date();
+    const coolingDown = user.emailVerificationLastSentAt &&
+      Date.now() - user.emailVerificationLastSentAt.getTime() < RESEND_COOLDOWN_MS;
+
+    if (!expired && coolingDown) return;
+
+    if (expired) {
+      user.emailVerificationToken = this.generateVerificationCode();
+      user.emailVerificationExpires = new Date(Date.now() + VERIFICATION_CODE_TTL_MS);
+      user.emailVerificationAttempts = 0;
+    }
+    user.emailVerificationLastSentAt = new Date();
+    await user.save();
+
+    this.sendVerificationEmail(user).catch(error => {
+      console.error('Background verification email failed:', error.message);
+    });
+  }
+
+  /**
+   * Sign in with the code emailed at sign-up instead of a password, which
+   * also verifies the account. Only for accounts still waiting on that code.
+   * The code proves the student owns the address, so a new password sent
+   * along with it (the one they just chose on the sign-up form) replaces the
+   * old one, as a password reset would.
+   */
+  async loginWithCode(email, code, newPassword) {
+    if (newPassword && String(newPassword).length < 8) {
+      throw new APIError('Password must be at least 8 characters', 400);
+    }
+
+    const user = await User.findOne({ email: String(email ?? '').trim() }).select('+password');
+    // The same answer as a wrong code, so this can't be used to find out
+    // which addresses have accounts.
+    if (!user || !this.isPendingVerification(user) || user.status === 'suspended') {
+      throw new APIError('That code is not correct.', 400);
+    }
+
+    if (!user.emailVerificationToken || !user.emailVerificationExpires || user.emailVerificationExpires < new Date()) {
+      throw new APIError('This code has expired — request a new one.', 400);
+    }
+
+    if (String(code ?? '').trim() !== user.emailVerificationToken) {
+      user.emailVerificationAttempts = (user.emailVerificationAttempts || 0) + 1;
+      if (user.emailVerificationAttempts >= MAX_CODE_ATTEMPTS) {
+        user.emailVerificationToken = undefined;
+        user.emailVerificationExpires = undefined;
+        await user.save();
+        throw new APIError('Too many wrong codes — request a new one.', 400);
+      }
+      await user.save();
+      throw new APIError('That code is not correct.', 400);
+    }
+
+    user.isEmailVerified = true;
+    user.status = 'active';
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    user.emailVerificationAttempts = 0;
+    if (newPassword) user.password = newPassword;
+
+    return this.startSession(user);
   }
 
   /**
@@ -184,33 +310,39 @@ class AuthService {
         throw new APIError('Invalid email or password', 401);
       }
 
-      // Generate tokens
-      const accessToken = this.generateAccessToken(user);
-      const refreshToken = this.generateRefreshToken(user);
-
-      // Update last login
-      user.lastLogin = new Date();
-      user.loginHistory.push({
-        timestamp: new Date(),
-        success: true
-      });
-      await user.save();
-
-      return {
-        user: user.getPublicProfile(),
-        accessToken,
-        refreshToken,
-        expiresIn: '7d',
-        // Reuses examAccess()'s own "unverified" check (staff bypass, and
-        // fails open when SMTP isn't configured) rather than re-deriving the
-        // same rule here, so signup/login and starting a mock can never
-        // disagree about who still needs to verify.
-        requiresVerification: user.examAccess().code === 'unverified'
-      };
+      return await this.startSession(user);
     } catch (error) {
       console.error('Error logging in user:', error);
       throw error;
     }
+  }
+
+  /**
+   * Issue tokens for a user who has just proven who they are (password or
+   * emailed code), record the sign-in, and save any pending changes.
+   */
+  async startSession(user) {
+    const accessToken = this.generateAccessToken(user);
+    const refreshToken = this.generateRefreshToken(user);
+
+    user.lastLogin = new Date();
+    user.loginHistory.push({
+      timestamp: new Date(),
+      success: true
+    });
+    await user.save();
+
+    return {
+      user: user.getPublicProfile(),
+      accessToken,
+      refreshToken,
+      expiresIn: '7d',
+      // Reuses examAccess()'s own "unverified" check (staff bypass, and
+      // fails open when SMTP isn't configured) rather than re-deriving the
+      // same rule here, so signup/login and starting a mock can never
+      // disagree about who still needs to verify.
+      requiresVerification: user.examAccess().code === 'unverified'
+    };
   }
 
   /**
