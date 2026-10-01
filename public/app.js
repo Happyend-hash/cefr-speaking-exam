@@ -6424,6 +6424,12 @@
         <div style="margin-top:12px">
           <span class="badge ${r.isPassed ? 'badge-pass' : 'badge-fail'}">${r.isPassed ? 'Passed' : 'Not yet passed'}</span>
         </div>
+        ${r.markingMethod === 'average-fallback'
+          // The whole-performance pass failed and this is the average of the
+          // answers instead — usually lower. Say so, so nobody takes it as final.
+          ? `<p class="muted" style="margin-top:12px;font-size:13px">Provisional score: the full marking could not finish,
+               so this is an estimate from your individual answers. Your teacher can re-mark it.</p>`
+          : ''}
       </div>
 
       ${criteriaCard()}

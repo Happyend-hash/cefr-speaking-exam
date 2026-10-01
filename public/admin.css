@@ -22,6 +22,7 @@
 .tag-draft { background: #f3f4f6; color: var(--ink-faint); }
 .tag-live { background: var(--green-bg); color: var(--green); }
 .tag-writing { background: #fef3c7; color: #92400e; }
+.tag-warn { background: #fee4e2; color: #b42318; }
 
 .q-item {
   border: 1px solid var(--line);

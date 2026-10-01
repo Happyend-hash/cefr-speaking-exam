@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // The bands live in one place so the score always means the same thing.
-import { CEFR_BANDS, levelForScore, MAX_SCORE } from '../models/ExamResult.js';
+import { CEFR_BANDS, levelForScore, MAX_SCORE, BELOW_B1 } from '../models/ExamResult.js';
 import { SPEAKING_PROMPT_BLOCK, SPEAKING_PART_KEYS } from '../content/speakingRubric.js';
 import { SPEAKING_PART_MAX } from './ScoreConversion.js';
 import { scoreSpeaking } from './SpeakingScoring.js';
@@ -15,6 +15,19 @@ const OVERALL_MIN_TOKENS = 16000;
 // callClaudeAPI). Kept within what current models accept on a
 // non-streaming request.
 const MAX_TOKENS_CEILING = 32000;
+
+// The agency's 0-75 bands, written out for the per-answer prompt from the one
+// table in models/ExamResult.js, so the prompt can never drift from the
+// boundaries the score is read against.
+const bandMin = level => CEFR_BANDS.find(b => b.level === level).min;
+const B1_FLOOR = bandMin('B1');
+const B2_FLOOR = bandMin('B2');
+const OFFICIAL_SCALE = CEFR_BANDS
+  .map((band, i) => {
+    const top = i === 0 ? MAX_SCORE : CEFR_BANDS[i - 1].min - 1;
+    return `- ${band.min}-${top}  ${band.level === BELOW_B1 ? 'below B1' : band.level}`;
+  })
+  .join('     ');
 
 /**
  * AI Evaluation Service - Integrates with Claude Opus for CEFR assessment
@@ -102,7 +115,7 @@ class AIEvaluationService {
           overallFeedback: 'No response was submitted for evaluation.',
           strengths: [],
           areasForImprovement: [],
-          suggestedLevel: 'A1'
+          suggestedLevel: BELOW_B1
         };
       }
 
@@ -123,13 +136,35 @@ class AIEvaluationService {
           );
 
       const response = await this.callClaudeAPI(prompt);
-      const evaluation = this.parseEvaluation(response);
-
-      return evaluation;
+      return this.onOfficialScale(this.parseEvaluation(response));
     } catch (error) {
       console.error('Error in evaluateTask:', error);
       throw new Error(`AI Evaluation failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Hold a per-answer reply to the agency's 0-75 scale.
+   *
+   * These scores are what the backup mark averages when the whole-performance
+   * pass fails, so they must mean what the agency's table means. A score past
+   * 75 would push an average past the scale's own ceiling, and the model's
+   * "suggestedLevel" is not trusted for the same reason the overall level is
+   * not: the level comes from the score by the published table, never from the
+   * model's own idea of where the boundaries are.
+   */
+  onOfficialScale(evaluation) {
+    const clamp = value => Math.max(0, Math.min(MAX_SCORE, Math.round(value)));
+    const score = clamp(evaluation.score);
+
+    const criteria = {};
+    for (const [name, criterion] of Object.entries(evaluation.criteria || {})) {
+      criteria[name] = criterion && typeof criterion.score === 'number' && !Number.isNaN(criterion.score)
+        ? { ...criterion, score: clamp(criterion.score) }
+        : criterion;
+    }
+
+    return { ...evaluation, score, criteria, suggestedLevel: levelForScore(score) };
   }
 
   /**
@@ -765,12 +800,14 @@ pronunciation, accent, intonation, pace or hesitation anywhere. Judge what the
 words show: grammar, vocabulary, coherence, and whether the task was done.
 
 HOW TO ARRIVE AT THE SCORE:
-Decide the band first, then the number inside it. Ask "is this A2, B1, B2 or C1
-for this part?" and only then place it within that band. Choosing a band is a
-judgement you can make reliably; choosing between 58 and 64 in the abstract is
-not, and starting from the number is how marking drifts to the middle.
+Decide the band first, then the number inside it. Ask "is this below B1, B1,
+B2 or C1 for this part?" and only then place it within that band. Choosing a
+band is a judgement you can make reliably; choosing between 58 and 64 in the
+abstract is not, and starting from the number is how marking drifts to the
+middle.
 
-- 65-75  C1     - 51-64  B2     - 31-50  B1     - 16-30  A2     - 0-15  A1
+${OFFICIAL_SCALE}
+There is no A2 or A1 in this exam: anything under ${B1_FLOOR} is simply below B1.
 
 Score this answer against what THIS PART can show. Part 1 tops out at B1 by
 design, so an answer that does everything Part 1 asks is a strong answer and
@@ -781,8 +818,8 @@ for.
 CALIBRATION FLOOR (Jamshid's instruction, 2026-09-29): if the answer is
 understandable overall and its mistakes are minor — the kind that do not get
 in the way of following what the candidate means — that alone should keep it
-at least in the B1 band (31-50), not pulled down into A2 for imprecise grammar
-or vocabulary on its own. This is a grammar/vocabulary/coherence judgement
+at least in the B1 band (${B1_FLOOR}-${B2_FLOOR - 1}), not pulled down below B1 for
+imprecise grammar or vocabulary on its own. This is a grammar/vocabulary/coherence judgement
 only — you are not scoring fluency or hesitation here (see above), so it does
 not move an answer into B2 on its own; a confident, structurally solid answer
 that also sounds fluent is scored on its merits and can reach B2 or above the
@@ -801,7 +838,7 @@ REPLY WITH THIS JSON AND NOTHING ELSE:
     "vocabulary": { "score": (0-75), "feedback": "one sentence, at most 20 words" },
     "coherence":  { "score": (0-75), "feedback": "one sentence, at most 20 words" }
   },
-  "suggestedLevel": "A1|A2|B1|B2|C1"
+  "suggestedLevel": "below B1|B1|B2|C1"
 }
 
 Keep each comment to one short sentence, quoting the candidate's own words where
@@ -1055,7 +1092,7 @@ assuming them.
 Two things stay in English:
 - Any words you quote from the student's answer. Quote them exactly as spoken,
   then explain in ${named} what was wrong and give the corrected English.
-- "suggestedLevel", which is a CEFR code (A1-C2).
+- "suggestedLevel", which is a level code ("below B1", B1, B2 or C1).
 
 Numbers stay numbers. Do not translate the JSON field names.
 `;

@@ -227,6 +227,23 @@ const examResultSchema = new mongoose.Schema(
     denominator: Number,
 
     /**
+     * How the reported score was reached.
+     *
+     *   whole-performance  the examiner's part bands, converted by the table
+     *   average-fallback   that pass failed; the per-answer scores averaged
+     *
+     * The fallback is a pessimistic estimate, not the school's method, so it
+     * is recorded rather than passed off as a normal mark — a teacher can then
+     * find these attempts and re-mark them. The reason is the error that sent
+     * the attempt there. Absent on attempts marked before this existed.
+     */
+    markingMethod: {
+      type: String,
+      enum: ['whole-performance', 'average-fallback']
+    },
+    markingFallbackReason: String,
+
+    /**
      * The teacher's own bands for this performance, where they disagreed.
      *
      * This is the calibration loop closing. Until now a disagreement was a
@@ -371,6 +388,30 @@ export function levelForScore(score) {
 
 examResultSchema.methods.determineCEFRLevel = function () {
   return levelForScore(this.overallScore);
+};
+
+/**
+ * Score the attempt by averaging its answers, because the whole-performance
+ * pass failed.
+ *
+ * Whatever an earlier whole-performance pass left behind is cleared first. A
+ * re-mark that falls back would otherwise show the new averaged score beside
+ * the old bands, reasoning and feedback, all claiming to explain it.
+ */
+examResultSchema.methods.applyAverageFallback = function (reason) {
+  for (const path of [
+    'partBands', 'rawTotal', 'denominator',
+    'overallFeedback', 'overallReasoning'
+  ]) {
+    this.set(path, undefined);
+  }
+  this.overallStrengths = [];
+  this.overallImprovements = [];
+
+  this.calculateOverallScore();
+  this.overallLevel = this.determineCEFRLevel();
+  this.markingMethod = 'average-fallback';
+  this.markingFallbackReason = String(reason || 'unknown').slice(0, 500);
 };
 
 /**

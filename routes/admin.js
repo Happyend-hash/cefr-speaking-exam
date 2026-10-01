@@ -1619,7 +1619,7 @@ router.get('/results', async (req, res, next) => {
       .limit(limit)
       .populate('student', 'email firstName lastName')
       .populate('exam', 'title')
-      .select('student exam overallScore overallLevel partBands teacherBands completedAt createdAt mode part taskResults.taskNumber')
+      .select('student exam overallScore overallLevel partBands teacherBands markingMethod markingFallbackReason completedAt createdAt mode part taskResults.taskNumber')
       .lean();
 
     res.json({
@@ -1637,6 +1637,10 @@ router.get('/results', async (req, res, next) => {
           level: r.overallLevel || '',
           corrected: Boolean(r.teacherBands?.correctedAt),
           correctedAt: r.teacherBands?.correctedAt || null,
+          // Scored by averaging because the whole-performance pass failed —
+          // an estimate the teacher should re-mark, not a normal result.
+          backupMark: r.markingMethod === 'average-fallback',
+          backupReason: r.markingFallbackReason || '',
           at: r.completedAt || r.createdAt
         })),
         // So the card can say how much of the queue is still unreviewed without
