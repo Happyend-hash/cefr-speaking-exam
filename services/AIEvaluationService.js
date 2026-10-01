@@ -8,6 +8,14 @@ import { scoreSpeaking } from './SpeakingScoring.js';
 import { WRITING_PARTS, WRITING_PROMPT_BLOCK } from '../content/writingCriteria.js';
 import { describeForMarker } from './FluencyService.js';
 
+// Smallest output budget for the whole-performance verdict, whatever
+// CLAUDE_MAX_TOKENS says (see evaluateAttempt).
+const OVERALL_MIN_TOKENS = 16000;
+// Ceiling a cut-off reply's budget is doubled up to before giving up (see
+// callClaudeAPI). Kept within what current models accept on a
+// non-streaming request.
+const MAX_TOKENS_CEILING = 32000;
+
 /**
  * AI Evaluation Service - Integrates with Claude Opus for CEFR assessment
  * This service evaluates spoken English and provides CEFR level assessment
@@ -364,7 +372,15 @@ ${fluency.wordsPerMin} words/min; ${fluency.longPausesPerMin} pauses ≥1s per m
     const user = `${examTitle ? `Exam: ${examTitle}\n\n` : ''}THE CANDIDATE'S FULL PERFORMANCE:
 ${transcript}${measured}${measuredFluency}`;
 
-    const response = await this.callClaudeAPI({ cached, user });
+    // The longest reply of all — every part's band and reasoning, plus the
+    // model's own thinking, which is billed against the same budget. On the
+    // shared CLAUDE_MAX_TOKENS (2000 in production) the thinking alone used it
+    // up and the attempt fell back to averaging. Unused budget costs nothing.
+    const response = await this.callClaudeAPI({
+      cached,
+      user,
+      maxTokens: Math.max(this.maxTokens, OVERALL_MIN_TOKENS)
+    });
     const verdict = this.parseEvaluation(response);
 
     const bands = {};
@@ -832,6 +848,18 @@ THE STUDENT'S ANSWER (transcribed):
     try {
       return await this.callClaudeAPIOnce(prompt);
     } catch (error) {
+      // Cut off by the output budget: the same request would be cut off the
+      // same way, so ask again with twice the room, up to the ceiling. Not
+      // counted against the retry attempts — it is a different request.
+      if (error.truncated) {
+        const isSplit = prompt && typeof prompt === 'object';
+        const budget = (isSplit && prompt.maxTokens) || this.maxTokens;
+        if (budget >= MAX_TOKENS_CEILING) throw error;
+        const larger = Math.min(MAX_TOKENS_CEILING, budget * 2);
+        console.warn(`Claude reply cut off at max_tokens ${budget}; retrying with ${larger}`);
+        return this.callClaudeAPI({ ...(isSplit ? prompt : { user: prompt }), maxTokens: larger }, attempt);
+      }
+
       const status = error.status || error.response?.status;
       const retryable =
         status === 429 || status === 529 || (status >= 500 && status < 600) ||
@@ -928,14 +956,8 @@ THE STUDENT'S ANSWER (transcribed):
         .join('\n')
         .trim();
 
-      if (!text) {
-        const kinds = blocks.map(b => b?.type || 'unknown').join(', ') || 'none';
-        const stop = response.data?.stop_reason;
-        throw new Error(
-          `the API returned no text to read (blocks: ${kinds}; stop_reason: ${stop || 'unknown'})` +
-            (stop === 'max_tokens' ? ' — the answer was cut off; raise CLAUDE_MAX_TOKENS' : '')
-        );
-      }
+      const stop = response.data?.stop_reason;
+      const usage = response.data?.usage;
 
       /*
        * What this call actually cost, in tokens.
@@ -945,14 +967,32 @@ THE STUDENT'S ANSWER (transcribed):
        * that stops matching goes on working and silently costs full price
        * again. `read` climbing while `wrote` stays flat is the cache doing its
        * job; `wrote` on every call means it is missing and worth investigating.
+       *
+       * Counted before the checks below: a cut-off reply is still billed.
        */
-      const usage = response.data?.usage;
       if (usage) {
         this.spend.calls += 1;
         this.spend.input += usage.input_tokens || 0;
         this.spend.output += usage.output_tokens || 0;
         this.spend.cacheWrite += usage.cache_creation_input_tokens || 0;
         this.spend.cacheRead += usage.cache_read_input_tokens || 0;
+      }
+
+      // Cut off by the output budget — with no text at all (thinking used it
+      // up), or with JSON that stops mid-way and would fail to parse. Either
+      // way it is flagged so callClaudeAPI asks again with more room.
+      if (stop === 'max_tokens') {
+        const kinds = blocks.map(b => b?.type || 'unknown').join(', ') || 'none';
+        const truncated = new Error(
+          `the reply was cut off at max_tokens ${payload.max_tokens} (blocks: ${kinds})`
+        );
+        truncated.truncated = true;
+        throw truncated;
+      }
+
+      if (!text) {
+        const kinds = blocks.map(b => b?.type || 'unknown').join(', ') || 'none';
+        throw new Error(`the API returned no text to read (blocks: ${kinds}; stop_reason: ${stop || 'unknown'})`);
       }
 
       return text;
