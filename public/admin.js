@@ -237,6 +237,7 @@
         <div style="min-width:220px">
           <strong>${esc(r.studentName || r.student)}</strong>
           ${r.corrected ? '<span class="tag tag-live">reviewed</span>' : ''}
+          ${r.backupMark ? `<span class="tag tag-warn" title="${esc(r.backupReason || '')}">backup mark — re-mark</span>` : ''}
           <div class="muted" style="font-size:13px">
             ${esc(r.exam)}${r.part ? ` · Part ${esc(r.part)}` : ''} · ${r.answers} answer${r.answers === 1 ? '' : 's'}
           </div>

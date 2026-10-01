@@ -333,6 +333,9 @@ router.get('/results/:resultId', async (req, res, next) => {
         overallScore: result.overallScore ?? null,
         overallLevel: result.overallLevel,
         isPassed: result.isPassed,
+        // 'average-fallback' means the score is an estimate from averaging
+        // the answers; the student is told it may change on re-marking.
+        markingMethod: result.markingMethod || null,
         // The examiner's verdict on the whole performance, which is where the
         // level actually comes from — the per-answer marks are feedback.
         overallFeedback: result.overallFeedback || '',
@@ -1345,7 +1348,11 @@ export async function markAttempt(resultId) {
     }));
 
   let overall = null;
-  if (speakingAnswers.length && result.taskResults.some(t => t.audioKey)) {
+  let overallError = null;
+  // Only a spoken attempt gets the whole-performance pass. For anything else
+  // (the old written exams) the average IS the method, not a fallback.
+  const wholePerformance = speakingAnswers.length > 0 && result.taskResults.some(t => t.audioKey);
+  if (wholePerformance) {
     try {
       // The teacher's corrected attempts, spread across the scale. Fetched
       // per attempt rather than cached in memory so a correction made a minute
@@ -1362,6 +1369,7 @@ export async function markAttempt(resultId) {
         })
       );
     } catch (error) {
+      overallError = error.message;
       console.error(`Overall marking failed for ${result._id}, averaging instead:`, error.message);
     }
   }
@@ -1401,9 +1409,17 @@ export async function markAttempt(resultId) {
     result.partBands = overall.bands;
     result.rawTotal = overall.raw;
     result.denominator = SPEAKING_RAW_MAX;
-  } else {
+    result.markingMethod = 'whole-performance';
+    result.set('markingFallbackReason', undefined);
+  } else if (!wholePerformance) {
     result.calculateOverallScore();
     result.overallLevel = result.determineCEFRLevel();
+  } else {
+    result.applyAverageFallback(overallError);
+    console.warn(
+      `Result ${result._id} scored by the averaging fallback (${result.overallScore}, ` +
+      `${result.overallLevel}) — re-mark it once the cause is fixed: ${overallError}`
+    );
   }
 
   // Passing means reaching B1 — which the agency puts at 38, not the 31 this
