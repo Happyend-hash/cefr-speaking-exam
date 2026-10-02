@@ -4892,7 +4892,7 @@
 
       return `<button class="attempt" data-result="${esc(item.id)}">
         <span class="attempt-name">${esc(item.examTitle)}</span>
-        <span class="attempt-score">${item.overallScore}/${max}</span>
+        ${typeof item.overallScore === 'number' ? `<span class="attempt-score">${item.overallScore}/${max}</span>` : ''}
         <span class="chip chip-speaking">${esc(item.overallLevel || '—')}</span>
         <span class="attempt-date">${esc(fmtDate(item.completedAt))}</span>
       </button>`;
@@ -5400,7 +5400,7 @@
     const row = h => h.kind === 'writing' ? writingRow(h) : h.status === 'completed'
       ? `<button class="home-result" data-result="${esc(h.id)}">
           <span class="list-text"><strong>${esc(h.examTitle)}</strong><span>${esc(fmtDate(h.completedAt))} · speaking${h.mode === 'practice' ? ' · qism' : ''}</span></span>
-          <span class="home-result-score">${h.overallScore}<span>/${max}</span></span>
+          ${typeof h.overallScore === 'number' ? `<span class="home-result-score">${h.overallScore}<span>/${max}</span></span>` : ''}
           <span class="chip chip-speaking">${esc(h.overallLevel || '—')}</span>
         </button>`
       : `<div class="home-result is-pending">
@@ -5729,7 +5729,7 @@
           </div>
           <div class="row">
             ${item.status === 'completed'
-              ? `<span class="attempt-score">${item.overallScore}/${max}</span>
+              ? `${typeof item.overallScore === 'number' ? `<span class="attempt-score">${item.overallScore}/${max}</span>` : ''}
                  <span class="chip chip-speaking">${esc(item.overallLevel || '—')}</span>
                  <button class="btn btn-ghost btn-sm" data-result="${esc(item.id)}">View</button>`
               : `<span class="chip chip-progress">${esc(item.status.replace('_', ' '))}</span>`}
@@ -6402,6 +6402,13 @@
     const r = state.result;
     const tasks = r.taskResults.filter(t => t.evaluation);
     const unread = r.taskResults.filter(t => t.status === 'not_transcribed');
+    // Answered and transcribed, but the per-answer marking call failed. Shown
+    // as "not marked" rather than hidden (it used to vanish from the list) and
+    // never as 0 — the level above still took these words into account.
+    const unmarked = r.status === 'completed'
+      ? r.taskResults.filter(t => !t.evaluation && t.status !== 'not_transcribed' && String(t.transcription || '').trim())
+      : [];
+    const scoreText = value => (typeof value === 'number' ? `${value}` : '—');
 
     // An answer nobody could read is not a bad answer. Say so plainly, next to
     // the recording, rather than letting it vanish from the list or drag the
@@ -6468,6 +6475,19 @@
           <p class="muted" style="margin-top:8px">Your recording was saved, but no words were captured from it.</p>
         </div>`).join('')}
 
+      ${unmarked.map(t => `
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h3>Task ${t.taskNumber}</h3>
+            <span class="badge">Baholanmadi</span>
+          </div>
+          ${t.audioUrl ? `<audio controls data-authsrc="${esc(t.audioUrl)}"></audio>` : ''}
+          <div style="margin-top:12px"><div class="section-title">What you said</div><div class="transcript" style="margin-top:6px">${esc(t.transcription)}</div></div>
+          <p class="muted" style="margin-top:8px">${r.criteria?.length
+            ? "Bu javobga alohida izoh yozilmadi, lekin umumiy darajangiz shu javobni ham hisobga olgan."
+            : "Bu javob baholanmadi — ustozingizdan qayta tekshirishni so'rang."}</p>
+        </div>`).join('')}
+
       ${tasks.map(task => {
         const e = task.evaluation;
         const criteria = e.criteria || {};
@@ -6475,7 +6495,7 @@
         <div class="card">
           <div class="row" style="justify-content:space-between">
             <h3>Task ${task.taskNumber}</h3>
-            <span class="badge">${task.finalScore ?? 0}/${MAX_SCORE}</span>
+            <span class="badge">${typeof task.finalScore === 'number' ? `${task.finalScore}/${MAX_SCORE}` : 'Baholanmadi'}</span>
           </div>
           ${task.audioUrl ? `<audio controls data-authsrc="${esc(task.audioUrl)}"></audio>` : ''}
           ${task.transcription ? `<div style="margin-top:12px"><div class="section-title">What you said</div><div class="transcript" style="margin-top:6px">${esc(task.transcription)}</div></div>` : ''}
@@ -6496,9 +6516,9 @@
                     // Measured facts with no score (fluency): the pauses and
                     // fillers are the finding, and a bar would invent a number.
                     ? ''
-                    : `<span class="criterion-score">${value?.score ?? 0} / ${MAX_SCORE}</span>`}
+                    : `<span class="criterion-score">${scoreText(value?.score)} / ${MAX_SCORE}</span>`}
                 </div>
-                ${value?.score === null && value?.measured
+                ${typeof value?.score !== 'number'
                   ? ''
                   : `<div class="bar-track"><div class="bar-fill${value?.measured ? ' measured' : ''}" style="width:${pctOfMax(value?.score)}%"></div></div>`}
                 ${value?.feedback ? `<p>${esc(value.feedback)}</p>` : ''}
