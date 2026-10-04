@@ -393,6 +393,7 @@
   function studentRow(s) {
     const tags =
       (s.blocked ? '<span class="tag tag-draft">blocked</span>' : '') +
+      (s.waitingForEmail ? '<span class="tag tag-draft">email not confirmed</span>' : '') +
       (s.role !== 'student' ? `<span class="tag">${esc(s.role)}</span>` : '') +
       (s.pendingMessage ? '<span class="tag tag-live">notice waiting</span>' : '') +
       (s.premiumUntil
@@ -419,6 +420,10 @@
                   title="Adds ${packageLabel()} on top of what is left">Add package (${packageLabel()})</button>
           <button class="btn btn-ghost btn-sm" data-access="${s.blocked ? 'unblock' : 'block'}"
                   data-id="${esc(s.id)}">${s.blocked ? 'Unblock' : 'Block'}</button>
+          ${s.waitingForEmail
+            ? `<button class="btn btn-ghost btn-sm" data-access="confirm-email" data-id="${esc(s.id)}"
+                       title="Let this student in without the emailed code">Confirm email</button>`
+            : ''}
         </div>
       </div>
       <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px;justify-content:flex-end">
@@ -1767,6 +1772,8 @@
             : `${data.email}: Premium ended.`
           : action === 'grant' || action === 'package'
           ? `${data.email} now has speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'}. They will see the confirmation on their dashboard.`
+          : action === 'confirm-email'
+          ? `${data.email}: email confirmed — they can use the site now.`
           : action === 'reduce' || action === 'set'
           ? `${data.email}: speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'}.`
           : `${data.email}: ${data.blocked ? 'blocked' : 'allowed'} — speaking ${data.credits ?? data.remaining}, writing ${data.writingCredits ?? '—'} left.`

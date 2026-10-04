@@ -117,9 +117,9 @@ class AuthService {
     );
   }
 
-  /** Signed up after verification shipped, and never entered the code. */
+  /** A new account that hasn't confirmed its email yet. */
   isPendingVerification(user) {
-    return Boolean(user.emailVerificationRequired && !user.isEmailVerified);
+    return user.needsEmailVerification();
   }
 
   /**
@@ -282,8 +282,10 @@ class AuthService {
     const result = await this.sendVerificationEmail(user);
     return {
       message: result.sent
-        ? 'A new code has been sent to your email.'
-        : 'Email is not set up on this server yet — ask your teacher to verify you.',
+        ? 'A new code has been sent to your email. Check Spam too.'
+        : emailConfigured()
+          ? "The email couldn't be sent just now — try again in a minute, or ask your teacher to confirm your email."
+          : 'Email is not set up on this server yet — ask your teacher to confirm your email.',
       sent: Boolean(result.sent)
     };
   }
@@ -370,11 +372,10 @@ class AuthService {
       accessToken,
       refreshToken,
       expiresIn: '7d',
-      // Reuses examAccess()'s own "unverified" check (staff bypass, and
-      // fails open when SMTP isn't configured) rather than re-deriving the
-      // same rule here, so signup/login and starting a mock can never
-      // disagree about who still needs to verify.
-      requiresVerification: user.examAccess().code === 'unverified'
+      // The same rule the server enforces on every request (see
+      // middleware/verifiedEmail.js), so the page and the server can never
+      // disagree about who still has to confirm their email.
+      requiresVerification: user.needsEmailVerification()
     };
   }
 

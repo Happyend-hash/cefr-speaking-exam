@@ -235,6 +235,13 @@
       signOut();
       throw new Error('Your session expired — please sign in again.');
     }
+    // A new account that hasn't confirmed its email: the server refuses
+    // everything but the code screen, so go there instead of showing errors.
+    if (response.status === 403 && payload.code === 'email_unverified' && state.user) {
+      state.user = { ...state.user, emailVerificationRequired: true, isEmailVerified: false };
+      store.set('user', JSON.stringify(state.user));
+      if (state.screen !== 'verify-email') setState({ screen: 'verify-email', loading: false, error: '' });
+    }
     if (!response.ok) {
       const error = new Error(payload.message || `Request failed (${response.status})`);
       // The reason, where the server named one. "You have no mocks left" and
@@ -5198,26 +5205,29 @@
   function verifyEmailScreen() {
     return `
       <div class="card form-card">
-        <h2 style="margin-bottom:8px">Verify your email</h2>
+        <h2 style="margin-bottom:8px">Pochtangizni tasdiqlang</h2>
         <p class="muted">
-          We sent a 6-digit code to <strong>${esc(state.user?.email || '')}</strong>.
-          Enter it below to continue.
+          <strong>${esc(state.user?.email || '')}</strong> manziliga 6 xonali kod yubordik.
+          Saytdan foydalanish uchun kodni kiriting.
+        </p>
+        <p class="muted" style="font-size:13px;margin-top:6px">
+          Xat kelmadimi? <strong>Spam</strong> papkasini ham tekshiring.
         </p>
         <form id="verify-form" style="margin-top:18px">
           <div class="field">
-            <label for="verify-code">Verification code</label>
+            <label for="verify-code">Tasdiqlash kodi</label>
             <input id="verify-code" name="code" inputmode="numeric" autocomplete="one-time-code"
                    maxlength="6" placeholder="000000" required autofocus />
           </div>
           <button class="btn btn-block" type="submit" ${state.loading ? 'disabled' : ''}>
-            ${state.loading ? 'Checking…' : 'Verify'}
+            ${state.loading ? 'Tekshirilmoqda…' : 'Tasdiqlash'}
           </button>
         </form>
         <p class="muted" style="text-align:center;margin-top:16px">
-          Didn't get it? <a href="#" data-action="resend-code">Resend code</a>
+          Kod kelmadimi? <a href="#" data-action="resend-code">Qayta yuborish</a>
         </p>
         <button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="signout">
-          Sign out — wrong email address?
+          Chiqish — pochta manzili noto'g'rimi?
         </button>
       </div>`;
   }
@@ -6852,7 +6862,9 @@
       const user = await api('/auth/verify-email-code', { method: 'POST', body: { code } });
       state.user = user;
       store.set('user', JSON.stringify(user));
-      setState({ loading: false, notice: 'Email verified — you can start your mock now.', screen: 'dashboard' });
+      // Nothing on the dashboard was loaded while the account was locked.
+      state.notice = 'Email confirmed — welcome!';
+      loadDashboard();
     } catch (error) {
       setState({ loading: false, error: error.message });
     }

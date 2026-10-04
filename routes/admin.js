@@ -1321,7 +1321,10 @@ function studentRow(user, activity) {
     attempts: stats.attempts || 0,
     completed: stats.completed || 0,
     lastAttemptAt: stats.lastAttemptAt || null,
-    joinedAt: user.createdAt
+    joinedAt: user.createdAt,
+    // A new account that hasn't confirmed its email, so it can't use the
+    // site yet. The teacher can confirm it by hand ("Confirm email").
+    waitingForEmail: User.hydrate(user).needsEmailVerification()
   };
 }
 
@@ -1349,7 +1352,7 @@ router.get('/students', async (req, res, next) => {
     if (req.query.only === 'out') filter['subscription.examsRemaining'] = { $lte: 0 };
 
     const users = await User.find(filter)
-      .select('email firstName lastName role status access subscription createdAt premiumUntil picture pictureBlocked')
+      .select('email firstName lastName role status access subscription createdAt premiumUntil picture pictureBlocked isEmailVerified emailVerificationRequired')
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
@@ -1501,8 +1504,15 @@ router.post('/students/:id/access', async (req, res, next) => {
     } else if (action === 'premium-off') {
       endPremium(user);
       outcome = `${user.email}: Premium ended`;
+    } else if (action === 'confirm-email') {
+      // For when the code never reaches the student (spam, a typo the teacher
+      // can vouch for, email down): the teacher confirms them by hand.
+      user.isEmailVerified = true;
+      user.emailVerificationToken = undefined;
+      user.emailVerificationExpires = undefined;
+      outcome = `${user.email}: email confirmed by the teacher`;
     } else {
-      throw new APIError('Unknown action. Use package, grant, reduce, set, block, unblock, premium or premium-off.', 400);
+      throw new APIError('Unknown action. Use package, grant, reduce, set, block, unblock, premium, premium-off or confirm-email.', 400);
     }
 
     if (note !== undefined) user.access.note = String(note).slice(0, 500);

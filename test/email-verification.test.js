@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import User from '../models/User.js';
+import User, { VERIFY_EMAIL_FROM } from '../models/User.js';
 import AuthService from '../services/AuthService.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -56,11 +56,20 @@ test('examAccess: a verified-required account with no verification yet is refuse
   });
 });
 
-test('examAccess: the same account is NOT blocked when mail is not configured (fail open)', () => {
+test('examAccess: a new unverified account stays refused even when mail is not configured (no longer fails open)', () => {
   withMailConfigured(false, () => {
     const gate = baseStudent({ emailVerificationRequired: true, isEmailVerified: false }).examAccess(12);
-    assert.notEqual(gate.code, 'unverified');
+    assert.equal(gate.code, 'unverified');
   });
+});
+
+test('needsEmailVerification: accounts created before VERIFY_EMAIL_FROM keep working, new ones must confirm', () => {
+  const before = new Date(VERIFY_EMAIL_FROM.getTime() - 60_000);
+  const after = new Date(VERIFY_EMAIL_FROM.getTime() + 60_000);
+  assert.equal(baseStudent({ emailVerificationRequired: true, createdAt: before }).needsEmailVerification(), false);
+  assert.equal(baseStudent({ emailVerificationRequired: true, createdAt: after }).needsEmailVerification(), true);
+  assert.equal(baseStudent({ emailVerificationRequired: true, createdAt: after, isEmailVerified: true }).needsEmailVerification(), false);
+  assert.equal(baseStudent({ emailVerificationRequired: true, createdAt: after, role: 'admin' }).needsEmailVerification(), false);
 });
 
 test('examAccess: an account predating the feature (emailVerificationRequired false) is never gated on it', () => {
@@ -245,12 +254,16 @@ test('sendFreshCodeIfNeeded: logging in twice within the cooldown sends only one
 // "required" only while email can actually be sent — otherwise switching
 // email off lets students in at log-in and then sends them back on reload.
 
-test('getPublicProfile: emailVerificationRequired is true only while mail is configured', () => {
-  const student = baseStudent({ emailVerificationRequired: true, isEmailVerified: false });
-  withMailConfigured(true, () => {
-    assert.equal(student.getPublicProfile().emailVerificationRequired, true);
+test('getPublicProfile: emailVerificationRequired follows needsEmailVerification, mail or no mail', () => {
+  const fresh = baseStudent({ emailVerificationRequired: true, isEmailVerified: false });
+  const existing = baseStudent({
+    emailVerificationRequired: true, isEmailVerified: false,
+    createdAt: new Date(VERIFY_EMAIL_FROM.getTime() - 86_400_000)
   });
-  withMailConfigured(false, () => {
-    assert.equal(student.getPublicProfile().emailVerificationRequired, false);
-  });
+  for (const configured of [true, false]) {
+    withMailConfigured(configured, () => {
+      assert.equal(fresh.getPublicProfile().emailVerificationRequired, true);
+      assert.equal(existing.getPublicProfile().emailVerificationRequired, false);
+    });
+  }
 });

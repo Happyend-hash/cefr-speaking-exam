@@ -1,6 +1,14 @@
 import mongoose from 'mongoose';
 import bcryptjs from 'bcryptjs';
-import { emailConfigured } from '../services/EmailService.js';
+/**
+ * Accounts created from this moment on must confirm their email before using
+ * the site; accounts created earlier keep working as they always have. Set
+ * VERIFY_EMAIL_FROM (any date JavaScript can read) to move the line.
+ */
+export const VERIFY_EMAIL_FROM = (() => {
+  const configured = new Date(process.env.VERIFY_EMAIL_FROM || '');
+  return Number.isNaN(configured.getTime()) ? new Date('2026-10-04T00:00:00Z') : configured;
+})();
 
 const userSchema = new mongoose.Schema(
   {
@@ -338,12 +346,34 @@ userSchema.methods.getPublicProfile = function () {
   delete obj.emailVerificationAttempts;
   delete obj.loginHistory;
   // What the page reads to decide on the code screen: required RIGHT NOW,
-  // not "was required when the account was made". Same rule as the
-  // examAccess() gate — only while email can actually be sent — so turning
-  // email off really does let everyone in, instead of the page sending them
-  // back to a code screen whose code can never arrive.
-  obj.emailVerificationRequired = Boolean(this.emailVerificationRequired && emailConfigured());
+  // by the one rule everything else uses (needsEmailVerification below).
+  obj.emailVerificationRequired = this.needsEmailVerification();
   return obj;
+};
+
+/**
+ * Must this account confirm its email before using the site at all?
+ *
+ * Jamshid's rule (2026-10-04): every NEW account confirms its email first;
+ * everyone who already had an account keeps using it as before. "Already
+ * had" is decided by creation date against VERIFY_EMAIL_FROM, not by the
+ * stored flag alone — accounts signed up during the weeks when the emails
+ * silently never arrived carry the flag too, and they are students who are
+ * already in.
+ *
+ * Deliberately NOT relaxed when email is unconfigured. It used to be, which
+ * turned "email broken" into "anyone in with any address". If mail stops,
+ * new sign-ups wait (the teacher panel's "Confirm email" lets them in by
+ * hand); they are never let through unchecked.
+ *
+ * Staff never need it, and once verified an account never needs it again.
+ */
+userSchema.methods.needsEmailVerification = function () {
+  if (this.role === 'admin' || this.role === 'teacher') return false;
+  if (this.isEmailVerified) return false;
+  if (!this.emailVerificationRequired) return false;
+  const createdAt = this.createdAt ? new Date(this.createdAt).getTime() : Date.now();
+  return createdAt >= VERIFY_EMAIL_FROM.getTime();
 };
 
 /**
@@ -496,11 +526,8 @@ userSchema.methods.examAccess = function (cost = UNITS_PER_MOCK, module = 'speak
     };
   }
 
-  // Only holds for accounts required to verify (see emailVerificationRequired
-  // above) AND only while mail is actually configured — if SMTP isn't set up,
-  // nobody could ever receive a code, so the gate stays off rather than
-  // stranding every new signup with no way through it.
-  if (this.emailVerificationRequired && !this.isEmailVerified && emailConfigured()) {
+  // New accounts confirm their email first — see needsEmailVerification().
+  if (this.needsEmailVerification()) {
     return {
       allowed: false,
       code: 'unverified',

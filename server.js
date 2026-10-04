@@ -45,6 +45,14 @@ function checkEnvironment() {
   if (!process.env.OPENAI_API_KEY) {
     warnings.push('ℹ OPENAI_API_KEY not set — transcription relies on the browser (Chrome/Edge only).');
   }
+  // New accounts must confirm their email (middleware/verifiedEmail.js), and
+  // can't if no email can be sent. On Railway's Hobby plan SMTP is blocked,
+  // so this means BREVO_API_KEY + MAIL_FROM.
+  const brevoReady = process.env.BREVO_API_KEY && (process.env.MAIL_FROM || process.env.SMTP_USER);
+  const smtpReady = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+  if (!brevoReady && !smtpReady) {
+    warnings.push('⚠ No email is configured (BREVO_API_KEY + MAIL_FROM) — new sign-ups cannot receive their confirmation code; confirm them by hand in the teacher panel.');
+  }
   return warnings;
 }
 
@@ -67,6 +75,7 @@ import { publicRouter as sponsorRoutes, adminRouter as sponsorAdminRoutes } from
 // Middleware imports
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { authenticate } from './middleware/auth.js';
+import { requireVerifiedEmail } from './middleware/verifiedEmail.js';
 
 dotenv.config();
 
@@ -253,14 +262,14 @@ app.use('/api/avatars', avatarRoutes);
 app.use('/api/sponsors', sponsorRoutes);
 
 // Protected routes (require authentication)
-app.use('/api/exam', authenticate, examRoutes);
-app.use('/api/user', authenticate, userRoutes);
-app.use('/api/evaluation', authenticate, evaluationRoutes);
-app.use('/api/writing', authenticate, writingRoutes);
-app.use('/api/leaderboard', authenticate, leaderboardRoutes);
-app.use('/api/voice', authenticate, voiceRoutes);
-app.use('/api/chat', authenticate, chatRoutes);
-app.use('/api/games', authenticate, gameRoutes);
+app.use('/api/exam', authenticate, requireVerifiedEmail, examRoutes);
+app.use('/api/user', authenticate, requireVerifiedEmail, userRoutes);
+app.use('/api/evaluation', authenticate, requireVerifiedEmail, evaluationRoutes);
+app.use('/api/writing', authenticate, requireVerifiedEmail, writingRoutes);
+app.use('/api/leaderboard', authenticate, requireVerifiedEmail, leaderboardRoutes);
+app.use('/api/voice', authenticate, requireVerifiedEmail, voiceRoutes);
+app.use('/api/chat', authenticate, requireVerifiedEmail, chatRoutes);
+app.use('/api/games', authenticate, requireVerifiedEmail, gameRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);
