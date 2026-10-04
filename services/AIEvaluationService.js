@@ -279,7 +279,8 @@ HOW TO AWARD A BAND:
   Part 3's "B1"). Do not hold a performance like that down at an A2-level band
   just for imprecise grammar or vocabulary. Beyond that: a candidate who
   builds sentences using a decent range of structures and speaks fluently —
-  without significant pausing or hesitation — reaches at least this part's
+  without significant pausing or hesitation, meaning their recording is not
+  in the lower "frequent pausing" range given below — reaches at least this part's
   first B2-level band (Part 2 or Part 3's "Lower B2"). Do not require
   near-flawless grammar to keep such a candidate out of B2 once the
   structures and the fluency are genuinely there.
@@ -306,8 +307,8 @@ A transcript is clean — a four-second silence leaves no trace in it. So every
 answer below carries a [recording: …] line measured from its full audio:
 
 - words/min: pace across the time the candidate was speaking, pauses included
-- pauses ≥1s: silences a listener notices; ≥2s strain the listener; the
-  longest one is named
+- pauses ≥1s: silences a listener notices (normal between ideas in exam
+  speech); only long, repeated ones strain the listener; the longest is named
 - silent %: share of the speaking time spent silent between words
 - fillers: "um", "eee", "mmm" and similar, counted
 - repeats: immediate restarts such as "I I think"
@@ -315,23 +316,31 @@ answer below carries a [recording: …] line measured from its full audio:
 
 Read them against each part's own fluency/hesitation sentence — "frequent
 pauses, repetition or reformulation", "occasional hesitation", "speech is
-fluent and sustained". As a guide, taken over the answers that carry most of
-the speaking (Part 2 and Part 3 matter most, being the longest turns):
+fluent and sustained". These candidates are non-native speakers answering
+exam questions on the spot, and real examiners expect thinking time: a
+one-second pause at the end of a clause is normal speech, not hesitation.
+As a guide (Jamshid's calibration, 2026-10-04 — the earlier, stricter figures
+were marking candidates below their real exam results), taken over the answers
+that carry most of the speaking (Part 2 and Part 3 matter most):
 
-- Frequent pausing (the lower bands): under ~80 words/min, OR 6+ pauses ≥1s per
-  minute, OR regular pauses of 2-3s+, OR 8+ fillers per minute.
-- Some pausing (middle bands): roughly 80-110 words/min, 3-5 pauses ≥1s per
-  minute, a few fillers.
-- Pausing that does not strain the listener (upper bands): above ~110
-  words/min, at most 2 pauses ≥1s per minute and none much over 2s, fillers
-  occasional.
+- Frequent pausing that strains the listener (the lower bands): under ~55
+  words/min, OR 10+ pauses ≥1s per minute, OR pauses of 4s+ again and again,
+  OR 15+ fillers per minute.
+- Some hesitation (middle bands): roughly 55-85 words/min, 6-9 pauses ≥1s per
+  minute, fillers fairly frequent.
+- Pausing that does not strain the listener (upper bands): above ~85
+  words/min, up to ~5 pauses ≥1s per minute, no repeated pauses over ~3s,
+  fillers occasional.
 
 These are guides, not a formula: a thoughtful pause before a complex idea is
 not the same as stalling mid-sentence, and a candidate who answers briefly but
-without hesitation is fluent. But the measurements outrank your impression of
-the text. A candidate whose transcript reads smoothly but whose recording shows
-frequent long pauses and fillers is NOT fluent, and that must pull the band for
-every part down from what the words alone would suggest.
+without hesitation is fluent. Fluency is ONE of the things each band weighs —
+alongside range, accuracy, coherence and pronunciation — never the deciding
+factor on its own. Use the measurements to settle the fluency sentence of the
+descriptor, and only let them lower a band when they show pausing clearly in
+the lower range above; even then, fluency alone moves a part down by at most
+one band from what the language itself shows. Middle-range figures do not
+lower a band at all.
 
 PRONUNCIATION IS MEASURED, NOT GUESSED:
 A transcript cannot hear an accent. Where measured figures are supplied below,
