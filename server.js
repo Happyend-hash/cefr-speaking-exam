@@ -70,6 +70,7 @@ import chatRoutes from './routes/chat.js';
 import avatarRoutes from './routes/avatars.js';
 import gameRoutes from './routes/games.js';
 import { resumeStuckMarking } from './routes/exam.js';
+import AudioStorageService, { audioDir } from './services/AudioStorageService.js';
 import { publicRouter as sponsorRoutes, adminRouter as sponsorAdminRoutes } from './routes/sponsors.js';
 
 // Middleware imports
@@ -243,6 +244,19 @@ mongoose.connect(MONGODB_URI)
     setInterval(() => {
       resumeStuckMarking().catch(err => console.error('Periodic marking-resume failed:', err.message));
     }, 5 * 60 * 1000);
+
+    // With a Railway volume attached, move the recordings still in MongoDB
+    // onto it — in the background, one at a time, each verified before the
+    // original goes (see AudioStorageService.migrateFromGridFS).
+    if (AudioStorageService.storage === 'disk') {
+      console.log(`Recordings are stored on disk at ${audioDir()}`);
+      if (process.env.MIGRATE_AUDIO_TO_DISK !== 'false') {
+        setTimeout(() => {
+          AudioStorageService.migrateFromGridFS()
+            .catch(err => console.error('Moving recordings to disk failed:', err.message));
+        }, 30 * 1000);
+      }
+    }
   })
   .catch((err) => {
     console.error('✗ MongoDB connection error:', err.message);
@@ -303,6 +317,10 @@ app.get('/api/health', (req, res) => {
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'OK' : 'UNHEALTHY',
     database: states[readyState] || 'unknown',
+    // Where recordings are kept, and how moving the old ones is going —
+    // counts only, nothing about any student.
+    audioStorage: AudioStorageService.storage,
+    audioMigration: AudioStorageService.migration,
     timestamp: new Date().toISOString(),
     version: '1.0.0'
   });
