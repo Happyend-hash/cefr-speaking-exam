@@ -224,23 +224,14 @@ router.post('/resend-verification', authenticate, async (req, res, next) => {
 
 /**
  * @route   POST /api/auth/forgot-password
- * @desc    Request password reset
- * @access  Public
+ * @desc    Email a 6-digit password reset code. Same answer whether or not
+ *          the address has an account.
+ * @access  Public (rate-limited per address with the rest of /api/auth)
  */
 router.post('/forgot-password', async (req, res, next) => {
   try {
-    const { email } = req.body;
-
-    if (!email) {
-      throw new APIError('Email required', 400);
-    }
-
-    const result = await AuthService.requestPasswordReset(email);
-
-    res.json({
-      success: true,
-      message: result.message
-    });
+    const result = await AuthService.requestPasswordReset(req.body?.email);
+    res.json({ success: true, message: result.message, data: { emailConfigured: result.emailConfigured } });
   } catch (error) {
     next(error);
   }
@@ -248,23 +239,17 @@ router.post('/forgot-password', async (req, res, next) => {
 
 /**
  * @route   POST /api/auth/reset-password
- * @desc    Reset password with token
+ * @desc    The emailed code plus a new password; signs the student in.
  * @access  Public
  */
 router.post('/reset-password', async (req, res, next) => {
   try {
-    const { resetToken, newPassword } = req.body;
-
-    if (!resetToken || !newPassword) {
-      throw new APIError('Reset token and new password required', 400);
+    const { email, code, newPassword } = req.body || {};
+    if (!email || !code || !newPassword) {
+      throw new APIError('Enter your email, the code and a new password', 400);
     }
-
-    const result = await AuthService.resetPassword(resetToken, newPassword);
-
-    res.json({
-      success: true,
-      message: result.message
-    });
+    const result = await AuthService.resetPassword(email, code, newPassword);
+    res.json({ success: true, message: 'Password changed', data: result });
   } catch (error) {
     next(error);
   }

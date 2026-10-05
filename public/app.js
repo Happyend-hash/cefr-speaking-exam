@@ -4633,6 +4633,7 @@
       topup: topupScreen,
       'verify-email': verifyEmailScreen,
       'code-login': codeLoginScreen,
+      'forgot-password': forgotPasswordScreen,
       exam: examScreen,
       submitted: submittedScreen,
       result: resultScreen,
@@ -4692,7 +4693,10 @@
             <label for="password">Password</label>
             <input id="password" name="password" type="password" minlength="8"
                    autocomplete="${isSignup ? 'new-password' : 'current-password'}" required />
-            ${isSignup ? '<span class="muted">At least 8 characters.</span>' : ''}
+            ${isSignup ? '<span class="muted">At least 8 characters.</span>' : `
+            <a href="#" data-action="forgot-password" style="display:inline-block;margin-top:6px;font-size:14px">
+              Parolni unutdingizmi? / Forgot password?
+            </a>`}
           </div>
           <button class="btn btn-block" type="submit" ${state.loading ? 'disabled' : ''}>
             ${state.loading ? 'Working…' : isSignup ? 'Create account' : 'Sign in'}
@@ -5230,6 +5234,111 @@
           Chiqish — pochta manzili noto'g'rimi?
         </button>
       </div>`;
+  }
+
+  /**
+   * "Forgot password": step 1 asks for the email and sends a 6-digit code;
+   * step 2 takes that code and a new password and signs the student in.
+   * Passwords are stored hashed and cannot be looked up by anyone, the
+   * teacher included -- this is the only way back into a forgotten account.
+   */
+  function forgotPasswordScreen() {
+    const email = state.resetEmail || '';
+    if (!state.resetSent) {
+      return `
+        <div class="card form-card">
+          <h2 style="margin-bottom:8px">Parolni tiklash</h2>
+          <p class="muted">Ro'yxatdan o'tgan pochtangizni kiriting. Unga 6 xonali kod yuboramiz.</p>
+          <form id="forgot-form" style="margin-top:18px">
+            <div class="field">
+              <label for="forgot-email">Email</label>
+              <input id="forgot-email" name="email" type="email" autocomplete="email" required
+                     value="${esc(email)}" />
+            </div>
+            <button class="btn btn-block" type="submit" ${state.loading ? 'disabled' : ''}>
+              ${state.loading ? 'Yuborilmoqda…' : 'Kod yuborish'}
+            </button>
+          </form>
+          <button class="btn btn-ghost btn-block" style="margin-top:12px" data-go="login">
+            Orqaga — kirish sahifasi
+          </button>
+        </div>`;
+    }
+    return `
+      <div class="card form-card">
+        <h2 style="margin-bottom:8px">Yangi parol</h2>
+        <p class="muted">
+          Agar <strong>${esc(email)}</strong> bilan hisob bo'lsa, unga 6 xonali kod yubordik.
+          Kodni va yangi parolni kiriting.
+        </p>
+        <p class="muted" style="font-size:13px;margin-top:6px">
+          Xat kelmadimi? <strong>Spam</strong> papkasini ham tekshiring.
+        </p>
+        <form id="reset-form" style="margin-top:18px">
+          <div class="field">
+            <label for="reset-code">Kod</label>
+            <input id="reset-code" name="code" inputmode="numeric" autocomplete="one-time-code"
+                   maxlength="6" placeholder="000000" required autofocus />
+          </div>
+          <div class="field">
+            <label for="reset-password">Yangi parol</label>
+            <input id="reset-password" name="password" type="password" minlength="8"
+                   autocomplete="new-password" required />
+            <span class="muted">Kamida 8 ta belgi.</span>
+          </div>
+          <button class="btn btn-block" type="submit" ${state.loading ? 'disabled' : ''}>
+            ${state.loading ? 'Saqlanmoqda…' : 'Parolni saqlash va kirish'}
+          </button>
+        </form>
+        <p class="muted" style="text-align:center;margin-top:16px">
+          Kod kelmadimi? <a href="#" data-action="forgot-resend">Qayta yuborish</a>
+        </p>
+        <button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="forgot-change-email">
+          Boshqa pochta manzili
+        </button>
+      </div>`;
+  }
+
+  async function sendResetCode(email) {
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const data = await api('/auth/forgot-password', { method: 'POST', body: { email } });
+      setState({
+        loading: false,
+        resetEmail: email,
+        resetSent: true,
+        notice: data?.emailConfigured === false
+          ? "Hozircha saytdan xat yuborib bo'lmayapti. O'qituvchingizga murojaat qiling."
+          : ''
+      });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  function handleForgotSubmit(event) {
+    event.preventDefault();
+    const email = event.target.email.value.trim().toLowerCase();
+    if (email) sendResetCode(email);
+  }
+
+  async function handleResetSubmit(event) {
+    event.preventDefault();
+    const form = event.target;
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const data = await api('/auth/reset-password', {
+        method: 'POST',
+        body: { email: state.resetEmail, code: form.code.value.trim(), newPassword: form.password.value }
+      });
+      state.loading = false;
+      state.resetSent = false;
+      state.resetEmail = '';
+      state.notice = "Parol o'zgartirildi — xush kelibsiz!";
+      signIn(data);
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
   }
 
   /** Not signed in yet: the emailed code is what signs them in. */
@@ -6725,6 +6834,8 @@
     document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit);
     document.getElementById('verify-form')?.addEventListener('submit', handleVerifyCodeSubmit);
     document.getElementById('code-login-form')?.addEventListener('submit', handleCodeLoginSubmit);
+    document.getElementById('forgot-form')?.addEventListener('submit', handleForgotSubmit);
+    document.getElementById('reset-form')?.addEventListener('submit', handleResetSubmit);
 
     wireWriting();
     wireLeaderboard();
@@ -6739,6 +6850,13 @@
       case 'signout': return signOut();
       case 'resend-code': return resendVerificationCode();
       case 'resend-signup-code': return resendSignupCode();
+      case 'forgot-password':
+        return go('forgot-password', {
+          resetSent: false,
+          resetEmail: (document.getElementById('email')?.value || '').trim().toLowerCase()
+        });
+      case 'forgot-resend': return state.resetEmail ? sendResetCode(state.resetEmail) : go('forgot-password', { resetSent: false });
+      case 'forgot-change-email': return setState({ resetSent: false, error: '', notice: '' });
       case 'done-submitting': return loadDashboard();
       case 'notice-seen': return dismissNotice();
       case 'bands-save': return saveBands();

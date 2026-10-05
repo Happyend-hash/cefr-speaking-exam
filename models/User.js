@@ -244,8 +244,13 @@ const userSchema = new mongoose.Schema(
 
     twoFactorSecret: String,
 
+    // "Forgot password": a SHA-256 hash of the 6-digit code emailed to the
+    // student (never the code itself), when it expires, when it was last
+    // sent (resend cooldown), and wrong guesses against it.
     passwordResetToken: String,
     passwordResetExpires: Date,
+    passwordResetLastSentAt: Date,
+    passwordResetAttempts: { type: Number, default: 0 },
 
     loginHistory: [
       {
@@ -340,6 +345,8 @@ userSchema.methods.getPublicProfile = function () {
   delete obj.twoFactorSecret;
   delete obj.passwordResetToken;
   delete obj.passwordResetExpires;
+  delete obj.passwordResetLastSentAt;
+  delete obj.passwordResetAttempts;
   delete obj.emailVerificationToken;
   delete obj.emailVerificationExpires;
   delete obj.emailVerificationLastSentAt;

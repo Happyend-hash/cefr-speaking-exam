@@ -1,7 +1,6 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import User from '../models/User.js';
-import { v4 as uuidv4 } from 'uuid';
 import { APIError } from '../middleware/errorHandler.js';
 import { sendMail, emailConfigured } from './EmailService.js';
 
@@ -11,6 +10,7 @@ const RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resend requests
 // The sign-in-by-code endpoint is public, so this — not the per-address rate
 // limit alone — is what stops a 6-digit code being guessed.
 const MAX_CODE_ATTEMPTS = 5;
+const PASSWORD_RESET_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
  * Authentication Service - Handles user registration, login, and token management
@@ -434,59 +434,117 @@ class AuthService {
     }
   }
 
-  /**
-   * Request password reset
-   */
-  async requestPasswordReset(email) {
-    try {
-      const user = await User.findOne({ email });
-
-      if (!user) {
-        // Don't reveal if email exists or not (security best practice)
-        return { message: 'If account exists, password reset link has been sent' };
-      }
-
-      // Generate reset token
-      user.passwordResetToken = uuidv4();
-      user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-      await user.save();
-
-      return {
-        message: 'Password reset link sent to email',
-        resetToken: user.passwordResetToken // In production, only send via email
-      };
-    } catch (error) {
-      console.error('Error requesting password reset:', error);
-      throw error;
-    }
+  /** Codes are stored hashed, so a database leak does not hand out resets. */
+  hashResetCode(code) {
+    return crypto.createHash('sha256').update(String(code)).digest('hex');
   }
 
   /**
-   * Reset password
+   * "Forgot password", step 1: email a 6-digit reset code.
+   *
+   * The answer is the same whether or not the address has an account, so
+   * this cannot be used to find out who is registered. Resends are limited
+   * to one a minute per account. The old version of this returned the reset
+   * token in the response itself, which let anyone reset anyone's password;
+   * the code now only ever travels by email.
    */
-  async resetPassword(resetToken, newPassword) {
-    try {
-      const user = await User.findOne({
-        passwordResetToken: resetToken,
-        passwordResetExpires: { $gt: Date.now() }
-      });
+  async requestPasswordReset(email) {
+    const generic = {
+      message: 'If an account exists for this email, a reset code has been sent to it.',
+      emailConfigured: emailConfigured()
+    };
 
-      if (!user) {
-        throw new APIError('This reset link is invalid or has expired', 400);
-      }
+    const address = String(email ?? '').trim().toLowerCase();
+    if (!address) throw new APIError('Enter your email', 400);
 
-      user.password = newPassword;
-      user.passwordResetToken = undefined;
-      user.passwordResetExpires = undefined;
+    const user = await User.findOne({ email: address });
+    if (!user || user.status === 'suspended') return generic;
 
-      await user.save();
-
-      return { message: 'Password reset successfully' };
-    } catch (error) {
-      console.error('Error resetting password:', error);
-      throw error;
+    if (user.passwordResetLastSentAt &&
+        Date.now() - user.passwordResetLastSentAt.getTime() < RESEND_COOLDOWN_MS &&
+        user.passwordResetExpires > new Date()) {
+      return generic; // a code went out under a minute ago and is still valid
     }
+
+    const code = this.generateVerificationCode();
+    user.passwordResetToken = this.hashResetCode(code);
+    user.passwordResetExpires = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
+    user.passwordResetLastSentAt = new Date();
+    user.passwordResetAttempts = 0;
+    await user.save();
+
+    try {
+      const result = await sendMail({
+        to: user.email,
+        subject: 'Parolni tiklash kodi / Password reset code',
+        text:
+          `Parolni tiklash kodingiz: ${code}. Kod 15 daqiqa amal qiladi.\n` +
+          `Your password reset code is ${code}. It expires in 15 minutes.\n\n` +
+          `Agar siz so'ramagan bo'lsangiz, bu xatni e'tiborsiz qoldiring. / If you didn't ask for this, ignore this email — your password has not changed.`,
+        html: `
+          <p>Parolni tiklash kodingiz / Your password reset code:</p>
+          <p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p>
+          <p style="color:#666">Kod 15 daqiqa amal qiladi. Agar siz so'ramagan bo'lsangiz, bu xatni e'tiborsiz qoldiring.<br>
+          It expires in 15 minutes. If you didn't ask for this, ignore this email — your password has not changed.</p>
+        `
+      });
+      if (!result?.sent) console.warn(`Password reset email not sent: ${result?.reason || 'unknown'}`);
+    } catch (error) {
+      console.error('Error sending password reset email:', error.message);
+    }
+    return generic;
+  }
+
+  /**
+   * "Forgot password", step 2: the emailed code plus a new password.
+   *
+   * The code proves the student owns the address, so a correct one also
+   * confirms their email, and signs them straight in. Five wrong guesses burn
+   * the code, which (with the per-address rate limit) stops it being guessed.
+   */
+  async resetPassword(email, code, newPassword) {
+    if (!newPassword || String(newPassword).length < 8) {
+      throw new APIError('Password must be at least 8 characters', 400);
+    }
+
+    const address = String(email ?? '').trim().toLowerCase();
+    const user = await User.findOne({ email: address }).select('+password');
+    const invalid = new APIError('That code is not correct.', 400);
+    if (!user || user.status === 'suspended' || !user.passwordResetToken) throw invalid;
+
+    if (!user.passwordResetExpires || user.passwordResetExpires < new Date()) {
+      throw new APIError('This code has expired — request a new one.', 400);
+    }
+
+    const given = this.hashResetCode(String(code ?? '').trim());
+    const expected = user.passwordResetToken;
+    const matches = given.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+
+    if (!matches) {
+      user.passwordResetAttempts = (user.passwordResetAttempts || 0) + 1;
+      if (user.passwordResetAttempts >= MAX_CODE_ATTEMPTS) {
+        user.passwordResetToken = undefined;
+        user.passwordResetExpires = undefined;
+        await user.save();
+        throw new APIError('Too many wrong codes — request a new one.', 400);
+      }
+      await user.save();
+      throw invalid;
+    }
+
+    user.password = newPassword;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    user.passwordResetAttempts = 0;
+    if (!user.isEmailVerified) {
+      user.isEmailVerified = true;
+      user.emailVerificationToken = undefined;
+      user.emailVerificationExpires = undefined;
+      if (user.status !== 'suspended') user.status = 'active';
+    }
+
+    return this.startSession(user);
   }
 
   /**
