@@ -4,7 +4,7 @@
  * Pure functions, no database and no network, so every rule the teacher set
  * can be checked by a test rather than by taking a mock:
  *
- *   - word counting, and the school's under-length rule
+ *   - word counting, and the official under-length caps
  *   - where each in-line correction sits in the student's text
  *   - the expert mark (plain sum), the official conversion, and the level
  *   - the partial-submission cap
@@ -26,19 +26,22 @@ export function countWords(text) {
 }
 
 /**
- * Does this part fall under the school's under-length rule?
+ * Does this part fall under the official under-length caps?
  *
  * Returns the threshold as well as the verdict, so the result screen can say
- * exactly why a part scored 0 ("you wrote 70 words; under 90 scores 0") rather
+ * exactly why a part was capped ("you wrote 70 words; under 90 allows band 2 at most") rather
  * than leaving a student to guess.
  */
 export function lengthVerdict(key, words, minWords) {
-  const share = WRITING_LENGTH_RULE[key];
+  const steps = WRITING_LENGTH_RULE[key];
   const min = Number(minWords) || DEFAULT_MIN_WORDS[key] || 0;
-  if (!share || !min) return { zero: false, threshold: null, minWords: min };
+  if (!steps || !min) return { capped: false, cap: null, threshold: null, minWords: min };
 
-  const threshold = Math.ceil(min * share);
-  return { zero: words < threshold, threshold, minWords: min };
+  for (const { share, cap } of steps) {
+    const threshold = Math.ceil(min * share);
+    if (words < threshold) return { capped: true, cap, threshold, minWords: min };
+  }
+  return { capped: false, cap: null, threshold: null, minWords: min };
 }
 
 /**

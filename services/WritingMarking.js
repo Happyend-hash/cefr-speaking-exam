@@ -5,7 +5,8 @@
  *
  *   1. the marker awards each submitted part a band on its own scale
  *   2. corrections are located in the student's text (exact quotes only)
- *   3. the school's under-length rule forces a part to 0 where it applies
+ *   3. the official under-length cap limits a short part's band (band 2 under
+ *      50% of the required length, band 1 under 25%; Parts 1.2 and 2 only)
  *   4. the bands are summed and converted by the official writing table
  *   5. a partial submission is capped at B1 and gets no score out of 75
  *
@@ -74,7 +75,7 @@ export async function markWritingAttempt(attemptId) {
         text,
         words,
         ...brief,
-        underLength: { applied: verdict.zero, threshold: verdict.threshold }
+        underLength: { applied: verdict.capped, threshold: verdict.threshold, cap: verdict.cap }
       };
     });
 
@@ -92,14 +93,16 @@ export async function markWritingAttempt(attemptId) {
       slot.feedback = marked.feedback;
       slot.corrections = locateCorrections(part.text, marked.corrections);
 
-      // The school's rule overrides the marker, but the marker's band is kept
-      // so a teacher can see what the writing itself was worth.
+      // The official under-length cap can lower the marker's band, never
+      // raise it. The marker's own band is kept so a teacher can see what the
+      // writing itself was worth.
       slot.underLength = {
         applied: part.underLength.applied,
         threshold: part.underLength.threshold,
+        cap: part.underLength.cap,
         markerBand: marked.band
       };
-      slot.band = part.underLength.applied ? 0 : marked.band;
+      slot.band = part.underLength.applied ? Math.min(marked.band, part.underLength.cap) : marked.band;
       slot.label = writingLabel(part.key, slot.band);
       bands[part.key] = slot.band;
     }
@@ -179,7 +182,7 @@ export function presentWritingAttempt(attempt) {
       corrections: slot.corrections || [],
       segments: marked ? correctionSegments(slot.text, slot.corrections || []) : [],
       underLength: slot.underLength?.applied
-        ? { threshold: slot.underLength.threshold, markerBand: slot.underLength.markerBand }
+        ? { threshold: slot.underLength.threshold, cap: slot.underLength.cap, markerBand: slot.underLength.markerBand }
         : null
     };
   });
@@ -238,7 +241,9 @@ export function writingEmail(view, student) {
       <span style="font-weight:400;color:#555">· ${escapeHtml(p.label)}</span></h3>
     ${p.task ? `<p style="margin:0 0 10px;color:#555;font-size:13px">${escapeHtml(p.task)}</p>` : ''}
     ${p.underLength
-      ? `<p style="margin:0 0 10px;color:#b42318;font-size:13px">So'zlar soni ${p.words} ta — ${p.underLength.threshold} tadan kam bo'lgani uchun bu qism 0 ball oldi.</p>`
+      ? `<p style="margin:0 0 10px;color:#b42318;font-size:13px">${Number.isFinite(p.underLength.cap)
+          ? `So'zlar soni ${p.words} ta — ${p.underLength.threshold} tadan kam. Rasmiy shkala bo'yicha bunday qisqa javob ko'pi bilan ${p.underLength.cap} ball olishi mumkin.`
+          : `So'zlar soni ${p.words} ta — ${p.underLength.threshold} tadan kam bo'lgani uchun bu qism 0 ball oldi.`}</p>`
       : ''}
     <div style="padding:14px 16px;border:1px solid #ddd;border-radius:8px;line-height:1.7;font-size:15px">
       ${markedScriptHtml(p.segments)}

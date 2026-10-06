@@ -42,12 +42,14 @@ const partSchema = new mongoose.Schema(
     feedback: String,
     corrections: { type: [correctionSchema], default: [] },
 
-    // Set when the school's under-length rule forced the band to 0. The
-    // marker's own band is kept alongside so a teacher can see what the
-    // writing itself was worth.
+    // Set when the part was under length. `cap` is the highest band the
+    // official scale allows for it (attempts marked before 2026-10-06 have
+    // no cap: the old school rule scored them 0). The marker's own band is
+    // kept alongside so a teacher can see what the writing itself was worth.
     underLength: {
       applied: { type: Boolean, default: false },
       threshold: Number,
+      cap: Number,
       markerBand: Number
     }
   },

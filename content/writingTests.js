@@ -12,24 +12,26 @@
  *
  * `minWords` is the recommended minimum. It drives two things:
  *   - the word counter's target on screen
- *   - the school's under-length rule (see WRITING_LENGTH_RULE below)
+ *   - the official under-length caps (see WRITING_LENGTH_RULE below)
  */
 
 /**
- * The school's under-length rule, as Jamshid set it.
+ * The official under-length caps (Jamshid's decision, 2026-10-06, after the
+ * board's Writing Assessor Training said "follow the rating scales").
  *
- * A part whose word count falls below this share of its recommended minimum
- * is scored 0 for that part. Part 1.1 has no rule — a 50-word email is short
- * enough that the scale's own descriptors handle a thin answer.
+ * The scales for Parts 1.2 and 2 place a substantially underlength response
+ * (under 50% of the required length) at band 2, and under 25% at band 1. So
+ * a part below a share of its required minimum can score at most that band;
+ * the marker still marks the writing itself. Checked from the smallest share
+ * up. Part 1.1 has no length rule in its scale.
  *
- * Note this is stricter than the board's descriptor text, which places
- * under-50% at band 2 and under-25% at band 1. It is applied as the school's
- * rule, deliberately.
+ * This replaces the school's earlier, stricter rule (Part 2 under 50% and
+ * Part 1.2 under 25% scored 0), which marked short answers below the exam.
  */
 export const WRITING_LENGTH_RULE = Object.freeze({
   part11: null,
-  part12: 0.25,
-  part2: 0.5
+  part12: [{ share: 0.25, cap: 1 }, { share: 0.5, cap: 2 }],
+  part2: [{ share: 0.25, cap: 1 }, { share: 0.5, cap: 2 }]
 });
 
 /**

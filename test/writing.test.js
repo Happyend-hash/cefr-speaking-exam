@@ -68,13 +68,16 @@ test('a partial is never scaled up as if it were a whole mock', () => {
   assert.equal(writingBandsToScore({ part11: 5 }).complete, false);
 });
 
-test("teacher's under-length rule: Part 2 under 50%, Part 1.2 under 25%", () => {
-  assert.equal(lengthVerdict('part2', 89, 180).zero, true);
-  assert.equal(lengthVerdict('part2', 90, 180).zero, false);
-  assert.equal(lengthVerdict('part12', 29, 120).zero, true);
-  assert.equal(lengthVerdict('part12', 30, 120).zero, false);
-  // Part 1.1 has no rule.
-  assert.equal(lengthVerdict('part11', 3, 50).zero, false);
+test('official under-length caps: under 50% -> band 2 at most, under 25% -> band 1 at most', () => {
+  assert.deepEqual([lengthVerdict('part2', 89, 180).capped, lengthVerdict('part2', 89, 180).cap], [true, 2]);
+  assert.equal(lengthVerdict('part2', 90, 180).capped, false);
+  assert.deepEqual([lengthVerdict('part2', 44, 180).capped, lengthVerdict('part2', 44, 180).cap], [true, 1]);
+  assert.equal(lengthVerdict('part2', 45, 180).cap, 2);
+  assert.equal(lengthVerdict('part12', 59, 120).cap, 2);
+  assert.equal(lengthVerdict('part12', 29, 120).cap, 1);
+  assert.equal(lengthVerdict('part12', 60, 120).capped, false);
+  // Part 1.1 has no length rule in its scale.
+  assert.equal(lengthVerdict('part11', 3, 50).capped, false);
 });
 
 test('word count matches the counter students see', () => {

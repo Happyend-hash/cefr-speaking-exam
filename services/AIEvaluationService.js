@@ -6,6 +6,7 @@ import { SPEAKING_PROMPT_BLOCK, SPEAKING_PART_KEYS } from '../content/speakingRu
 import { SPEAKING_PART_MAX } from './ScoreConversion.js';
 import { scoreSpeaking } from './SpeakingScoring.js';
 import { WRITING_PARTS, WRITING_PROMPT_BLOCK } from '../content/writingCriteria.js';
+import { WRITING_EXAMINER_METHOD, WRITING_OFFICIAL_SAMPLES } from '../content/writingExaminerGuide.js';
 import { describeForMarker } from './FluencyService.js';
 
 // Smallest output budget for the whole-performance verdict, whatever
@@ -502,24 +503,22 @@ HOW TO AWARD A BAND:
   genre, grammar, vocabulary, cohesion, and spelling/punctuation. Weigh them
   together into the one band whose description fits the text best overall.
   Do not score them separately and average.
-- DO NOT OVER-ASSESS GRAMMAR. Grammar is one dimension of six. A text that
-  fulfils the task clearly, in the right register, with good organisation and
-  range, is not pulled down a band by a handful of errors that do not affect
-  communication. Grammar-focused marking is the most common rater mistake;
-  do not make it.
 - Register matters: Part 1.1 is informal (to a friend), Part 1.2 is formal (to
   a manager or official), Part 2 is a blog post, article or forum post whose
   tone should suit publication.
-- A text that is memorised, largely off-topic, or mostly in another language
-  is band 0 or 1, as the scales say.
 - Use the whole scale. A text that matches the top descriptor gets the top
   band; hedging toward the middle for safety is a marking error.
 
+${WRITING_EXAMINER_METHOD}
+
+${WRITING_OFFICIAL_SAMPLES}
+
 LENGTH:
-Each part tells you its word count and recommended length. Where a part is
-marked "UNDER-LENGTH RULE APPLIES", the school scores it 0 whatever its
-quality — still award the band the writing itself deserves and still correct
-it; the rule is applied afterwards, not by you.
+Each part tells you its word count and required length. Where a part is
+marked "UNDER LENGTH", the official scale caps its band (Parts 1.2 and 2:
+under 50% of the required length, band 2 at most; under 25%, band 1 at most).
+Still award the band the writing itself deserves and still correct it — the
+cap is applied afterwards, not by you. Over length is not penalised by itself.
 
 IN-LINE CORRECTIONS:
 For each part, list the clear mistakes: grammar, word choice, spelling, and
@@ -550,7 +549,7 @@ Reply with JSON only, in exactly this shape, including only the parts supplied:
   "parts": {
     "part11": {
       "band": 0-5,
-      "reasoning": "Why this band, naming the evidence — one or two sentences",
+      "reasoning": "The evidence for this band, and what keeps it out of the band above (step 5) — two or three sentences",
       "feedback": "What to do to reach the next band — one or two sentences, to the student",
       "corrections": [ { "wrong": "exact words from the text", "right": "corrected words", "why": "short reason" } ]
     },
@@ -577,7 +576,7 @@ In this reply that means "reasoning", "feedback", "why", "overallFeedback",
       if (part.wordGuide) lines.push(`Recommended length: ${part.wordGuide}`);
       lines.push(`Word count: ${part.words}`);
       if (part.underLength?.applied) {
-        lines.push(`UNDER-LENGTH RULE APPLIES: under ${part.underLength.threshold} words scores 0 at this school.`);
+        lines.push(`UNDER LENGTH: under ${part.underLength.threshold} words, so the official scale allows band ${part.underLength.cap} at most.`);
       }
       lines.push(`THE CANDIDATE'S TEXT:\n${fence}\n${part.text}\n${fence}`);
       return lines.join('\n');

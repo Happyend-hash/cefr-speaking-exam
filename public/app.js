@@ -1047,6 +1047,7 @@
     message: 'Siz javob beradigan xabar',
     task: 'Topshiriq',
     under: (words, threshold) => `So'zlar soni ${words} ta — ${threshold} tadan kam bo'lgani uchun bu qism 0 ball oldi.`,
+    underCap: (words, threshold, cap) => `So'zlar soni ${words} ta — ${threshold} tadan kam. Rasmiy shkala bo'yicha bunday qisqa javob ko'pi bilan ${cap} ball olishi mumkin.`,
     underMarker: b => `(Yozuvning o'zi ${b} ballga loyiq edi.)`,
 
     checkIntro: 'Faqat tekshirmoqchi bo\'lgan qismlarni to\'ldiring. Topshiriq matnini ham qo\'shsangiz, mavzudan chetga chiqmaganingiz tekshiriladi.',
@@ -1546,8 +1547,10 @@
       </div>
 
       ${p.underLength
-        ? `<div class="alert alert-error" style="margin-top:12px">${esc(WR_UZ.under(p.words, p.underLength.threshold))}
-             ${Number.isFinite(p.underLength.markerBand) ? ` ${esc(WR_UZ.underMarker(p.underLength.markerBand))}` : ''}</div>`
+        ? `<div class="alert alert-error" style="margin-top:12px">${esc(Number.isFinite(p.underLength.cap)
+               ? WR_UZ.underCap(p.words, p.underLength.threshold, p.underLength.cap)
+               : WR_UZ.under(p.words, p.underLength.threshold))}
+             ${Number.isFinite(p.underLength.markerBand) && p.underLength.markerBand > p.band ? ` ${esc(WR_UZ.underMarker(p.underLength.markerBand))}` : ''}</div>`
         : ''}
 
       ${p.task ? `<p class="muted" style="margin-top:12px;font-size:14px"><strong>${esc(WR_UZ.task)}:</strong> ${esc(p.task)}</p>` : ''}
