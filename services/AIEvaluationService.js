@@ -524,10 +524,19 @@ IN-LINE CORRECTIONS:
 For each part, list the clear mistakes: grammar, word choice, spelling, and
 punctuation that changes meaning or reads as an error.
 - "wrong" MUST be copied EXACTLY from the student's text — same letters, same
-  case, same punctuation — and be the SMALLEST span that contains the mistake
-  (usually one to four words). It is located by exact search; anything not
+  case, same punctuation — and be ONLY the word or words that are wrong,
+  grammatically or in meaning: usually ONE word, at most three. Never quote a
+  whole clause or sentence to fix one word in it. If a sentence has two
+  mistakes, give two separate corrections. A missing word: quote the word
+  right after the gap ("morning" -> "the morning"). An extra word: quote just
+  that word, with "right" empty. It is located by exact search; anything not
   copied exactly is thrown away.
-- "right" is the corrected English for exactly that span.
+- "right" is the corrected English for exactly that span, nothing more —
+  e.g. "I am agree with you" is fixed as "am agree" -> "agree", not by
+  rewriting the sentence.
+- A word that is grammatical but wrong in MEANING or collocation ("make a
+  mistake" written as "do a mistake", "raise" for "rise") is corrected the
+  same way, one word, with "why" naming the meaning problem.
 - "why" is a short reason, a few words.
 - List corrections in the order they appear in the text.
 - Correct ERRORS only. Do not rewrite correct sentences into your preferred

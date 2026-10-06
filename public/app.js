@@ -1563,7 +1563,7 @@
         <div class="wr-script">${markedScript(p.segments)}</div>
         ${p.corrections.length
           ? `<ol class="wr-fixes">${p.corrections.map(c =>
-              `<li><del>${esc(c.wrong)}</del> → <ins>${esc(c.right)}</ins>${c.why ? `<span class="muted"> — ${esc(c.why)}</span>` : ''}</li>`).join('')}</ol>`
+              `<li><del>${esc(c.wrong)}</del> → <ins>${esc(c.right || "(olib tashlang)")}</ins>${c.why ? `<span class="muted"> — ${esc(c.why)}</span>` : ''}</li>`).join('')}</ol>`
           : `<p class="muted" style="margin-top:8px">${esc(WR_UZ.noErrors)}</p>`}
       </div>
 

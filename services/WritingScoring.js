@@ -57,7 +57,7 @@ export function lengthVerdict(key, words, minWords) {
  */
 export function locateCorrections(text, corrections = []) {
   const source = String(text || '');
-  const placed = [];
+  const located = [];
   let cursor = 0;
 
   for (const item of Array.isArray(corrections) ? corrections : []) {
@@ -71,20 +71,113 @@ export function locateCorrections(text, corrections = []) {
     if (start === -1) start = source.indexOf(wrong);
     if (start === -1) continue;
 
-    const end = start + wrong.length;
-    if (placed.some(p => start < p.end && end > p.start)) continue;
-
-    placed.push({
-      start,
-      end,
-      wrong,
-      right,
-      why: String(item?.why ?? '').slice(0, 300)
-    });
-    cursor = end;
+    located.push({ start, end: start + wrong.length, right, why: String(item?.why ?? '').slice(0, 300) });
+    cursor = start + wrong.length;
   }
 
-  return placed.sort((a, b) => a.start - b.start);
+  return narrowCorrections(source, located);
+}
+
+/** The words of a stretch of text, with where each one sits in it. */
+function wordsOf(text, offset = 0) {
+  const out = [];
+  const re = /\S+/g;
+  let m;
+  while ((m = re.exec(text))) out.push({ word: m[0], start: offset + m.index, end: offset + m.index + m[0].length });
+  return out;
+}
+
+/**
+ * Cut each correction down to the words that are actually wrong.
+ *
+ * The marker is told to quote only the wrong word, but it sometimes quotes a
+ * whole clause and rewrites it ("I am agree with this idea" -> "I agree with
+ * this idea"), and the student then sees the entire clause crossed out for
+ * one bad word. So the quoted span and its correction are compared word by
+ * word (longest common subsequence) and only the words that differ are
+ * crossed out: here, just "am", removed. A missing word ("in morning" ->
+ * "in the morning") is shown on the word after the gap ("morning" -> "the
+ * morning"), since there is nothing to cross out. One correction can become
+ * several small ones; each keeps the marker's reason.
+ *
+ * Also applied when an already-marked result is shown, so older results get
+ * the same precise marking.
+ */
+export function narrowCorrections(text, placed = []) {
+  const source = String(text || '');
+  const out = [];
+
+  for (const c of Array.isArray(placed) ? placed : []) {
+    const start = Number(c?.start);
+    const end = Number(c?.end);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > source.length || end <= start) continue;
+    const right = String(c?.right ?? '');
+    const why = String(c?.why ?? '');
+
+    const a = wordsOf(source.slice(start, end), start);
+    const b = right.split(/\s+/).filter(Boolean);
+
+    // Longest common subsequence of the two word lists.
+    const n = a.length;
+    const m = b.length;
+    const lcs = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        lcs[i][j] = a[i].word === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      }
+    }
+
+    // Walk it, collecting each run of differences as one hunk.
+    const hunks = [];
+    let hunk = null;
+    const flush = nextMatch => {
+      if (hunk) { hunk.next = nextMatch; hunks.push(hunk); hunk = null; }
+    };
+    let i = 0;
+    let j = 0;
+    let prev = null;
+    while (i < n || j < m) {
+      if (i < n && j < m && a[i].word === b[j]) {
+        flush(a[i]);
+        prev = a[i];
+        i++; j++;
+      } else if (j < m && (i >= n || lcs[i][j + 1] >= lcs[i + 1][j])) {
+        hunk = hunk || { del: [], ins: [], prev };
+        hunk.ins.push(b[j]);
+        j++;
+      } else {
+        hunk = hunk || { del: [], ins: [], prev };
+        hunk.del.push(a[i]);
+        i++;
+      }
+    }
+    flush(null);
+
+    for (const h of hunks) {
+      if (h.del.length) {
+        out.push({
+          start: h.del[0].start,
+          end: h.del[h.del.length - 1].end,
+          wrong: source.slice(h.del[0].start, h.del[h.del.length - 1].end),
+          right: h.ins.join(' '),
+          why
+        });
+      } else if (h.next) {
+        out.push({ start: h.next.start, end: h.next.end, wrong: h.next.word, right: `${h.ins.join(' ')} ${h.next.word}`, why });
+      } else if (h.prev) {
+        out.push({ start: h.prev.start, end: h.prev.end, wrong: h.prev.word, right: `${h.prev.word} ${h.ins.join(' ')}`, why });
+      }
+    }
+  }
+
+  // Overlaps cannot both be drawn; the earlier one wins.
+  const kept = [];
+  for (const c of out.sort((x, y) => x.start - y.start)) {
+    if (c.wrong === c.right) continue;
+    if (kept.some(k => c.start < k.end && c.end > k.start)) continue;
+    kept.push(c);
+  }
+  return kept;
 }
 
 /**
@@ -162,6 +255,7 @@ export default {
   countWords,
   lengthVerdict,
   locateCorrections,
+  narrowCorrections,
   correctionSegments,
   scoreWriting,
   PARTIAL_LEVEL_CAP

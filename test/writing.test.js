@@ -93,8 +93,10 @@ test('corrections: exact quotes placed in order, repeats corrected in place', ()
     { wrong: 'not in text', right: 'x' }
   ]);
   assert.equal(placed.length, 2);
-  assert.equal(placed[0].start, 0);
-  assert.equal(placed[1].start, text.lastIndexOf('I goes'));
+  // Narrowed to the one wrong word: "goes" -> "go", not "I goes" -> "I go".
+  assert.equal(placed[0].start, text.indexOf('goes'));
+  assert.equal(placed[0].wrong, 'goes');
+  assert.equal(placed[1].start, text.lastIndexOf('I goes') + 2);
 
   const segments = correctionSegments(text, placed);
   const rebuilt = segments.map(s => (s.wrong !== undefined ? s.wrong : s.text)).join('');

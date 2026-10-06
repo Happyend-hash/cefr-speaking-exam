@@ -29,6 +29,7 @@ import {
   countWords,
   lengthVerdict,
   locateCorrections,
+  narrowCorrections,
   correctionSegments,
   scoreWriting
 } from './WritingScoring.js';
@@ -160,6 +161,9 @@ export function presentWritingAttempt(attempt) {
     const slot = a.parts?.[meta.key] || {};
     const marked = Number.isFinite(slot.band);
     const brief = partBrief(a, meta.key);
+    // Re-narrowed on display, so results marked before corrections were
+    // narrowed to the wrong words also show only those words crossed out.
+    const fixes = marked ? narrowCorrections(slot.text, slot.corrections || []) : [];
 
     return {
       key: meta.key,
@@ -179,8 +183,8 @@ export function presentWritingAttempt(attempt) {
       next: marked ? writingNextBand(meta.key, slot.band) : null,
       reasoning: slot.reasoning || '',
       feedback: slot.feedback || '',
-      corrections: slot.corrections || [],
-      segments: marked ? correctionSegments(slot.text, slot.corrections || []) : [],
+      corrections: fixes,
+      segments: marked ? correctionSegments(slot.text, fixes) : [],
       underLength: slot.underLength?.applied
         ? { threshold: slot.underLength.threshold, cap: slot.underLength.cap, markerBand: slot.underLength.markerBand }
         : null
@@ -251,7 +255,7 @@ export function writingEmail(view, student) {
     ${p.corrections.length
       ? `<ol style="margin:10px 0 0;padding-left:20px;font-size:13px;color:#333">
            ${p.corrections.map(c =>
-             `<li><del style="color:#b42318">${escapeHtml(c.wrong)}</del> → <strong style="color:#067647">${escapeHtml(c.right)}</strong>${c.why ? ` — ${escapeHtml(c.why)}` : ''}</li>`
+             `<li><del style="color:#b42318">${escapeHtml(c.wrong)}</del> → <strong style="color:#067647">${escapeHtml(c.right || "(olib tashlang)")}</strong>${c.why ? ` — ${escapeHtml(c.why)}` : ''}</li>`
            ).join('')}
          </ol>`
       : ''}
