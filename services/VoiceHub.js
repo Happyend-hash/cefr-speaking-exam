@@ -401,6 +401,8 @@ export class VoiceHub {
       topic: room.topic,
       sessionId: room.sessionId,
       startedAt: room.startedAt,
+      max: room.kind === 'club' ? room.max : 2,
+      premiumSeats: room.kind === 'club' ? PREMIUM_SEATS : 0,
       members: [...room.members].map(id => this.memberView(id))
     };
   }

@@ -2487,6 +2487,8 @@
     // In a call the call is the whole screen; its own chat is inside it.
     if (vc.room) return roomScreen();
     const tab = ['chat', 'games'].includes(ch.tab) ? ch.tab : 'voice';
+    // Inside a chat room the room is the whole screen, like a messenger.
+    if (tab === 'chat' && ch.view === 'room' && ch.room) return chatScreen();
     const tabBtn = (id, label, iconName) =>
       `<button class="ch-tab ${tab === id ? 'is-current' : ''}" data-ch-tab="${id}" aria-pressed="${tab === id}">${icon(iconName)} ${label}</button>`;
     return `
@@ -2528,22 +2530,26 @@
       // Full for everyone else; a Premium student still has the gold seat.
       const premiumSeat = r.count >= r.max && r.count < r.max + extra && iAmPremium;
       const full = r.count >= r.max && !premiumSeat;
-      const seats = Array.from({ length: r.max }, (_, i) => `<span class="vc-seat ${i < r.count ? 'is-taken' : ''}"></span>`).join('')
-        + (extra ? `<span class="vc-seat is-gold ${r.count > r.max ? 'is-taken' : ''}" title="${esc(PR_UZ.goldSeat)}"></span>` : '');
-      const faces = (r.people || []).map(p =>
-        `<span class="vc-face${premiumClass(p)}" title="${esc(p.name)}">${picInner(p)}</span>`).join('');
-      return `<div class="vc-room-row">
-        <div class="vc-room-info">
-          <div class="vc-room-name"><strong>${esc(r.name)}</strong>${r.level ? `<span class="chip chip-speaking">${esc(r.level)}</span>` : ''}</div>
-          <div class="vc-room-meta">
-            <span class="vc-seats" aria-label="${r.count} / ${r.max}">${seats}<span class="muted">${Math.min(r.count, r.max)}/${r.max}${r.count > r.max ? ' +👑' : ''}</span></span>
-            ${r.count ? `<span class="vc-faces" title="${esc(r.names.join(', '))}">${faces}</span>` : ''}
-          </div>
+      const people = r.people || [];
+      const seats = Array.from({ length: r.max }, (_, i) => {
+        const p = people[i];
+        return p
+          ? `<span class="vl-seat is-taken${premiumClass(p)}" title="${esc(p.name)}">${picInner(p)}</span>`
+          : `<span class="vl-seat"></span>`;
+      }).join('')
+        + (extra ? `<span class="vl-seat is-gold ${r.count > r.max ? 'is-taken' : ''}" title="${esc(PR_UZ.goldSeat)}">${r.count > r.max && people[r.max] ? picInner(people[r.max]) : CROWN}</span>` : '');
+      return `<article class="vl-card ${r.count ? 'is-live' : ''}">
+        <div class="vl-card-top">
+          ${levelBadge(r.level)}
+          ${r.count ? `<span class="vl-live"><span></span>LIVE</span>` : ''}
+          <span class="vl-count">${Math.min(r.count, r.max)}/${r.max}${r.count > r.max ? ' +👑' : ''}</span>
         </div>
-        <button class="btn ${full ? 'btn-ghost' : ''}${premiumSeat ? ' btn-gold' : ''}" data-vc-join="${esc(r.id)}" ${full || !vc.connected ? 'disabled' : ''}>
-          ${full ? VC_UZ.full : premiumSeat ? `${CROWN} ${PR_UZ.goldSeat}` : VC_UZ.join}
+        <h3 class="vl-name">${esc(r.name)}</h3>
+        <div class="vl-seats" aria-label="${r.count} / ${r.max}">${seats}</div>
+        <button class="btn btn-block ${full ? 'btn-ghost' : ''}${premiumSeat ? ' btn-gold' : ''}" data-vc-join="${esc(r.id)}" ${full || !vc.connected ? 'disabled' : ''}>
+          ${full ? VC_UZ.full : premiumSeat ? `${CROWN} ${PR_UZ.goldSeat}` : `${icon('mic')} ${VC_UZ.join}`}
         </button>
-      </div>`;
+      </article>`;
     }).join('');
 
     return `
@@ -2557,9 +2563,9 @@
         </div>
         <div class="vc-partner-action">${partner}</div>
       </div>
-      <section class="card list-card vc-rooms">
-        <h2>${VC_UZ.clubsTitle}</h2>
-        ${clubs}
+      <section class="vc-rooms">
+        <h3 class="cx-section">${VC_UZ.clubsTitle}</h3>
+        <div class="vl-cards">${clubs}</div>
       </section>
       ${adSlot('club')}
       ${vc.status.relay ? '' : `<p class="muted" style="font-size:13px">${VC_UZ.noRelay}</p>`}`;
@@ -2585,16 +2591,21 @@
     const room = vc.room;
     const others = room.members.filter(m => m.id !== vc.me);
     const me = room.members.find(m => m.id === vc.me) || { id: vc.me, name: VC_UZ.you };
+    const max = room.max || (room.kind === 'pair' ? 2 : 5);
     const person = (m, isMe) => {
       const peer = vc.peers.get(m.id);
       const status = isMe ? '' : peer?.state === 'connected' ? '' : peer?.state === 'failed' ? VC_UZ.failedPeer : VC_UZ.connectingPeer;
       return `<div class="vc-person ${isMe ? 'is-me' : ''}" id="vc-p-${esc(m.id)}">
-        <div class="vc-avatar${premiumClass(m)}">${picInner(m)}</div>
+        <div class="vc-avatar${premiumClass(m)}">${picInner(m)}${isMe && vc.muted ? `<span class="vr-muted" title="${esc(VC_UZ.unmute)}">${icon('mic')}</span>` : ''}</div>
         <div class="vc-person-name">${nameMarkup(m)}${isMe ? ` <span class="lb-you">${VC_UZ.you}</span>` : ''}</div>
-        <div class="vc-person-meta">${m.level ? esc(m.level) : ''}${isMe && vc.muted ? ' · 🔇' : ''}</div>
+        <div class="vc-person-meta">${m.level ? esc(m.level) : ''}</div>
         ${isMe ? '' : `<div class="vc-person-state" id="vc-s-${esc(m.id)}">${esc(status)}</div>`}
       </div>`;
     };
+    // The free seats are drawn too, so a club looks like a table with room at it.
+    const empty = Math.max(0, max - room.members.length);
+    const emptySeats = Array.from({ length: empty }, () =>
+      `<div class="vc-person is-empty"><div class="vc-avatar">${PLUS}</div><div class="vc-person-name">${CH_UZ.seatEmpty}</div></div>`).join('');
 
     const reportForm = vc.reportOpen ? `<div class="card vc-report">
         <label class="field"><span class="muted" style="font-size:13px">${VC_UZ.reportWho}</span>
@@ -2608,34 +2619,40 @@
       </div>` : '';
 
     return `
-      <div class="vc-room-head">
-        <div>
-          <div class="muted" style="font-size:13px">${esc(room.name)}</div>
-          <div class="vc-timer" id="vc-timer">${room.kind === 'pair' ? fmtTime(PAIR_SECONDS) : '00:00'}</div>
+      <section class="vr-stage ${room.kind === 'pair' ? 'is-pair' : ''}">
+        <div class="vr-top">
+          <div class="vr-title-block">
+            <div class="vr-title">${esc(room.name)}</div>
+            <div class="vr-sub">${icon('users')} ${room.members.length}/${max}</div>
+          </div>
+          <div class="vr-top-right">
+            <span class="vr-rec"><span></span>REC</span>
+            <span class="vc-timer vr-timer" id="vc-timer">${room.kind === 'pair' ? fmtTime(PAIR_SECONDS) : '00:00'}</span>
+          </div>
         </div>
-        <span class="vc-rec"><span></span>${VC_UZ.recording}</span>
-      </div>
+        ${vc.taboo ? '' : topicCard(room.topic)}
+        <div class="vc-people vr-seats">
+          ${person(me, true)}
+          ${others.map(m => person(m, false)).join('')}
+          ${emptySeats}
+        </div>
+        ${others.length ? '' : `<p class="vr-alone">${VC_UZ.alone}</p>`}
+        <div class="vc-controls vr-controls">
+          <button class="vc-btn vr-btn ${vc.muted ? 'is-on' : ''}" data-vc="mute" aria-pressed="${vc.muted}"><span class="vr-btn-ic">${icon('mic')}</span><span>${vc.muted ? VC_UZ.unmute : VC_UZ.mute}</span></button>
+          ${others.length ? `<button class="vc-btn vr-btn" data-vc="report-open"><span class="vr-btn-ic">${icon('flag')}</span><span>${VC_UZ.report}</span></button>` : ''}
+          <button class="vc-btn vr-btn vc-leave" data-vc="leave"><span class="vr-btn-ic">${CLOSE_X}</span><span>${VC_UZ.leave}</span></button>
+        </div>
+      </section>
       ${vc.notice ? `<div class="alert alert-warn">${esc(vc.notice)}</div>` : ''}
-      ${vc.taboo ? '' : topicCard(room.topic)}
       ${tabooPanel()}
-      <div class="vc-people">
-        ${person(me, true)}
-        ${others.map(m => person(m, false)).join('')}
-      </div>
-      ${others.length ? '' : `<p class="muted" style="text-align:center">${VC_UZ.alone}</p>`}
       ${reportForm}
-      <div class="vc-controls">
-        <button class="vc-btn ${vc.muted ? 'is-on' : ''}" data-vc="mute">${icon('mic')}<span>${vc.muted ? VC_UZ.unmute : VC_UZ.mute}</span></button>
-        ${others.length ? `<button class="vc-btn" data-vc="report-open">${icon('message')}<span>${VC_UZ.report}</span></button>` : ''}
-        <button class="vc-btn vc-leave" data-vc="leave">${icon('right')}<span>${VC_UZ.leave}</span></button>
-      </div>
-      <div class="card ch-call">
+      <section class="card ch-call">
         <div class="ch-call-head">${icon('message')} <strong>${CH_UZ.callTitle}</strong></div>
-        <div class="ch-list ch-list-call" id="ch-call-list" data-keep-scroll>
-          ${vc.chat.length ? vc.chat.map(m => messageMarkup(m, 'call')).join('') : `<p class="muted ch-empty">${CH_UZ.callEmpty}</p>`}
+        <div class="ch-list ch-list-call cx-msgs" id="ch-call-list" data-keep-scroll>
+          ${vc.chat.length ? messagesMarkup(vc.chat, 'call') : `<p class="muted ch-empty">${CH_UZ.callEmpty}</p>`}
         </div>
         ${composerMarkup('ch-call-input', 'call')}
-      </div>`;
+      </section>`;
   }
 
   function afterCard() {
@@ -2862,9 +2879,10 @@
   const CH_UZ = {
     tabVoice: 'Ovozli xonalar',
     tabChat: 'Chat',
-    sub: "Boshqa o'quvchilar bilan ingliz tilida yozishing. Xabarlarni ustoz ham ko'radi.",
+    sub: "Boshqa o'quvchilar bilan ingliz tilida yozishing va ovozli xabar yuboring. Xabarlarni ustoz ham ko'radi.",
     roomsTitle: 'Xonalar',
     online: n => (n ? `${n} kishi shu yerda` : "Hozir hech kim yo'q"),
+    onlineShort: n => `${n} online`,
     placeholder: 'Write in English…',
     send: 'Yuborish',
     report: 'Shikoyat',
@@ -2880,7 +2898,52 @@
     kicked: 'Ustoz sizni chatdan chiqardi.',
     you: 'siz',
     callTitle: 'Chat',
-    callEmpty: "Bu yerga yozishingiz mumkin — masalan, so'zni yozib ko'rsatish uchun."
+    callEmpty: "Bu yerga yozishingiz mumkin — masalan, so'zni yozib ko'rsatish uchun.",
+    // Rooms list
+    listTitle: 'Suhbat xonalari',
+    listBody: "Mavzu tanlang, 10 kishigacha yozishing va ovozli xabar yuboring.",
+    open: 'Xona ochish',
+    openPremium: 'Xona ochish · Premium',
+    openLocked: "Xona ochish faqat Premium o'quvchilar uchun. Paket olsangiz, Premium sovg'a.",
+    fixedTitle: 'Umumiy xonalar',
+    communityTitle: "O'quvchilar xonalari",
+    noCommunity: "Hozircha ochiq xona yo'q. Premium o'quvchilar o'z xonasini ochishi mumkin.",
+    join: 'Kirish',
+    full: "To'la",
+    host: 'Xona egasi',
+    seats: (n, max) => `${n}/${max}`,
+    // Create form
+    newTitle: 'Yangi xona',
+    newName: 'Xona nomi',
+    newNamePh: 'Masalan: Travel stories',
+    newTopic: 'Mavzu (ixtiyoriy)',
+    newTopicPh: 'Masalan: Your best trip and why',
+    newLevel: 'Daraja',
+    anyLevel: 'Hammaga',
+    create: 'Ochish',
+    creating: 'Ochilmoqda…',
+    // Room
+    back: 'Xonalar',
+    seatEmpty: "Bo'sh joy",
+    remove: 'Xonadan chiqarish',
+    closeRoom: 'Xonani yopish',
+    closeAsk: 'Xonani yopasizmi? Hamma xonalar ro\'yxatiga qaytadi.',
+    closeYes: 'Ha, yopish',
+    closeNo: "Yo'q",
+    roomClosed: name => `"${name}" xonasi yopildi.`,
+    roomKicked: name => `Xona egasi sizni "${name}" xonasidan chiqardi.`,
+    // Voice messages
+    record: 'Ovozli xabar yozish',
+    recording: 'Yozilmoqda…',
+    voiceSend: 'Yuborish',
+    voiceCancel: "O'chirish",
+    voiceSending: 'Yuborilmoqda…',
+    voicePlay: 'Ovozli xabarni tinglash',
+    voiceShort: "Juda qisqa — gapirib, keyin yuboring.",
+    voiceNoMic: "Mikrofonga ruxsat berilmadi. Brauzer sozlamalaridan ruxsat bering.",
+    voiceUnsupported: "Bu brauzer ovoz yozishni qo'llamaydi — Chrome yoki Safari'ning yangi versiyasidan foydalaning.",
+    voiceFailed: "Ovozli xabarni ochib bo'lmadi.",
+    voiceLimit: '1 daqiqagacha'
   };
 
   const ch = {
@@ -2889,14 +2952,27 @@
     abort: null,
     connected: false,
     me: null,
+    canOpen: false,
+    staff: false,
     rooms: [],
-    room: 'text-general',
+    community: [],
+    view: 'list',           // 'list' of rooms, or inside one 'room'
+    room: null,
+    info: null,             // the open room as the server described it on joining
     messages: [],
     loadingRoom: false,
     error: '',
-    reportFor: null,       // message id with the report form open
-    sending: false
+    notice: '',
+    reportFor: null,        // message id with the report form open
+    sending: false,
+    creating: false,        // the "new room" form is open
+    newLevel: '',
+    busy: false,
+    seatMenu: null,         // seat (user id) the host tapped
+    confirmClose: false
   };
+
+  const VOICE_MAX_SECONDS = 60;
 
   /** Read a server-sent event stream opened with fetch (keeps the token out of the URL). */
   async function readEvents(path, ctl, onEvent) {
@@ -2962,42 +3038,65 @@
     ch.connected = false;
     ch.abort?.abort();
     ch.reportFor = null;
+    ch.seatMenu = null;
+    ch.confirmClose = false;
+    // Off the screen means out of the room: the server frees the seat when
+    // the stream closes, and coming back starts at the list.
+    backToRooms({ tellServer: false });
   }
+
+  const chatVisible = () => state.screen === 'speak' && ch.tab === 'chat' && !vc.room;
 
   function onChatEvent(event, data) {
     switch (event) {
       case 'hello':
         ch.me = data.you;
         ch.rooms = data.rooms || [];
+        ch.community = data.community || [];
         ch.error = '';
         // The server forgets which room we were in when the stream drops,
         // so (re)open it — this also reloads anything missed meanwhile.
-        openChatRoom(ch.room);
+        if (ch.view === 'room' && ch.room) openChatRoom(ch.room, { quiet: true });
         break;
-      case 'rooms':
+      case 'me':
+        ch.canOpen = Boolean(data.canOpen);
+        ch.staff = Boolean(data.staff);
+        break;
+      case 'rooms': {
+        const before = JSON.stringify(ch.community);
         ch.rooms = data.rooms || [];
-        // Only the online counts changed: update them in place, so a busy
-        // lobby does not redraw the page under someone who is typing.
-        if (patchRoomCounts()) return;
+        ch.community = data.community || [];
+        // Only the online counts of the fixed rooms changed: update them in
+        // place, so the page is not redrawn under someone who is typing.
+        if (JSON.stringify(ch.community) === before && patchRoomCounts()) return;
         break;
+      }
       case 'message':
-        if (data.room !== ch.room || ch.messages.some(m => m.id === data.id)) return;
+        if (data.room !== ch.room || ch.view !== 'room' || ch.messages.some(m => m.id === data.id)) return;
         ch.messages.push(data);
         if (ch.messages.length > 200) ch.messages.splice(0, ch.messages.length - 200);
         break;
       case 'deleted':
-        ch.messages = ch.messages.map(m => (m.id === data.id ? { ...m, text: '', deleted: true } : m));
+        ch.messages = ch.messages.map(m => (m.id === data.id ? { ...m, text: '', audio: undefined, deleted: true } : m));
+        break;
+      case 'room-closed':
+      case 'room-kicked':
+        if (data.room === ch.room) {
+          backToRooms({ tellServer: false });
+          ch.notice = event === 'room-closed' ? CH_UZ.roomClosed(data.name) : CH_UZ.roomKicked(data.name);
+        }
         break;
       case 'kicked':
         stopChat();
         state.error = data.reason || CH_UZ.kicked;
         break;
     }
-    if (state.screen === 'speak' && ch.tab === 'chat' && !vc.room) render();
+    if (chatVisible()) render();
   }
 
   function patchRoomCounts() {
-    if (state.screen !== 'speak' || ch.tab !== 'chat') return true;
+    if (!chatVisible()) return true;
+    if (ch.view !== 'list') return ch.view === 'room' && !ch.rooms.some(r => r.id === ch.room);
     let all = true;
     for (const r of ch.rooms) {
       const el = document.getElementById(`ch-count-${r.id}`);
@@ -3007,22 +3106,46 @@
     return all;
   }
 
-  async function openChatRoom(room) {
+  async function openChatRoom(room, { quiet = false } = {}) {
+    if (!quiet && ch.room !== room) { ch.messages = []; ch.info = null; }
     ch.room = room;
+    ch.view = 'room';
     ch.loadingRoom = true;
     ch.reportFor = null;
-    if (state.screen === 'speak') render();
+    ch.seatMenu = null;
+    ch.confirmClose = false;
+    ch.notice = '';
+    if (chatVisible()) render();
     try {
       const data = await api('/chat/join', { method: 'POST', body: { room } });
       if (ch.room !== room) return;
       ch.messages = data.messages || [];
+      ch.info = data.info || null;
       ch.error = '';
     } catch (error) {
-      ch.error = error.message;
+      // Full, closed, or removed from it: back to the list, and say why.
+      if (ch.room === room) {
+        backToRooms({ tellServer: false });
+        ch.notice = error.message;
+      }
     }
     ch.loadingRoom = false;
-    if (state.screen === 'speak') render();
+    if (chatVisible()) render();
     scrollChatToEnd();
+  }
+
+  function backToRooms({ tellServer = true } = {}) {
+    if (tellServer && ch.room) api('/chat/leave', { method: 'POST' }).catch(() => {});
+    cancelVoiceMessage();
+    stopVoicePlayback();
+    ch.view = 'list';
+    ch.room = null;
+    ch.info = null;
+    ch.messages = [];
+    ch.reportFor = null;
+    ch.seatMenu = null;
+    ch.confirmClose = false;
+    ch.error = '';
   }
 
   function scrollChatToEnd() {
@@ -3033,14 +3156,50 @@
     const d = new Date(at);
     return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   };
+  const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-  /** One message. `where` is 'room' or 'call' — both can be reported. */
-  function messageMarkup(m, where) {
+  /** A voice message's waveform: the same shape every time it is drawn. */
+  function waveBars(id, n = 24) {
+    let h = 0;
+    for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    const bars = [];
+    for (let i = 0; i < n; i++) {
+      h = (h * 1103515245 + 12345) >>> 0;
+      const v = 30 + (h % 70);                       // 30–99 %
+      const edge = Math.min(1, (i + 1) / 4, (n - i) / 4);   // taper the ends
+      bars.push(`<i style="height:${Math.round(Math.max(18, v * edge))}%"></i>`);
+    }
+    return bars.join('');
+  }
+
+  const PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" fill="currentColor"/></svg>';
+  const PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/></svg>';
+  const SEND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z" fill="currentColor"/></svg>';
+  const CLOSE_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  const PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
+  function voiceMarkup(m) {
+    const seconds = Math.max(1, m.seconds || 1);
+    return `<button type="button" class="cx-voice" data-vp="${esc(m.id)}" data-src="${esc(m.audio || '')}" data-sec="${seconds}" aria-label="${esc(CH_UZ.voicePlay)}, ${mmss(seconds)}">
+      <span class="cx-play">${PLAY}</span>
+      <span class="cx-wave">${waveBars(m.id)}</span>
+      <span class="cx-dur">${mmss(seconds)}</span>
+    </button>`;
+  }
+
+  /**
+   * One message. `where` is 'room' or 'call' — both can be reported.
+   * `prev` is the message before it: a run of messages from one person within
+   * a few minutes shows the face and name once, like any messenger.
+   */
+  function messageMarkup(m, where, prev) {
     if (m.system) return `<div class="ch-system">${esc(m.text)}</div>`;
     const mine = m.user === (where === 'call' ? vc.me : ch.me);
+    const cont = prev && !prev.system && prev.user === m.user && (new Date(m.at) - new Date(prev.at)) < 3 * 60 * 1000;
+    const voice = m.kind === 'voice' && !m.deleted && m.audio;
     const body = m.deleted
       ? `<span class="ch-deleted">${CH_UZ.deleted}</span>`
-      : esc(m.text);
+      : voice ? voiceMarkup(m) : esc(m.text);
     const reportForm = ch.reportFor === m.id
       ? `<div class="ch-report">
            <input type="text" id="ch-report-why" data-keep maxlength="300" placeholder="${esc(CH_UZ.reportWhy)}">
@@ -3048,60 +3207,200 @@
            <button class="btn btn-ghost btn-sm" data-ch-report-close>${CH_UZ.cancel}</button>
          </div>`
       : '';
-    return `<div class="ch-row ${mine ? 'is-mine' : ''}">
-      ${mine ? '' : `<span class="ch-av${premiumClass(m)}">${picInner(m)}</span>`}
-      <div class="ch-msg ${mine ? 'is-mine' : ''}${m.premium ? ' is-premium' : ''}" data-msg="${esc(m.id)}">
-      <div class="ch-meta">
-        <span class="ch-name">${nameMarkup(m)}${mine ? ` <span class="lb-you">${CH_UZ.you}</span>` : ''}</span>
-        ${m.level ? `<span class="ch-level">${esc(m.level)}</span>` : ''}
-        <span class="ch-time">${esc(clock(m.at))}</span>
-        ${!mine && !m.deleted ? `<button class="ch-flag" data-ch-report="${esc(m.id)}" title="${CH_UZ.report}" aria-label="${CH_UZ.report}">⚑</button>` : ''}
-      </div>
-      <div class="ch-text">${body}</div>
-      ${reportForm}
+    const face = mine ? '' : cont
+      ? '<span class="cx-face-gap"></span>'
+      : `<span class="ch-av${premiumClass(m)}">${picInner(m)}</span>`;
+    return `<div class="cx-row ${mine ? 'is-mine' : ''} ${cont ? 'is-cont' : ''}">
+      ${face}
+      <div class="cx-col">
+        ${mine || cont ? '' : `<div class="cx-who">${nameMarkup(m)}${m.level ? `<span class="ch-level">${esc(m.level)}</span>` : ''}</div>`}
+        <div class="cx-bubble ${voice ? 'is-voice' : ''}${m.premium && !mine ? ' is-premium' : ''}" data-msg="${esc(m.id)}">${body}</div>
+        <div class="cx-meta">
+          <span class="ch-time">${esc(clock(m.at))}</span>
+          ${!mine && !m.deleted ? `<button class="ch-flag" data-ch-report="${esc(m.id)}" title="${CH_UZ.report}" aria-label="${CH_UZ.report}">${icon('flag')}</button>` : ''}
+        </div>
+        ${reportForm}
       </div>
     </div>`;
   }
 
+  const messagesMarkup = (list, where) => list.map((m, i) => messageMarkup(m, where, list[i - 1])).join('');
+
+  /** The typing bar. Rooms also get the microphone for voice messages; a call does not need one. */
   function composerMarkup(id, where) {
-    return `<form class="ch-compose" data-ch-compose="${where}" autocomplete="off">
-      <input type="text" id="${id}" data-keep maxlength="500" placeholder="${esc(CH_UZ.placeholder)}" aria-label="${esc(CH_UZ.placeholder)}">
-      <button class="btn" type="submit">${CH_UZ.send}</button>
+    const voice = where === 'room';
+    if (voice && (vm.rec || vm.sending)) {
+      return `<div class="cx-compose is-recording">
+        <button type="button" class="cx-round cx-cancel" data-vm="cancel" aria-label="${CH_UZ.voiceCancel}" ${vm.sending ? 'disabled' : ''}>${CLOSE_X}</button>
+        <div class="cx-recbar" role="status">
+          <span class="cx-recdot"></span>
+          <span class="cx-rectime" id="vm-time">${mmss(vmSeconds())}</span>
+          <span class="cx-reclabel">${vm.sending ? CH_UZ.voiceSending : CH_UZ.recording}</span>
+          <span class="cx-reclimit">${CH_UZ.voiceLimit}</span>
+        </div>
+        <button type="button" class="cx-round cx-send" data-vm="send" aria-label="${CH_UZ.voiceSend}" ${vm.sending ? 'disabled' : ''}>${SEND}</button>
+      </div>`;
+    }
+    return `<form class="cx-compose" data-ch-compose="${where}" autocomplete="off">
+      ${voice ? `<button type="button" class="cx-round cx-mic" data-vm="start" aria-label="${CH_UZ.record}" title="${CH_UZ.record}">${icon('mic')}</button>` : ''}
+      <input type="text" id="${id}" data-keep maxlength="500" placeholder="${esc(CH_UZ.placeholder)}" aria-label="${esc(CH_UZ.placeholder)}" enterkeyhint="send">
+      <button class="cx-round cx-send" type="submit" aria-label="${CH_UZ.send}">${SEND}</button>
     </form>`;
   }
 
-  function chatScreen() {
-    const rooms = (ch.rooms.length ? ch.rooms : [
+  // ------------------------------------------------------------ the rooms list
+
+  function levelBadge(level, big) {
+    return `<span class="cx-lvl ${big ? 'is-big' : ''} lvl-${esc((level || 'all').toLowerCase())}">${esc(level || 'All')}</span>`;
+  }
+
+  function avatarStack(people, max = 5) {
+    const shown = people.slice(0, max).map(p =>
+      `<span class="cx-stack-av${premiumClass(p)}" title="${esc(p.name)}">${picInner(p)}</span>`).join('');
+    const more = people.length > max ? `<span class="cx-stack-more">+${people.length - max}</span>` : '';
+    return people.length ? `<span class="cx-stack">${shown}${more}</span>` : '';
+  }
+
+  function createFormMarkup() {
+    const lvl = (value, label) =>
+      `<button type="button" class="cx-seg ${ch.newLevel === value ? 'is-on' : ''}" data-cx-level="${value}" aria-pressed="${ch.newLevel === value}">${label}</button>`;
+    return `<form class="card cx-create" data-cx-create autocomplete="off">
+      <div class="cx-create-head"><h3>${CH_UZ.newTitle}</h3>
+        <button type="button" class="cx-icon-btn" data-cx="create-close" aria-label="${CH_UZ.cancel}">${CLOSE_X}</button></div>
+      <label class="field"><span>${CH_UZ.newName}</span>
+        <input type="text" id="cx-new-name" data-keep maxlength="40" required placeholder="${esc(CH_UZ.newNamePh)}"></label>
+      <label class="field"><span>${CH_UZ.newTopic}</span>
+        <input type="text" id="cx-new-topic" data-keep maxlength="120" placeholder="${esc(CH_UZ.newTopicPh)}"></label>
+      <div class="field"><span>${CH_UZ.newLevel}</span>
+        <div class="cx-segs" role="group">${lvl('', CH_UZ.anyLevel)}${lvl('B1', 'B1')}${lvl('B2', 'B2')}${lvl('C1', 'C1')}</div></div>
+      <button class="btn btn-block" type="submit" ${ch.busy ? 'disabled' : ''}>${ch.busy ? CH_UZ.creating : CH_UZ.create}</button>
+    </form>`;
+  }
+
+  function roomCardMarkup(r) {
+    const full = r.count >= r.max;
+    const seats = Array.from({ length: r.max }, (_, i) => `<i class="${i < r.count ? 'is-taken' : ''}"></i>`).join('');
+    return `<article class="cx-card">
+      <div class="cx-card-top">
+        ${levelBadge(r.level)}
+        <span class="cx-seatline" aria-label="${r.count} / ${r.max}"><span class="cx-seatdots">${seats}</span><b>${CH_UZ.seats(r.count, r.max)}</b></span>
+      </div>
+      <h3 class="cx-card-name">${esc(r.name)}</h3>
+      ${r.topic ? `<p class="cx-card-topic">${esc(r.topic)}</p>` : ''}
+      <div class="cx-card-foot">
+        <span class="cx-hostline"><span class="cx-host-av${premiumClass(r.host)}">${picInner(r.host)}</span>
+          <span class="cx-host-name">${nameMarkup(r.host)}</span></span>
+        ${avatarStack(r.people.filter(p => p.id !== r.host.id), 4)}
+        <button class="btn btn-sm ${full ? 'btn-ghost' : ''}" data-ch-room="${esc(r.id)}" ${full ? 'disabled' : ''}>${full ? CH_UZ.full : CH_UZ.join}</button>
+      </div>
+    </article>`;
+  }
+
+  function roomsListMarkup() {
+    const fixed = (ch.rooms.length ? ch.rooms : [
       { id: 'text-general', name: 'General', online: 0 },
       { id: 'text-b1', name: 'B1 chat', level: 'B1', online: 0 },
       { id: 'text-b2', name: 'B2 chat', level: 'B2', online: 0 },
       { id: 'text-c1', name: 'C1 chat', level: 'C1', online: 0 }
-    ]).map(r => `<button class="ch-room ${r.id === ch.room ? 'is-current' : ''}" data-ch-room="${esc(r.id)}" aria-pressed="${r.id === ch.room}">
-        <span class="ch-room-name">${esc(r.name)}</span>
-        <span class="ch-room-count"><span class="ch-dot"></span><span id="ch-count-${esc(r.id)}">${r.online || 0}</span></span>
+    ]).map(r => `<button class="cx-tile" data-ch-room="${esc(r.id)}">
+        ${levelBadge(r.level, true)}
+        <span class="cx-tile-text"><span class="cx-tile-name">${esc(r.name)}</span>
+          <span class="cx-tile-count"><span class="ch-dot"></span><span id="ch-count-${esc(r.id)}">${r.online || 0}</span> online</span></span>
+        <span class="cx-chev">${icon('chevron')}</span>
       </button>`).join('');
 
-    const current = ch.rooms.find(r => r.id === ch.room);
+    const openBtn = ch.canOpen
+      ? `<button class="btn" data-cx="create-open" ${ch.connected ? '' : 'disabled'}>${PLUS} ${CH_UZ.open}</button>`
+      : `<button class="btn btn-gold" data-cx="premium">${CROWN} ${CH_UZ.openPremium}</button>`;
+
+    return `
+      ${ch.notice ? `<div class="alert alert-warn">${esc(ch.notice)}</div>` : ''}
+      ${ch.error ? `<div class="alert alert-warn">${esc(ch.error)}</div>` : ''}
+      <section class="cx-intro">
+        <div>
+          <h2>${CH_UZ.listTitle}</h2>
+          <p class="muted">${CH_UZ.listBody}</p>
+          ${ch.canOpen ? '' : `<p class="cx-locked">${CH_UZ.openLocked}</p>`}
+        </div>
+        ${ch.creating ? '' : openBtn}
+      </section>
+      ${ch.creating ? createFormMarkup() : ''}
+      <section>
+        <h3 class="cx-section">${CH_UZ.communityTitle}${ch.community.length ? ` <span class="cx-count">${ch.community.length}</span>` : ''}</h3>
+        ${ch.community.length
+          ? `<div class="cx-cards">${ch.community.map(roomCardMarkup).join('')}</div>`
+          : `<p class="cx-none">${CH_UZ.noCommunity}</p>`}
+      </section>
+      <section>
+        <h3 class="cx-section">${CH_UZ.fixedTitle}</h3>
+        <div class="cx-tiles">${fixed}</div>
+      </section>`;
+  }
+
+  // ------------------------------------------------------------ inside a room
+
+  function seatsMarkup(r, iRun) {
+    const seats = [];
+    const people = [...r.people].sort((a, b) => (a.id === r.host.id ? -1 : b.id === r.host.id ? 1 : 0));
+    for (let i = 0; i < r.max; i++) {
+      const p = people[i];
+      if (!p) {
+        seats.push(`<div class="cx-seat is-empty"><span class="cx-seat-av">${PLUS}</span><span class="cx-seat-name">${CH_UZ.seatEmpty}</span></div>`);
+        continue;
+      }
+      const isHost = p.id === r.host.id;
+      const canRemove = iRun && !isHost && p.id !== ch.me;
+      const inner = `<span class="cx-seat-av${premiumClass(p)}">${picInner(p)}${isHost ? `<span class="cx-host-tag">${CROWN}</span>` : ''}</span>
+        <span class="cx-seat-name">${esc(p.name)}${p.id === ch.me ? ` <span class="lb-you">${CH_UZ.you}</span>` : ''}</span>`;
+      seats.push(canRemove
+        ? `<button class="cx-seat ${ch.seatMenu === p.id ? 'is-open' : ''}" data-cx-seat="${esc(p.id)}" aria-expanded="${ch.seatMenu === p.id}">${inner}</button>`
+        : `<div class="cx-seat">${inner}</div>`);
+    }
+    const menuFor = ch.seatMenu && people.find(p => p.id === ch.seatMenu);
+    return `<div class="cx-seats" role="list">${seats.join('')}</div>
+      ${menuFor ? `<div class="cx-seat-menu"><span>${esc(menuFor.name)}</span>
+        <button class="btn btn-sm btn-danger" data-cx-remove="${esc(menuFor.id)}">${CH_UZ.remove}</button>
+        <button class="btn btn-ghost btn-sm" data-cx="seat-close">${CH_UZ.cancel}</button></div>` : ''}`;
+  }
+
+  function chatRoomMarkup() {
+    const fixed = ch.rooms.find(r => r.id === ch.room);
+    const community = ch.community.find(r => r.id === ch.room) || (ch.info?.host ? ch.info : null);
+    const name = community?.name || fixed?.name || ch.info?.name || '';
+    const iRun = Boolean(community) && (community.host?.id === ch.me || ch.staff);
+    const sub = community
+      ? `${levelBadge(community.level)} <span>${esc(CH_UZ.seats(community.count, community.max))}</span>${community.topic ? ` · <span class="cx-head-topic">${esc(community.topic)}</span>` : ''}`
+      : `<span>${ch.connected ? esc(CH_UZ.online(fixed?.online || 0)) : CH_UZ.connecting}</span>`;
     const list = ch.loadingRoom && !ch.messages.length
       ? `<div class="center-note"><span class="spinner"></span></div>`
       : ch.messages.length
-      ? ch.messages.map(m => messageMarkup(m, 'room')).join('')
+      ? messagesMarkup(ch.messages, 'room')
       : `<p class="muted ch-empty">${CH_UZ.empty}</p>`;
 
-    return `
-      <div class="ch-layout">
-        <div class="ch-rooms" role="group" aria-label="${CH_UZ.roomsTitle}">${rooms}</div>
-        <div class="card ch-panel">
-          <div class="ch-panel-head">
-            <strong>${esc(current?.name || 'General')}</strong>
-            <span class="muted" style="font-size:13px">${ch.connected ? esc(CH_UZ.online(current?.online || 0)) : CH_UZ.connecting}</span>
-          </div>
-          ${ch.error ? `<div class="alert alert-warn" style="margin:0">${esc(ch.error)}</div>` : ''}
-          <div class="ch-list" id="ch-room-list" data-keep-scroll>${list}</div>
-          ${composerMarkup('ch-room-input', 'room')}
-          <p class="muted ch-rules">${CH_UZ.rules}</p>
+    return `<section class="cx-room">
+      <header class="cx-head">
+        <button class="cx-icon-btn cx-back" data-cx="back" aria-label="${CH_UZ.back}">${icon('left')}</button>
+        <div class="cx-head-text">
+          <h2>${esc(name)}</h2>
+          <div class="cx-head-sub">${sub}</div>
         </div>
-      </div>`;
+        ${iRun ? `<button class="btn btn-ghost btn-sm cx-close-btn" data-cx="close-ask">${CH_UZ.closeRoom}</button>` : ''}
+      </header>
+      ${ch.confirmClose ? `<div class="cx-confirm"><span>${CH_UZ.closeAsk}</span>
+        <button class="btn btn-sm btn-danger" data-cx="close-yes">${CH_UZ.closeYes}</button>
+        <button class="btn btn-ghost btn-sm" data-cx="close-no">${CH_UZ.closeNo}</button></div>` : ''}
+      ${community ? seatsMarkup(community, iRun) : ''}
+      ${ch.error ? `<div class="alert alert-warn cx-inline-alert">${esc(ch.error)}</div>` : ''}
+      <div class="ch-list cx-msgs" id="ch-room-list" data-keep-scroll>${list}</div>
+      <div class="cx-foot">
+        ${composerMarkup('ch-room-input', 'room')}
+        <p class="ch-rules">${CH_UZ.rules}</p>
+      </div>
+    </section>`;
+  }
+
+  function chatScreen() {
+    return ch.view === 'room' && ch.room ? chatRoomMarkup() : roomsListMarkup();
   }
 
   async function sendChat(where, input) {
@@ -3133,19 +3432,204 @@
     }
   }
 
+  async function createRoom(form) {
+    const name = form.querySelector('#cx-new-name')?.value || '';
+    const topic = form.querySelector('#cx-new-topic')?.value || '';
+    if (ch.busy) return;
+    ch.busy = true; ch.error = ''; render();
+    try {
+      const room = await api('/chat/rooms', { method: 'POST', body: { name, topic, level: ch.newLevel || null } });
+      ch.creating = false;
+      ch.newLevel = '';
+      ['cx-new-name', 'cx-new-topic'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      ch.busy = false;
+      return openChatRoom(room.id);
+    } catch (error) {
+      ch.error = error.message;
+    }
+    ch.busy = false;
+    render();
+  }
+
+  // ------------------------------------------------------- voice messages
+  //
+  // Tap the microphone, speak (up to a minute), tap send. The recording is a
+  // normal file the server stores with the exam recordings; playing one back
+  // fetches it with the sign-in token, once, and keeps it for the visit.
+
+  const vm = { rec: null, stream: null, chunks: [], start: 0, timer: null, sending: false };
+  const vmSeconds = () => (vm.start ? Math.min(VOICE_MAX_SECONDS, (Date.now() - vm.start) / 1000) : 0);
+
+  async function startVoiceMessage() {
+    if (vm.rec || vm.sending) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      ch.error = CH_UZ.voiceUnsupported;
+      return render();
+    }
+    stopVoicePlayback();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch {
+      ch.error = CH_UZ.voiceNoMic;
+      return render();
+    }
+    if (ch.view !== 'room') { stream.getTracks().forEach(t => t.stop()); return; }
+    const type = recorderType();
+    let rec;
+    try {
+      rec = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: 32000 });
+    } catch {
+      stream.getTracks().forEach(t => t.stop());
+      ch.error = CH_UZ.voiceUnsupported;
+      return render();
+    }
+    vm.stream = stream;
+    vm.rec = rec;
+    vm.chunks = [];
+    vm.room = ch.room;
+    rec.ondataavailable = e => { if (e.data?.size) vm.chunks.push(e.data); };
+    rec.start(250);
+    vm.start = Date.now();
+    ch.error = '';
+    clearInterval(vm.timer);
+    vm.timer = setInterval(() => {
+      const el = document.getElementById('vm-time');
+      if (el) el.textContent = mmss(vmSeconds());
+      // A minute is the limit: send what there is.
+      if (vmSeconds() >= VOICE_MAX_SECONDS) finishVoiceMessage(true);
+    }, 250);
+    render();
+  }
+
+  function releaseMic() {
+    clearInterval(vm.timer);
+    vm.timer = null;
+    vm.stream?.getTracks().forEach(t => t.stop());
+    vm.stream = null;
+  }
+
+  /** Drop a recording in progress (leaving the room, the tab, or pressing ✕). */
+  function cancelVoiceMessage() {
+    const rec = vm.rec;
+    vm.rec = null;
+    vm.start = 0;
+    if (rec && rec.state !== 'inactive') {
+      rec.ondataavailable = null;
+      rec.onstop = null;
+      try { rec.stop(); } catch { /* already stopped */ }
+    }
+    releaseMic();
+  }
+
+  async function finishVoiceMessage(send) {
+    const rec = vm.rec;
+    if (!rec) return;
+    if (!send) { cancelVoiceMessage(); return render(); }
+    const seconds = vmSeconds();
+    const room = vm.room;
+    vm.rec = null;
+    vm.sending = true;
+    clearInterval(vm.timer);
+    render();
+    const blob = await new Promise(resolve => {
+      rec.onstop = () => resolve(new Blob(vm.chunks, { type: rec.mimeType || 'audio/webm' }));
+      try { rec.stop(); } catch { resolve(new Blob(vm.chunks, { type: rec.mimeType || 'audio/webm' })); }
+    });
+    releaseMic();
+    vm.start = 0;
+    try {
+      if (seconds < 1 || blob.size < 500) throw new Error(CH_UZ.voiceShort);
+      const form = new FormData();
+      form.append('room', room);
+      form.append('seconds', String(Math.round(seconds)));
+      form.append('audio', blob, `voice.${blob.type.includes('mp4') ? 'm4a' : 'webm'}`);
+      const m = await api('/chat/voice', { method: 'POST', form });
+      if (m.room === ch.room && !ch.messages.some(x => x.id === m.id)) ch.messages.push(m);
+      ch.error = '';
+    } catch (error) {
+      ch.error = error.message;
+    }
+    vm.sending = false;
+    if (chatVisible()) { render(); scrollChatToEnd(); }
+  }
+
+  // One player for the whole page, outside the redrawn markup: a new message
+  // arriving redraws the list, and must not stop what someone is listening to.
+  const vp = { audio: null, id: null, loading: null, urls: new Map() };
+
+  function stopVoicePlayback() {
+    if (vp.audio) { vp.audio.pause(); vp.audio.src = ''; }
+    vp.audio = null;
+    vp.id = null;
+    vp.loading = null;
+    paintVoice();
+  }
+
+  async function toggleVoice(el) {
+    const id = el.dataset.vp;
+    if (vp.id === id && vp.audio) {
+      if (vp.audio.paused) vp.audio.play().catch(() => {}); else vp.audio.pause();
+      return paintVoice();
+    }
+    stopVoicePlayback();
+    vp.id = id;
+    vp.loading = id;
+    vp.seconds = Number(el.dataset.sec) || 1;
+    paintVoice();
+    try {
+      let url = vp.urls.get(id);
+      if (!url) {
+        const response = await fetch(el.dataset.src, { headers: { Authorization: `Bearer ${state.token}` } });
+        if (!response.ok) throw new Error(String(response.status));
+        url = URL.createObjectURL(await response.blob());
+        vp.urls.set(id, url);
+      }
+      if (vp.id !== id) return;
+      const audio = new Audio(url);
+      vp.audio = audio;
+      audio.ontimeupdate = paintVoice;
+      audio.onpause = paintVoice;
+      audio.onplay = paintVoice;
+      audio.onended = () => { vp.audio = null; vp.id = null; paintVoice(); };
+      vp.loading = null;
+      await audio.play();
+    } catch {
+      if (vp.id === id) { vp.id = null; vp.loading = null; vp.audio = null; }
+      ch.error = CH_UZ.voiceFailed;
+      if (chatVisible()) render();
+    }
+    paintVoice();
+  }
+
+  /** Show which voice message is playing, and how far along, without redrawing. */
+  function paintVoice() {
+    root.querySelectorAll('.cx-voice').forEach(el => {
+      const on = el.dataset.vp === vp.id;
+      const playing = on && vp.audio && !vp.audio.paused;
+      el.classList.toggle('is-playing', Boolean(playing));
+      el.classList.toggle('is-loading', vp.loading === el.dataset.vp);
+      el.querySelector('.cx-play').innerHTML = playing ? PAUSE : PLAY;
+      const total = Number(el.dataset.sec) || 1;
+      const at = on && vp.audio ? vp.audio.currentTime : 0;
+      const frac = on ? Math.min(1, at / total) : 0;
+      const bars = el.querySelectorAll('.cx-wave i');
+      bars.forEach((b, i) => b.classList.toggle('is-done', on && (i + 0.5) / bars.length <= frac));
+      el.querySelector('.cx-dur').textContent = mmss(on && at ? Math.max(0, Math.ceil(total - at)) : total);
+    });
+  }
+
   function wireChat() {
     root.querySelectorAll('[data-ch-tab]').forEach(el =>
       el.addEventListener('click', () => {
         if (el.dataset.chTab !== ch.tab) openVoice(el.dataset.chTab);
       }));
     root.querySelectorAll('[data-ch-room]').forEach(el =>
-      el.addEventListener('click', () => {
-        if (el.dataset.chRoom !== ch.room || !ch.messages.length) openChatRoom(el.dataset.chRoom);
-      }));
+      el.addEventListener('click', () => openChatRoom(el.dataset.chRoom)));
     root.querySelectorAll('[data-ch-compose]').forEach(form =>
       form.addEventListener('submit', event => {
         event.preventDefault();
-        sendChat(form.dataset.chCompose, form.querySelector('input'));
+        sendChat(form.dataset.chCompose, form.querySelector('input[type="text"]'));
       }));
     root.querySelectorAll('[data-ch-report]').forEach(el =>
       el.addEventListener('click', () => {
@@ -3166,6 +3650,58 @@
           setState({ error: error.message });
         }
       }));
+
+    // Rooms
+    root.querySelectorAll('[data-cx]').forEach(el =>
+      el.addEventListener('click', async () => {
+        const action = el.dataset.cx;
+        if (action === 'back') { backToRooms(); return render(); }
+        if (action === 'create-open') { ch.creating = true; ch.notice = ''; render(); return document.getElementById('cx-new-name')?.focus(); }
+        if (action === 'create-close') { ch.creating = false; ch.error = ''; return render(); }
+        if (action === 'premium') return openTopup({ topupReason: 'premium' });
+        if (action === 'seat-close') { ch.seatMenu = null; return render(); }
+        if (action === 'close-ask') { ch.confirmClose = true; return render(); }
+        if (action === 'close-no') { ch.confirmClose = false; return render(); }
+        if (action === 'close-yes') {
+          const room = ch.room;
+          try {
+            await api(`/chat/rooms/${encodeURIComponent(room)}/close`, { method: 'POST' });
+          } catch (error) {
+            ch.error = error.message;
+            return render();
+          }
+          // The server's 'room-closed' takes everyone back; do it here too in case it is slow.
+          if (ch.room === room) { backToRooms({ tellServer: false }); render(); }
+        }
+      }));
+    root.querySelectorAll('[data-cx-level]').forEach(el =>
+      el.addEventListener('click', () => { ch.newLevel = el.dataset.cxLevel; render(); }));
+    root.querySelectorAll('[data-cx-create]').forEach(form =>
+      form.addEventListener('submit', event => { event.preventDefault(); createRoom(form); }));
+    root.querySelectorAll('[data-cx-seat]').forEach(el =>
+      el.addEventListener('click', () => { ch.seatMenu = ch.seatMenu === el.dataset.cxSeat ? null : el.dataset.cxSeat; render(); }));
+    root.querySelectorAll('[data-cx-remove]').forEach(el =>
+      el.addEventListener('click', async () => {
+        try {
+          await api(`/chat/rooms/${encodeURIComponent(ch.room)}/remove`, { method: 'POST', body: { userId: el.dataset.cxRemove } });
+          ch.seatMenu = null;
+        } catch (error) {
+          ch.error = error.message;
+        }
+        render();
+      }));
+
+    // Voice messages
+    root.querySelectorAll('[data-vm]').forEach(el =>
+      el.addEventListener('click', () => {
+        const action = el.dataset.vm;
+        if (action === 'start') return startVoiceMessage();
+        if (action === 'cancel') return finishVoiceMessage(false);
+        if (action === 'send') return finishVoiceMessage(true);
+      }));
+    root.querySelectorAll('.cx-voice').forEach(el =>
+      el.addEventListener('click', () => toggleVoice(el)));
+    paintVoice();
   }
 
   // ============================================================== INSTALL
@@ -4529,11 +5065,12 @@
   /**
    * The tab bar comes off wherever leaving would cost something or the
    * screen needs every pixel: a running question, the writing exam (the
-   * keyboard already takes half a phone), and a live call.
+   * keyboard already takes half a phone), a live call, and inside a chat
+   * room (it has its own back arrow, like any messenger).
    */
   const showTabs = () =>
     isStudentShell() && canLeave() && !['exam', 'writing-exam', 'eh', 'duel'].includes(state.screen) &&
-    !(state.screen === 'speak' && vc.room);
+    !(state.screen === 'speak' && (vc.room || (ch.tab === 'chat' && ch.view === 'room' && ch.room)));
 
   // ------------------------------------------------------------- the logo
   //

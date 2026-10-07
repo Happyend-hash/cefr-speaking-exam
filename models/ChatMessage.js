@@ -1,8 +1,9 @@
 import mongoose from 'mongoose';
 
 /**
- * One chat message — in a text room ('text-general', 'text-b2', …) or typed
- * inside a speaking call ('voice:<roomId>').
+ * One chat message — in a text room ('text-general', 'text-b2', …), in a
+ * community room a Premium student opened ('room-<id>'), or typed inside a
+ * speaking call ('voice:<roomId>'). Text, or a short voice message.
  *
  * Kept so the teacher can read what was said and act on a report, and deleted
  * automatically after CHAT_RETENTION_DAYS (services/ChatRooms). A deleted
@@ -18,7 +19,14 @@ const chatMessageSchema = new mongoose.Schema(
     // As they were when the message was sent (services/Premium.js).
     premium: { type: Boolean, default: false },
     avatar: String,
-    text: { type: String, required: true, maxlength: 600 },
+    // 'voice' messages carry a recording instead of text (text stays '').
+    kind: { type: String, enum: ['text', 'voice'], default: 'text' },
+    text: { type: String, default: '', maxlength: 600 },
+    audioKey: String,          // services/AudioStorageService key, voice only
+    seconds: Number,           // length of a voice message
+    // The community room's name at the time, so the teacher can tell rooms
+    // apart after the room itself has closed.
+    roomName: String,
     // The filter changed something (masked a word, removed a link) — worth a
     // glance from the teacher even without a report.
     filtered: { type: Boolean, default: false },

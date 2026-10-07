@@ -110,7 +110,7 @@ test('a kicked student stops receiving the room; leaving updates the counts', ()
   h.deliver('text-general', { id: 'm2' });
   assert.equal(a.count('message'), 0);
   h.disconnect('b', b);
-  assert.equal(h.summary().find(r => r.id === 'text-general').online, 0);
+  assert.equal(h.summary().rooms.find(r => r.id === 'text-general').online, 0);
 });
 
 test('chat inside a call reaches the people in that call only', () => {

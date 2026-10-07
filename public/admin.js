@@ -1570,15 +1570,16 @@
    * at once; Block stops the student using the site at all.
    */
   const CHAT_ROOM_NAMES = { 'text-general': 'General', 'text-b1': 'B1 chat', 'text-b2': 'B2 chat', 'text-c1': 'C1 chat' };
-  const chatRoomName = room => CHAT_ROOM_NAMES[room] || (String(room).startsWith('voice:') ? 'In a call' : room);
+  const chatRoomName = (room, name) => CHAT_ROOM_NAMES[room] ||
+    (String(room).startsWith('voice:') ? 'In a call' : String(room).startsWith('room-') ? `Room "${name || '…'}"` : room);
 
   function chatCard() {
     if (!state.chatOpen) {
       return `<div class="card" style="margin-top:28px">
         <h2 style="font-size:18px">Text chat</h2>
         <p class="muted" style="margin-top:6px">
-          Messages from the General, B1, B2 and C1 chat rooms and from inside speaking calls,
-          with student reports (kept ${esc(state.chat?.retentionDays || 30)} days, then deleted automatically).
+          Messages (typed and voice) from the General, B1, B2 and C1 chat rooms, the rooms Premium
+          students open, and from inside speaking calls, with student reports (kept ${esc(state.chat?.retentionDays || 30)} days, then deleted automatically).
         </p>
         <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="chat-open">Open text chat</button>
       </div>`;
@@ -1594,11 +1595,14 @@
         <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start">
           <div style="min-width:0;flex:1">
             <strong>${esc(m.name)}</strong>
-            <span class="muted" style="font-size:13px"> ${esc(m.email)} · ${esc(chatRoomName(m.room))} · ${new Date(m.at).toLocaleString()}</span>
+            <span class="muted" style="font-size:13px"> ${esc(m.email)} · ${esc(chatRoomName(m.room, m.roomName))} · ${new Date(m.at).toLocaleString()}</span>
             ${m.reported ? '<span class="tag tag-draft">reported</span>' : ''}
             ${m.filtered ? '<span class="tag" title="The filter changed this message before anyone saw it">filtered</span>' : ''}
             ${m.deleted ? `<span class="tag">deleted${m.deletedBy ? ` by ${esc(m.deletedBy)}` : ''}</span>` : ''}
-            <div style="margin-top:4px;overflow-wrap:anywhere">${esc(m.text)}</div>
+            ${m.kind === 'voice'
+              ? `<div style="margin-top:6px"><span class="tag">voice ${esc(m.seconds || 0)}s</span>
+                  <button class="btn btn-ghost btn-sm" data-chat-audio="${esc(m.audio || '')}">▶ Play</button></div>`
+              : `<div style="margin-top:4px;overflow-wrap:anywhere">${esc(m.text)}</div>`}
             ${m.original ? `<div class="muted" style="margin-top:2px;font-size:13px;overflow-wrap:anywhere">Before the filter: ${esc(m.original)}</div>` : ''}
             ${m.reports.map(r => `<div class="alert alert-error" style="margin-top:6px;padding:6px 10px">
               <strong>${esc(r.byName || 'A student')}</strong> reported this${r.reason ? `: ${esc(r.reason)}` : ''}
@@ -1612,6 +1616,16 @@
       </div>`).join('');
 
     const reportedCount = messages.filter(m => m.reported).length;
+    const openRooms = (data.community || []).map(r => `
+      <div class="row" style="justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">
+        <div style="min-width:0;flex:1"><strong>${esc(r.name)}</strong>
+          <span class="muted" style="font-size:13px"> · ${esc(r.level || 'All levels')} · host ${esc(r.host?.name || '')} · ${r.count}/${r.max} inside</span>
+          ${r.topic ? `<div class="muted" style="font-size:13px">${esc(r.topic)}</div>` : ''}</div>
+        <div class="row" style="gap:6px">
+          <button class="btn btn-ghost btn-sm" data-chat-filter="${esc(r.id)}">Messages</button>
+          <button class="btn btn-ghost btn-sm" data-chat-room-close="${esc(r.id)}" data-chat-name="${esc(r.name)}">Close room</button>
+        </div>
+      </div>`).join('');
     return `<div class="card" style="margin-top:28px">
       <div class="row" style="justify-content:space-between">
         <h2 style="font-size:18px">Text chat</h2>
@@ -1629,6 +1643,7 @@
         ${filterBtn('reported', `Reported${state.chatFilter === 'reported' && reportedCount ? ` (${reportedCount})` : ''}`)}
         ${Object.entries(CHAT_ROOM_NAMES).map(([id, name]) => filterBtn(id, name)).join('')}
       </div>
+      ${openRooms ? `<h3 style="font-size:15px;margin-top:16px">Open student rooms</h3>${openRooms}` : ''}
       ${rows || '<p class="muted" style="margin-top:10px">No messages.</p>'}
     </div>`;
   }
@@ -1648,6 +1663,30 @@
   function wireChatAdmin() {
     root.querySelectorAll('[data-chat-filter]').forEach(el =>
       el.addEventListener('click', () => loadChat({ filter: el.dataset.chatFilter })));
+    root.querySelectorAll('[data-chat-room-close]').forEach(el =>
+      el.addEventListener('click', async () => {
+        if (!window.confirm(`Close the room "${el.dataset.chatName}"? Everyone inside goes back to the room list.`)) return;
+        try {
+          await api(`/chat/rooms/${encodeURIComponent(el.dataset.chatRoomClose)}/close`, { method: 'POST' });
+          state.notice = `Room "${el.dataset.chatName}" closed.`;
+          loadChat({});
+        } catch (error) { setState({ error: error.message }); }
+      }));
+    // Voice messages are fetched with the sign-in token, only when played.
+    root.querySelectorAll('[data-chat-audio]').forEach(el =>
+      el.addEventListener('click', async () => {
+        el.disabled = true;
+        try {
+          const res = await fetch(el.dataset.chatAudio, { headers: { Authorization: `Bearer ${state.token}` } });
+          if (!res.ok) throw new Error(String(res.status));
+          const audio = Object.assign(document.createElement('audio'), { controls: true, src: URL.createObjectURL(await res.blob()) });
+          audio.style.cssText = 'display:block;margin-top:6px;width:100%;max-width:360px';
+          el.replaceWith(audio);
+          audio.play().catch(() => {});
+        } catch {
+          el.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: 'Voice message unavailable.' }));
+        }
+      }));
     root.querySelectorAll('[data-chat-delete]').forEach(el =>
       el.addEventListener('click', async () => {
         try {
