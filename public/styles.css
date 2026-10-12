@@ -2300,3 +2300,7 @@ button.cx-seat { cursor: pointer; }
 @media (min-width: 700px) {
   .vr-stage:not(.is-pair) .vr-seats .vc-person { flex-basis: 20%; }
 }
+
+/* Writing check: a part pasted without its task text. */
+.wc-noprompt { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--amber-text); }
+.wc-noprompt[hidden] { display: none; }

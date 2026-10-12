@@ -244,6 +244,9 @@ export function writingEmail(view, student) {
     <h3 style="margin:28px 0 4px;font-size:17px">${escapeHtml(p.name)} — ${p.band} / ${p.max}
       <span style="font-weight:400;color:#555">· ${escapeHtml(p.label)}</span></h3>
     ${p.task ? `<p style="margin:0 0 10px;color:#555;font-size:13px">${escapeHtml(p.task)}</p>` : ''}
+    ${view.mode === 'check' && !String(p.task || '').trim()
+      ? `<p style="margin:0 0 10px;color:#b54708;font-size:13px">Topshiriq matni berilmagan: vazifa bajarilishi (task achievement) tekshirilmadi — baho faqat til, tuzilish va uslubga asoslangan.</p>`
+      : ''}
     ${p.underLength
       ? `<p style="margin:0 0 10px;color:#b42318;font-size:13px">${Number.isFinite(p.underLength.cap)
           ? `So'zlar soni ${p.words} ta — ${p.underLength.threshold} tadan kam. Rasmiy shkala bo'yicha bunday qisqa javob ko'pi bilan ${p.underLength.cap} ball olishi mumkin.`

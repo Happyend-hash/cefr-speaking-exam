@@ -1056,7 +1056,12 @@
     underCap: (words, threshold, cap) => `So'zlar soni ${words} ta — ${threshold} tadan kam. Rasmiy shkala bo'yicha bunday qisqa javob ko'pi bilan ${cap} ball olishi mumkin.`,
     underMarker: b => `(Yozuvning o'zi ${b} ballga loyiq edi.)`,
 
-    checkIntro: 'Faqat tekshirmoqchi bo\'lgan qismlarni to\'ldiring. Topshiriq matnini ham qo\'shsangiz, mavzudan chetga chiqmaganingiz tekshiriladi.',
+    checkIntro: 'Faqat tekshirmoqchi bo\'lgan qismlarni to\'ldiring. Topshiriq matnini ham qo\'shing — shunda vazifa to\'liq bajarilgani ham tekshiriladi va baho aniqroq chiqadi.',
+    noPromptHint: "Topshiriq matni yo'q — vazifa bajarilishi (task achievement) tekshirilmaydi, baho faqat til va tuzilishga qarab qo'yiladi.",
+    noPromptAsk: parts => `Topshiriq matni kiritilmagan: ${parts}. Bu qismlarda vazifa to'liq bajarilgani tekshirilmaydi, shuning uchun baho to'liq aniq bo'lmaydi.`,
+    noPromptAdd: "Topshiriqni qo'shaman",
+    noPromptSend: 'Baribir tekshirish',
+    noPromptResult: "Topshiriq matni berilmagan: vazifa bajarilishi (task achievement) tekshirilmadi. Bu baho faqat til, tuzilish va uslubga asoslangan — haqiqiy imtihonda mavzudan chetga chiqish bahoni pasaytirishi mumkin.",
     question: 'Topshiriq matni (ixtiyoriy)',
     yourText: 'Sizning matningiz',
     cost: n => n ? `Narxi: ${['', '⅓', '⅔', '1'][n]} mock` : 'Kamida bitta qismni to\'ldiring',
@@ -1420,6 +1425,7 @@
           <span class="muted" style="font-size:13px">${esc(WR_UZ.question)}</span>
           <textarea class="essay wr-question" data-wc-question="${p.key}" rows="2">${esc(wr.questions[p.key])}</textarea>
         </label>
+        <p class="wc-noprompt" id="wc-noprompt-${p.key}" ${wr.texts[p.key].trim() && !wr.questions[p.key].trim() ? '' : 'hidden'}>⚠ ${esc(WR_UZ.noPromptHint)}</p>
         <label class="field" style="margin-top:10px">
           <span class="muted" style="font-size:13px">${esc(WR_UZ.yourText)}</span>
           <textarea class="essay" data-wc-text="${p.key}">${esc(wr.texts[p.key])}</textarea>
@@ -1433,6 +1439,13 @@
         <p class="muted">${esc(WR_UZ.checkIntro)}</p>
       </div>
       ${blocks}
+      ${wr.askNoPrompt ? `<div class="alert alert-warn wc-ask">
+          <span>${esc(WR_UZ.noPromptAsk(wr.askNoPrompt))}</span>
+          <span class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+            <button class="btn btn-sm" data-wc-noprompt="add">${esc(WR_UZ.noPromptAdd)}</button>
+            <button class="btn btn-ghost btn-sm" data-wc-noprompt="send">${esc(WR_UZ.noPromptSend)}</button>
+          </span>
+        </div>` : ''}
       <div class="row" style="justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <span class="muted" id="wc-cost">${esc(WR_UZ.cost(filled))}</span>
         <button class="btn btn-lg" data-wc-send="1" ${filled && !state.loading ? '' : 'disabled'}>
@@ -1450,6 +1463,11 @@
       if (cost) cost.textContent = WR_UZ.cost(filled);
       const send = root.querySelector('[data-wc-send]');
       if (send) send.disabled = !filled;
+      // The "no task text" hint follows what is typed, without redrawing the page.
+      for (const p of WR_PARTS) {
+        const hint = document.getElementById(`wc-noprompt-${p.key}`);
+        if (hint) hint.hidden = !(wr.texts[p.key].trim() && !wr.questions[p.key].trim());
+      }
     };
 
     root.querySelectorAll('[data-wc-text]').forEach(area =>
@@ -1462,24 +1480,44 @@
       }));
 
     root.querySelectorAll('[data-wc-question]').forEach(area =>
-      area.addEventListener('input', () => { wr.questions[area.dataset.wcQuestion] = area.value; }));
+      area.addEventListener('input', () => { wr.questions[area.dataset.wcQuestion] = area.value; refresh(); }));
 
-    root.querySelector('[data-wc-send]')?.addEventListener('click', sendWritingCheck);
+    root.querySelector('[data-wc-send]')?.addEventListener('click', () => sendWritingCheck());
+    root.querySelectorAll('[data-wc-noprompt]').forEach(el =>
+      el.addEventListener('click', () => {
+        const missing = WR_PARTS.find(p => wr.texts[p.key].trim() && !wr.questions[p.key].trim());
+        wr.askNoPrompt = '';
+        if (el.dataset.wcNoprompt === 'send') return sendWritingCheck({ confirmed: true });
+        render();
+        if (missing) root.querySelector(`[data-wc-question="${missing.key}"]`)?.focus();
+      }));
   }
 
   function openWritingCheck() {
     stopWritingTimers();
     wr.texts = { part11: '', part12: '', part2: '' };
     wr.questions = { part11: '', part12: '', part2: '' };
+    wr.askNoPrompt = '';
     go('writing-check');
   }
 
-  async function sendWritingCheck() {
+  async function sendWritingCheck({ confirmed = false } = {}) {
     const parts = {};
     for (const p of WR_PARTS) {
       if (wr.texts[p.key].trim()) parts[p.key] = { text: wr.texts[p.key], question: wr.questions[p.key] };
     }
     if (!Object.keys(parts).length) return;
+
+    // A part without its task text can be marked, but not for task achievement:
+    // say so before the credit is spent, and let the student add it.
+    const noPrompt = WR_PARTS.filter(p => parts[p.key] && !String(parts[p.key].question || '').trim());
+    if (noPrompt.length && !confirmed) {
+      wr.askNoPrompt = noPrompt.map(p => p.name).join(', ');
+      render();
+      root.querySelector('.wc-ask')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    wr.askNoPrompt = '';
 
     setState({ loading: true, error: '' });
     try {
@@ -1531,7 +1569,7 @@
     ).join('').replace(/\n/g, '<br>');
   }
 
-  function writingPartCard(p) {
+  function writingPartCard(p, mode) {
     if (!p.submitted) {
       return `<div class="card wr-part is-skipped">
         <div class="row" style="justify-content:space-between"><h3>${esc(p.name)}</h3>
@@ -1560,6 +1598,8 @@
         : ''}
 
       ${p.task ? `<p class="muted" style="margin-top:12px;font-size:14px"><strong>${esc(WR_UZ.task)}:</strong> ${esc(p.task)}</p>` : ''}
+      ${mode === 'check' && !String(p.task || '').trim()
+        ? `<div class="alert alert-warn" style="margin-top:12px">⚠ ${esc(WR_UZ.noPromptResult)}</div>` : ''}
 
       <div style="margin-top:14px">
         <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
@@ -1641,7 +1681,7 @@
           <ul class="pill-list">${r.areasForImprovement.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
       </div>` : ''}
 
-      ${r.parts.map(p => writingPartCard(p)).join('')}
+      ${r.parts.map(p => writingPartCard(p, r.mode)).join('')}
 
       <div class="row"><button class="btn" data-go="writing">${esc(WR_UZ.back)}</button></div>`;
   }
