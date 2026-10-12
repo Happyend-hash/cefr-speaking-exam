@@ -62,7 +62,8 @@ export function scoreSpeaking(bands = {}) {
   }
 
   const weakest = keys
-    .map(key => speakingBandLevel(key, present[key]) || BELOW_B1)
+    // A half band (two examiners a band apart) shows the lower band's level.
+    .map(key => speakingBandLevel(key, Math.floor(present[key])) || BELOW_B1)
     .reduce((low, level) => (rank(level) < rank(low) ? level : low));
 
   return {

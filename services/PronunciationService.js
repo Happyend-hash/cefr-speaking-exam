@@ -424,10 +424,16 @@ class PronunciationService {
 
     if (!usable.length) return null;
 
-    const clips = usable.slice(0, Math.max(1, Math.ceil(this.budgetSeconds / CLIP_SECONDS)));
+    const wanted = Math.max(1, Math.ceil(this.budgetSeconds / CLIP_SECONDS));
+    // A clip Azure cannot score is replaced by the next-longest answer, up to
+    // two spares — one student's mocks kept being judged on a single 28-second
+    // clip because two of the three sampled answers failed and nothing took
+    // their place.
+    const clips = usable.slice(0, wanted + 2);
 
     const results = [];
     const failures = [];
+    let tried = 0;
     const startedAt = Date.now();
 
     // One clip at a time within an attempt, deliberately. Each call queues
@@ -435,20 +441,27 @@ class PronunciationService {
     // student three places ahead of a classmate who is still waiting for their
     // first — the same unfairness the queue exists to prevent.
     for (const clip of clips) {
+      if (results.length >= wanted) break;
+      tried += 1;
       try {
         const assessment = await this.assessClip(clip.audio, clip.transcription);
         if (assessment.accuracy !== null) {
           results.push({ ...assessment, taskNumber: clip.taskNumber });
+        } else {
+          failures.push(`answer ${clip.taskNumber}: Azure returned no accuracy score`);
         }
       } catch (error) {
-        failures.push(error.message);
+        failures.push(`answer ${clip.taskNumber}: ${error.message}`);
       }
     }
+
+    // Each reason, so a clip that keeps failing can be diagnosed from the logs.
+    for (const failure of failures) console.warn(`Pronunciation clip failed — ${failure}`);
 
     // Logged because capacity here is a real constraint and guessing at it is
     // how the free tier's one-at-a-time limit went unnoticed in the first place.
     console.log(
-      `Pronunciation: ${results.length}/${clips.length} clip(s) in ` +
+      `Pronunciation: ${results.length}/${tried} clip(s) in ` +
       `${((Date.now() - startedAt) / 1000).toFixed(1)}s ` +
       `(queue ${azureLimiter.stats.running} running, ${azureLimiter.stats.waiting} waiting)`
     );

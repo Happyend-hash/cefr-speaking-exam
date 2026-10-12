@@ -223,6 +223,16 @@ const examResultSchema = new mongoose.Schema(
       part2: Number,
       part3: Number
     },
+    // Each examiner reading's own bands (two, or three when the first two
+    // disagreed badly). partBands above is their combination — see
+    // services/DoubleMarking.js. Absent on attempts marked by one reading.
+    markerBands: [{
+      _id: false,
+      part11: Number,
+      part12: Number,
+      part2: Number,
+      part3: Number
+    }],
     rawTotal: Number,
     denominator: Number,
 
@@ -400,7 +410,7 @@ examResultSchema.methods.determineCEFRLevel = function () {
  */
 examResultSchema.methods.applyAverageFallback = function (reason) {
   for (const path of [
-    'partBands', 'rawTotal', 'denominator',
+    'partBands', 'markerBands', 'rawTotal', 'denominator',
     'overallFeedback', 'overallReasoning'
   ]) {
     this.set(path, undefined);
@@ -468,11 +478,18 @@ examResultSchema.methods.generateCertificate = function () {
  * and a prompt that carries ten worked examples costs more than it teaches.
  */
 examResultSchema.statics.markingAnchors = async function (limit = 3) {
-  const corrected = await this.find({ 'teacherBands.correctedAt': { $exists: true } })
+  const all = await this.find({ 'teacherBands.correctedAt': { $exists: true } })
     .select('teacherBands taskResults.transcription taskResults.taskNumber')
     .sort({ 'teacherBands.correctedAt': -1 })
     .limit(40)
     .lean();
+
+  // Corrections saved before the four-part scale (vocabulary, grammar, …)
+  // carry no part bands. Shown to the marker they read "part11 —, part12 —,
+  // part2 —, part3 —" — an example with no marks, taking a slot from a real one.
+  const isPart = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+  const corrected = all.filter(doc =>
+    ['part11', 'part12', 'part2', 'part3'].some(key => isPart(doc.teacherBands?.[key])));
 
   if (corrected.length <= limit) return corrected;
 

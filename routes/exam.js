@@ -25,6 +25,8 @@ import {
   speakingNextBand
 } from '../content/speakingRubric.js';
 import AICallLimiter from '../services/MarkingQueue.js';
+import { combineVerdicts, needsThirdMarker } from '../services/DoubleMarking.js';
+import { scoreSpeaking } from '../services/SpeakingScoring.js';
 import { APIError } from '../middleware/errorHandler.js';
 
 const router = express.Router();
@@ -139,14 +141,21 @@ function buildCriteriaDetail(bands) {
     const band = Number(bands[part.key] ?? bands.get?.(part.key));
     if (!Number.isFinite(band)) return null;
 
+    // Two examiners a band apart give a half band (2.5): it sits between two
+    // descriptors, so it is labelled with both and described by the lower one,
+    // with the higher one as what to reach for next.
+    const low = Math.floor(band);
+    const half = band !== low;
     return {
       key: part.key,
       name: part.name,
       band,
       max: part.max,
-      label: speakingLabel(part.key, band),
-      descriptor: speakingDescriptor(part.key, band),
-      next: speakingNextBand(part.key, band)
+      label: half
+        ? `${speakingLabel(part.key, low)} – ${speakingLabel(part.key, low + 1)}`
+        : speakingLabel(part.key, band),
+      descriptor: speakingDescriptor(part.key, low),
+      next: speakingNextBand(part.key, low)
     };
   }).filter(Boolean);
 }
@@ -630,13 +639,23 @@ router.post('/:id/start', async (req, res, next) => {
         student: req.user.id,
         status: 'in_progress',
         creditCharged: false
-      }).lean();
+      }).populate('exam', 'title').lean();
       if (openElsewhere) {
-        throw new APIError(
-          'You already have a mock in progress. Finish it or delete it from your results before starting another.',
+        const title = openElsewhere.exam?.title || 'mock';
+        const blocked = new APIError(
+          `Sizda tugallanmagan test bor: "${title}". Yangisini boshlashdan oldin uni davom ettiring yoki o'chiring.`,
           409,
           'attempt_in_progress'
         );
+        // What the student needs to act on it: carry on with that one, or delete it.
+        blocked.extra = {
+          resultId: String(openElsewhere._id),
+          examId: openElsewhere.exam?._id ? String(openElsewhere.exam._id) : null,
+          examTitle: title,
+          mode: openElsewhere.mode || 'mock',
+          part: openElsewhere.part || null
+        };
+        throw blocked;
       }
     }
 
@@ -1117,6 +1136,70 @@ export async function rescueAttempt(resultId) {
   return { ok: true, recovered, failed };
 }
 
+/**
+ * Mark the whole performance the way the real exam does: two independent
+ * examiners, their bands averaged, a third only where they disagree by two
+ * bands or more (services/DoubleMarking.js). `SPEAKING_MARKERS=1` in the
+ * environment goes back to a single reading.
+ *
+ * Throws only if no reading at all succeeded — one good reading is still a
+ * proper mark, and better than the averaging fallback.
+ */
+export async function markTwice(markOnce) {
+  const wanted = Number(process.env.SPEAKING_MARKERS) === 1 ? 1 : 2;
+  const settled = await Promise.allSettled(Array.from({ length: wanted }, () => markOnce()));
+  const verdicts = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
+  if (!verdicts.length) throw settled[0].reason;
+
+  if (needsThirdMarker(verdicts)) {
+    try {
+      verdicts.push(await markOnce());
+    } catch (error) {
+      console.warn('Third marker failed; averaging the two readings:', error.message);
+    }
+  }
+
+  const combined = combineVerdicts(verdicts);
+  const outcome = scoreSpeaking(combined.bands);
+  if (!outcome) throw new Error('Overall marking returned no usable part bands');
+  if (verdicts.length > 1) {
+    console.log(`Double marking: ${verdicts.map(v => Object.values(v.bands).join('/')).join(' + ')} -> ${Object.values(combined.bands).join('/')} (${outcome.score ?? outcome.level})`);
+  }
+
+  return {
+    ...combined.closest,
+    bands: combined.bands,
+    markers: verdicts.map(v => v.bands),
+    raw: outcome.expertMark,
+    complete: outcome.complete,
+    score: outcome.score,
+    level: outcome.level
+  };
+}
+
+/**
+ * Mark the answers: the first of each part, then the rest together.
+ *
+ * Every per-answer call starts with a long rubric for its part, sent with a
+ * cache marker. Fired all at once, none could read the cache the others were
+ * still writing — the logs showed 0% hits and ~140,000 tokens WRITTEN to the
+ * cache (each write costs 25% more than ordinary input) and never read.
+ * Marking one answer per part first means the other answers of that part read
+ * the rubric from the cache at a tenth of the price, for a couple of seconds
+ * of extra waiting.
+ */
+async function markAnswersWarmFirst(jobs) {
+  const seen = new Set();
+  const first = [];
+  const rest = [];
+  for (const job of jobs) {
+    if (seen.has(job.part)) rest.push(job);
+    else { seen.add(job.part); first.push(job); }
+  }
+  await Promise.all(first.map(job => AICallLimiter.run(job.run)));
+  await Promise.all(rest.map(job => AICallLimiter.run(job.run)));
+}
+
 export async function markAttempt(resultId) {
   const result = await ExamResult.findById(resultId);
   if (!result) return;
@@ -1158,7 +1241,7 @@ export async function markAttempt(resultId) {
       continue;
     }
 
-    jobs.push(async () => {
+    jobs.push({ part: question?.part || taskResult.type, run: async () => {
       try {
         // The teacher's marked samples for this same part, so the examiner
         // compares against a known standard instead of inventing the scale.
@@ -1198,7 +1281,7 @@ export async function markAttempt(resultId) {
         failures.push({ taskNumber: taskResult.taskNumber, error: error.message });
         taskResult.status = 'pending';
       }
-    });
+    } });
   }
 
   // The answers of one attempt are independent — nothing in answer 5 depends on
@@ -1223,7 +1306,7 @@ export async function markAttempt(resultId) {
   const [pronunciation, fluencyByTask] = await Promise.all([
     assessPronunciation(result),
     measureFluency(result),
-    Promise.all(jobs.map(job => AICallLimiter.run(job)))
+    markAnswersWarmFirst(jobs)
   ]);
 
   // Stored per answer and summarised for the attempt, so a teacher can see the
@@ -1359,7 +1442,7 @@ export async function markAttempt(resultId) {
       // ago is in force for the next student, not after the next deploy.
       const anchors = await ExamResult.markingAnchors();
 
-      overall = await AICallLimiter.run(() =>
+      overall = await markTwice(() => AICallLimiter.run(() =>
         AIEvaluationService.evaluateAttempt({
           answers: speakingAnswers,
           examTitle: exam.title,
@@ -1367,7 +1450,7 @@ export async function markAttempt(resultId) {
           fluency: result.fluency,
           anchors
         })
-      );
+      ));
     } catch (error) {
       overallError = error.message;
       console.error(`Overall marking failed for ${result._id}, averaging instead:`, error.message);
@@ -1407,6 +1490,8 @@ export async function markAttempt(resultId) {
     // The bands and the arithmetic that produced the score, kept so the
     // conversion can be corrected later without re-marking anybody.
     result.partBands = overall.bands;
+    // Each examiner's own bands, so a teacher can see where they disagreed.
+    result.markerBands = overall.markers;
     result.rawTotal = overall.raw;
     result.denominator = SPEAKING_RAW_MAX;
     result.markingMethod = 'whole-performance';

@@ -881,9 +881,9 @@ router.get('/results/remark', async (req, res, next) => {
       success: true,
       data: {
         attempts,
-        // Eight answers and one whole-performance pass per attempt: worth
+        // Eight answers and two whole-performance readings per attempt: worth
         // showing, because it is the teacher's API quota being spent.
-        aiCalls: attempts * 9,
+        aiCalls: attempts * 10,
         email: req.query.email || 'your own account'
       }
     });

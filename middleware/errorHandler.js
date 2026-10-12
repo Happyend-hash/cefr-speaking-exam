@@ -41,6 +41,9 @@ export const errorHandler = (error, req, res, next) => {
     // different screen — and matching on the English sentence would break the
     // moment the wording changed.
     ...(error.code ? { code: error.code } : {}),
+    // Facts the client needs to offer a way out (e.g. which attempt is open).
+    // Only ever set deliberately by a route, never from an arbitrary error.
+    ...(error.extra && typeof error.extra === 'object' ? { extra: error.extra } : {}),
     ...(process.env.NODE_ENV === 'development' && {
       stack: error.stack,
       details: error

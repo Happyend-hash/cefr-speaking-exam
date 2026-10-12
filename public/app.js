@@ -248,6 +248,7 @@
       // "your teacher stopped you" arrive the same way and need different
       // screens, and matching on the wording would break the day it changed.
       error.code = payload.code || '';
+      error.extra = payload.extra || null;
       error.status = response.status;
       throw error;
     }
@@ -260,7 +261,7 @@
   }
 
   function go(screen, patch = {}) {
-    setState({ screen, error: '', notice: '', ...patch });
+    setState({ screen, error: '', notice: '', openAttempt: null, ...patch });
     window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
   }
 
@@ -462,6 +463,11 @@
       // Being out of mocks (or unverified) is not a fault, so it does not get
       // a red error bar. It gets the page that explains what to do next.
       if (handleAccessError(error)) return;
+      // Another test is still open: offer to carry on with it or delete it,
+      // rather than a sentence that leaves the student to find it themselves.
+      if (error.code === 'attempt_in_progress' && error.extra) {
+        return setState({ loading: false, error: '', openAttempt: { ...error.extra, message: error.message } });
+      }
       setState({ loading: false, error: error.message });
     }
   }
@@ -5156,6 +5162,17 @@
 
   function alerts() {
     let html = '';
+    const open = state.openAttempt;
+    if (open) {
+      html += `<div class="alert alert-warn open-attempt">
+        <span>${esc(open.message)}</span>
+        <span class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+          ${open.examId ? `<button class="btn btn-sm" data-open-attempt="resume">Davom ettirish</button>` : ''}
+          <button class="btn btn-ghost btn-sm" data-open-attempt="delete">O'chirish</button>
+          <button class="btn btn-ghost btn-sm" data-open-attempt="close">Yopish</button>
+        </span>
+      </div>`;
+    }
     if (state.error) html += `<div class="alert alert-error">${esc(state.error)}</div>`;
     if (state.notice) html += `<div class="alert alert-warn">${esc(state.notice)}</div>`;
     return html;
@@ -7016,7 +7033,7 @@
         <span class="muted" style="font-size:12px">${esc(c.name)}</span>
         <input type="number" min="0" max="${c.max}" style="width:68px"
                data-band="${esc(c.key)}"
-               value="${saved?.[c.key] ?? c.band}" />
+               value="${saved?.[c.key] ?? Math.round(c.band)}" />
       </label>`).join('');
 
     return `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
@@ -7051,6 +7068,15 @@
         ? `<p class="muted" style="margin-top:10px;font-size:13px">${esc(CORRECT_UZ.savedAt(fmtDate(saved.correctedAt)))}</p>`
         : ''}
     </div>`;
+  }
+
+  /** The whole-performance band of the part this answer belongs to, if the attempt has one. */
+  function wholePerformanceBand(r, task) {
+    if (!r.criteria?.length) return null;
+    const m = String(task.type || '').match(/part_(\d)(?:\.(\d))?/);
+    if (!m) return null;
+    const key = `part${m[1]}${m[2] || ''}`;
+    return r.criteria.find(c => c.key === key) || null;
   }
 
   function resultScreen() {
@@ -7149,12 +7175,22 @@
 
       ${tasks.map(task => {
         const e = task.evaluation;
-        const criteria = e.criteria || {};
+        // Marked as a whole performance: the part's band is the mark, and the
+        // per-answer notes are commentary. Their own 0-75 numbers came from a
+        // separate, quicker reading and could contradict the overall result —
+        // one mock showed higher per-answer numbers than another yet scored
+        // lower overall — so they are not shown beside it.
+        const partBand = wholePerformanceBand(r, task);
+        const criteria = partBand
+          ? Object.fromEntries(Object.entries(e.criteria || {}).map(([k, v]) => [k, v && typeof v === 'object' ? { ...v, score: undefined, notesOnly: true } : v]))
+          : e.criteria || {};
         return `
         <div class="card">
           <div class="row" style="justify-content:space-between">
             <h3>Task ${task.taskNumber}</h3>
-            <span class="badge">${typeof task.finalScore === 'number' ? `${task.finalScore}/${MAX_SCORE}` : 'Baholanmadi'}</span>
+            <span class="badge">${partBand
+              ? `${esc(partBand.name)} · ${partBand.band}/${partBand.max}`
+              : typeof task.finalScore === 'number' ? `${task.finalScore}/${MAX_SCORE}` : 'Baholanmadi'}</span>
           </div>
           ${task.audioUrl ? `<audio controls data-authsrc="${esc(task.audioUrl)}"></audio>` : ''}
           ${task.transcription ? `<div style="margin-top:12px"><div class="section-title">What you said</div><div class="transcript" style="margin-top:6px">${esc(task.transcription)}</div></div>` : ''}
@@ -7171,7 +7207,7 @@
                     // trusted to the point, the judged ones are an opinion.
                     value?.measured ? '<span class="measured-tag">o\'lchandi</span>' : ''
                   }</span>
-                  ${value?.score === null && value?.measured
+                  ${(value?.score === null && value?.measured) || value?.notesOnly
                     // Measured facts with no score (fluency): the pauses and
                     // fillers are the finding, and a bar would invent a number.
                     ? ''
@@ -7252,6 +7288,15 @@
 
   function wire() {
     resolveAuthedMedia();
+
+    root.querySelectorAll('[data-open-attempt]').forEach(el =>
+      el.addEventListener('click', () => {
+        const open = state.openAttempt;
+        state.openAttempt = null;
+        if (!open || el.dataset.openAttempt === 'close') return render();
+        if (el.dataset.openAttempt === 'resume') return startExam(open.examId, open.mode, open.part);
+        deleteResult(open.resultId);
+      }));
 
     // The watcher belongs to the dashboard and nothing else. Deciding here,
     // once per render, means it can never be left running behind a screen that

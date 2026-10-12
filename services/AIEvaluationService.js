@@ -34,6 +34,39 @@ const OFFICIAL_SCALE = CEFR_BANDS
  * AI Evaluation Service - Integrates with Claude Opus for CEFR assessment
  * This service evaluates spoken English and provides CEFR level assessment
  */
+/**
+ * The first complete JSON object in a piece of text: balanced braces, with
+ * braces inside strings ignored. Tries each opening brace in turn, so stray
+ * prose like "{see below}" before the real object does not stop it.
+ */
+export function firstJsonObject(text) {
+  const source = String(text || '');
+  for (let start = source.indexOf('{'); start !== -1; start = source.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < source.length; i += 1) {
+      const c = source[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === '\\') escaped = true;
+        else if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') inString = true;
+      else if (c === '{') depth += 1;
+      else if (c === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          const candidate = source.slice(start, i + 1);
+          try { JSON.parse(candidate); return candidate; } catch { break; }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 class AIEvaluationService {
   constructor() {
     this.apiKey = process.env.CLAUDE_API_KEY;
@@ -1125,13 +1158,17 @@ Numbers stay numbers. Do not translate the JSON field names.
       }
 
       // Extract JSON from the response. Models often wrap it in prose or a
-      // ```json fence, so take the outermost braces rather than the whole string.
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
+      // ```json fence — and sometimes add a sentence AFTER it that contains a
+      // brace of its own. Taking "first { to last }" then swallowed that text
+      // and the parse failed ("Unexpected non-whitespace character after
+      // JSON"), sending three mocks to the averaging fallback. So the first
+      // complete, balanced object is taken instead.
+      const json = firstJsonObject(responseText);
+      if (!json) {
         throw new Error(`no JSON object in the reply (starts: "${responseText.slice(0, 120)}…")`);
       }
 
-      const evaluation = JSON.parse(jsonMatch[0]);
+      const evaluation = JSON.parse(json);
 
       /*
        * Two reply shapes go through this parser, and validating one against the
