@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "uz.englishhub.family",
+      "sha256_cert_fingerprints": [
+        "5E:CE:75:BF:54:38:FB:4C:5E:31:3E:F0:9F:F6:84:C5:C6:A1:CB:E5:06:29:4B:76:0F:6C:D1:7D:1D:89:2B:EA"
+      ]
+    }
+  }
+]

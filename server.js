@@ -326,6 +326,19 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Digital Asset Links: proves to Android that the English Hub app and this
+// site belong together, so the app opens full screen with no address bar.
+// Served on its own because express.static ignores folders starting with a dot.
+app.use('/.well-known', express.static(path.join(__dirname, 'public', '.well-known')));
+
+// The Android app for download (public/downloads/EnglishHubFamily.apk), offered
+// on the "Ilovani o'rnatish" screen. Sent as a download, never cached for long,
+// so a new version reaches students the day it is uploaded.
+app.use('/downloads', express.static(path.join(__dirname, 'public', 'downloads'), {
+  maxAge: '1h',
+  setHeaders: res => res.setHeader('Content-Disposition', 'attachment')
+}));
+
 // Static files for frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
