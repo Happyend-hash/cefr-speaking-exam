@@ -104,11 +104,12 @@
   async function loadTests() {
     setState({ loading: true, error: '' });
     try {
-      const [tests, overview] = await Promise.all([
+      const [tests, overview, unmarked] = await Promise.all([
         api('/admin/tests'),
-        api('/admin/overview').catch(() => null)
+        api('/admin/overview').catch(() => null),
+        api('/admin/unmarked').catch(() => null)
       ]);
-      setState({ tests, overview, loading: false, screen: 'tests' });
+      setState({ tests, overview, unmarked: unmarked?.attempts || [], loading: false, screen: 'tests' });
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
@@ -170,6 +171,7 @@
           <div class="card stat"><div class="stat-label">Attempts</div><div class="stat-value">${o.attempts}</div></div>
         </div>` : ''}
 
+        ${unmarkedCard()}
         ${reviewCard()}
         ${studentsCard()}
         ${voiceCard()}
@@ -1114,9 +1116,69 @@
 
   // ------------------------------------------------------------------ wiring
 
+  /**
+   * Attempts handed in but never marked — e.g. while the AI balance was empty.
+   * Shown only when there are any, at the top, because each is a student
+   * waiting for a result. The server also retries recent ones by itself.
+   */
+  function unmarkedCard() {
+    const list = state.unmarked || [];
+    if (!list.length) return '';
+    const rows = list.map(a => `
+      <div class="row" style="justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">
+        <div style="min-width:0;flex:1">
+          <strong>${esc(a.name || a.email)}</strong>
+          <span class="muted" style="font-size:13px"> ${esc(a.email)} · ${esc(a.kind === 'speaking' ? 'Speaking' : 'Writing')} · ${esc(a.title)} · ${esc(a.detail)} · ${new Date(a.at).toLocaleString()}</span>
+          ${a.kind === 'speaking' && !a.transcribed ? '<div class="muted" style="font-size:13px">No words were captured in any answer — retrying cannot mark it; use "Rescue" below or ask the student to retake.</div>' : ''}
+          ${a.reason ? `<div class="muted" style="font-size:13px;overflow-wrap:anywhere">Last error: ${esc(a.reason.slice(0, 160))}</div>` : ''}
+        </div>
+        <button class="btn btn-sm" data-unmarked-retry="${esc(a.kind)}:${esc(a.id)}" ${a.kind === 'speaking' && !a.transcribed ? 'disabled' : ''}>Mark now</button>
+      </div>`).join('');
+    return `<div class="card" style="border-color:#fde68a;background:#fffbeb">
+      <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <h2 style="font-size:18px">Not marked yet (${list.length})</h2>
+        <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm" data-action="unmarked-reload">Refresh</button>
+          <button class="btn btn-sm" data-action="unmarked-all">Mark all now</button>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:6px">Handed in, but marking failed (for example while the AI balance was empty).
+        The site retries recent ones by itself every 20 minutes; "Mark now" does it straight away. Students are not charged again.</p>
+      ${rows}
+    </div>`;
+  }
+
+  async function loadUnmarked() {
+    try {
+      const data = await api('/admin/unmarked');
+      setState({ unmarked: data.attempts || [] });
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  async function retryUnmarked(body) {
+    try {
+      const data = await api('/admin/unmarked/retry', { method: 'POST', body });
+      state.notice = body.all
+        ? `Marking started for ${data.started} attempt(s). Results appear in a minute or two — press Refresh.`
+        : (data.started ? 'Marking started. Press Refresh in a minute.' : 'That attempt is already being marked.');
+      setTimeout(loadUnmarked, 1500);
+      render();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
   function wire() {
     wireVoiceAdmin();
     wireChatAdmin();
+    root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
+      el.addEventListener('click', () => {
+        const [kind, id] = el.dataset.unmarkedRetry.split(':');
+        el.disabled = true;
+        retryUnmarked({ kind, id });
+      }));
     wirePicturesAdmin();
     wireSponsorsAdmin();
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
@@ -1247,6 +1309,8 @@
     if (action === 'voice-open') return loadVoice({ open: true });
     if (action === 'voice-close') return setState({ voiceOpen: false });
     if (action === 'voice-reload') return loadVoice({});
+    if (action === 'unmarked-reload') return loadUnmarked();
+    if (action === 'unmarked-all') return retryUnmarked({ all: true });
     if (action === 'chat-open') return loadChat({ open: true });
     if (action === 'chat-close') return setState({ chatOpen: false });
     if (action === 'chat-reload') return loadChat({});

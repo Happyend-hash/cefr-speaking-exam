@@ -27,6 +27,7 @@ import { invalidate as invalidateLeaderboard } from '../services/Leaderboard.js'
 import { SPEAKING_PART_MAX } from '../services/ScoreConversion.js';
 import { scoreSpeaking } from '../services/SpeakingScoring.js';
 import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark } from './exam.js';
+import { listUnmarked, retryOne, retryAll } from '../services/MarkingRetry.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -992,6 +993,41 @@ router.post('/results/:id/remark', async (req, res, next) => {
  * @route   GET /api/admin/results/rescue
  * @desc    Count attempts holding recordings that were never transcribed.
  */
+/**
+ * @route   GET /api/admin/unmarked
+ * @desc    Speaking and writing attempts that were handed in but never marked
+ *          (e.g. while the AI balance was empty).
+ */
+router.get('/unmarked', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: { attempts: await listUnmarked() } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/admin/unmarked/retry
+ * @desc    Mark them now: { kind, id } for one, { all: true } for every one.
+ */
+router.post('/unmarked/retry', async (req, res, next) => {
+  try {
+    if (req.body?.all === true) {
+      const outcome = await retryAll();
+      return res.json({ success: true, data: outcome });
+    }
+    const kind = String(req.body?.kind || '');
+    const id = String(req.body?.id || '');
+    if (!['speaking', 'writing'].includes(kind) || !mongoose.Types.ObjectId.isValid(id)) {
+      throw new APIError('Give kind (speaking or writing) and id', 400);
+    }
+    const started = await retryOne(kind, id);
+    res.json({ success: true, data: { started: started ? 1 : 0 } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/results/rescue', authorize('admin'), async (req, res, next) => {
   try {
     // Anything that finished badly, or never finished at all. Attempts still in

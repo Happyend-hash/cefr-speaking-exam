@@ -70,6 +70,7 @@ import chatRoutes from './routes/chat.js';
 import avatarRoutes from './routes/avatars.js';
 import gameRoutes from './routes/games.js';
 import { resumeStuckMarking } from './routes/exam.js';
+import { retryAll, RETRY_EVERY_MS } from './services/MarkingRetry.js';
 import AudioStorageService, { audioDir } from './services/AudioStorageService.js';
 import { publicRouter as sponsorRoutes, adminRouter as sponsorAdminRoutes } from './routes/sponsors.js';
 
@@ -244,6 +245,14 @@ mongoose.connect(MONGODB_URI)
     setInterval(() => {
       resumeStuckMarking().catch(err => console.error('Periodic marking-resume failed:', err.message));
     }, 5 * 60 * 1000);
+
+    // Attempts handed in while marking was impossible (the AI balance ran out,
+    // the service was down) are tried again on their own, a few times while
+    // they are recent — so they get marked as soon as the service is back.
+    setTimeout(() => retryAll({ recentOnly: true, automatic: true })
+      .catch(err => console.error('Marking retry failed:', err.message)), 2 * 60 * 1000);
+    setInterval(() => retryAll({ recentOnly: true, automatic: true })
+      .catch(err => console.error('Marking retry failed:', err.message)), RETRY_EVERY_MS);
 
     // With a Railway volume attached, move the recordings still in MongoDB
     // onto it — in the background, one at a time, each verified before the
