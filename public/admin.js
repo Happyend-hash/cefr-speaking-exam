@@ -56,6 +56,8 @@
     editingSection: null,     // "testId:sectionIndex"
     addingQuestionTo: null,   // "testId:sectionIndex"
     editingQuestion: null,    // "testId:sectionIndex:qIndex"
+    usage: null,             // the "Website use" numbers, refreshed every 2 min
+    usageError: '',
     loading: false,
     error: '',
     notice: ''
@@ -109,6 +111,10 @@
         api('/admin/overview').catch(() => null),
         api('/admin/unmarked').catch(() => null)
       ]);
+      api('/admin/usage')
+        .then(usage => { state.usage = usage; state.usageError = ''; })
+        .catch(error => { state.usageError = `Could not load the numbers: ${error.message}`; })
+        .finally(() => refreshUsageCard());
       setState({ tests, overview, unmarked: unmarked?.attempts || [], loading: false, screen: 'tests' });
     } catch (error) {
       setState({ loading: false, error: error.message });
@@ -171,6 +177,7 @@
           <div class="card stat"><div class="stat-label">Attempts</div><div class="stat-value">${o.attempts}</div></div>
         </div>` : ''}
 
+        ${usageCard()}
         ${unmarkedCard()}
         ${reviewCard()}
         ${studentsCard()}
@@ -1171,6 +1178,7 @@
   }
 
   function wire() {
+    wireUsage();
     wireVoiceAdmin();
     wireChatAdmin();
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
@@ -1321,6 +1329,167 @@
     if (action === 'sponsors-close') return setState({ sponsorsOpen: false });
     if (action === 'block-all') return changeAccessForAll('block');
     if (action === 'unblock-all') return changeAccessForAll('unblock');
+  }
+
+  // ----------------------------------------------------------- website use
+
+  /**
+   * How many people used the website: today, right now, by hour and over the
+   * last 30 days. Asks the server again every 2 minutes. Only this card is
+   * redrawn, so a form being filled in elsewhere on the page is not touched.
+   */
+  const USAGE_EVERY_MS = 2 * 60 * 1000;
+  let usageTimer = null;
+
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const shortDay = day => `${Number(day.slice(8, 10))} ${MONTHS[Number(day.slice(5, 7)) - 1]}`;
+  const niceMax = max => {
+    if (max <= 4) return 4;
+    const step = Math.pow(10, Math.floor(Math.log10(max)));
+    for (const m of [1, 2, 2.5, 5, 10]) if (m * step >= max) return m * step;
+    return 10 * step;
+  };
+
+  /** A bar chart in SVG: one series, a faint grid, the highlighted bar labelled. */
+  function barChart({ values, labelAt, tip, highlight, hatched = () => false, width = 640, height = 170 }) {
+    const W = width, H = height, L = 34, R = 8, T = 18, B = 24;
+    const pw = W - L - R, ph = H - T - B;
+    const max = niceMax(Math.max(1, ...values));
+    const slot = pw / values.length;
+    const bw = Math.max(3, slot - 3);
+    const y = v => T + ph - (v / max) * ph;
+    const grid = [0, max / 2, max].map(v => `
+      <line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="u-grid" />
+      <text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" class="u-axis">${Number.isInteger(v) ? v : v.toFixed(1)}</text>`).join('');
+    const bars = values.map((v, i) => {
+      const x = L + i * slot + (slot - bw) / 2;
+      const h = Math.max(v > 0 ? 3 : 0, (v / max) * ph);
+      const cls = i === highlight ? 'u-bar is-now' : hatched(i) ? 'u-bar is-est' : 'u-bar';
+      const label = labelAt(i);
+      return `<g class="u-col"><title>${esc(tip(i))}</title>
+        <rect x="${L + i * slot}" y="${T}" width="${slot}" height="${ph + B}" fill="transparent" />
+        ${h ? `<path class="${cls}" d="M${x},${T + ph} v${-(h - Math.min(4, h / 2))} q0,${-Math.min(4, h / 2)} ${Math.min(4, bw / 2)},${-Math.min(4, h / 2)} h${bw - 2 * Math.min(4, bw / 2)} q${Math.min(4, bw / 2)},0 ${Math.min(4, bw / 2)},${Math.min(4, h / 2)} v${h - Math.min(4, h / 2)} z" />` : ''}
+        ${i === highlight ? `<text x="${x + bw / 2}" y="${y(v) - 5}" text-anchor="middle" class="u-val">${v}</text>` : ''}
+        ${label ? `<text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle" class="u-axis">${esc(label)}</text>` : ''}
+      </g>`;
+    }).join('');
+    return `<svg class="u-chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet">${grid}${bars}</svg>`;
+  }
+
+  function usageCard() {
+    const u = state.usage;
+    if (!u) {
+      return `<div class="card usage-card" id="usage-card">
+        <div class="usage-head"><h2 style="font-size:18px">Website use</h2></div>
+        <p class="muted">${state.usageError ? esc(state.usageError) : '<span class="spinner"></span>'}</p>
+      </div>`;
+    }
+
+    const updated = new Date(u.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // Compare with yesterday up to the same time, not with all of yesterday:
+    // otherwise every morning looks like a drop.
+    const diff = u.yesterdaySoFar == null ? null : u.activeToday - u.yesterdaySoFar;
+    const vsYesterday = u.activeYesterday == null ? 'Counting started today'
+      : u.yesterdaySoFar == null ? `Yesterday ${u.activeYesterday}${u.yesterdayEstimated ? ' (estimate)' : ''}`
+      : `${u.yesterdaySoFar} by this time yesterday (${u.activeYesterday} all day)`;
+
+    const tile = (label, value, note = '', cls = '') => `
+      <div class="u-tile ${cls}">
+        <div class="u-label">${label}</div>
+        <div class="u-value">${value}</div>
+        ${note ? `<div class="u-note">${note}</div>` : ''}
+      </div>`;
+
+    const days = u.days || [];
+    const todayIndex = days.length - 1;
+    const hasEstimates = days.some(d => d.estimated);
+    const monthChart = barChart({
+      values: days.map(d => d.users),
+      highlight: todayIndex,
+      hatched: i => days[i].estimated,
+      labelAt: i => (i === todayIndex ? 'Today' : (todayIndex - i) % 7 === 0 && todayIndex - i >= 7 ? shortDay(days[i].day) : ''),
+      tip: i => {
+        const d = days[i];
+        return `${shortDay(d.day)}: ${d.users} student${d.users === 1 ? '' : 's'}`
+          + (d.estimated ? ' (estimate from mocks, writing and chat)' : d.guests ? `, ${d.guests} visitor${d.guests === 1 ? '' : 's'} not signed in` : '');
+      }
+    });
+
+    const hourChart = barChart({
+      values: u.hours,
+      width: 420,
+      height: 190,
+      highlight: u.currentHour,
+      labelAt: h => (h % 3 === 0 ? String(h).padStart(2, '0') : ''),
+      tip: h => `${String(h).padStart(2, '0')}:00–${String(h).padStart(2, '0')}:59: ${u.hours[h]} student${u.hours[h] === 1 ? '' : 's'}`
+    });
+
+    return `<div class="card usage-card" id="usage-card">
+      <div class="usage-head">
+        <h2 style="font-size:18px">Website use today</h2>
+        <div class="row" style="gap:10px">
+          <span class="muted u-updated">Updated ${esc(updated)} · refreshes every 2 min</span>
+          <button class="btn btn-ghost btn-sm" data-usage-refresh>Refresh</button>
+        </div>
+      </div>
+
+      <div class="u-tiles">
+        ${tile('<span class="u-live"></span>Online now', u.onlineNow, 'active in the last 5 min')}
+        ${tile('Students today', u.activeToday,
+          `${esc(vsYesterday)}${diff ? ` <span class="${diff > 0 ? 'u-up' : 'u-down'}">${diff > 0 ? '▲' : '▼'} ${Math.abs(diff)}</span>` : ''}`, 'is-main')}
+        ${tile('Visitors not signed in', u.guestsToday, 'opened the site, no account')}
+        ${tile('New sign-ups', u.newSignups)}
+        ${tile('Speaking mocks', u.speakingToday, 'started today')}
+        ${tile('Writing', u.writingToday, 'checks and mocks')}
+        ${tile('AI Ustoz', u.aiSessionsToday, `${u.aiPeopleToday} student${u.aiPeopleToday === 1 ? '' : 's'}`)}
+        ${u.weekAverage != null ? tile('7-day average', u.weekAverage, 'students a day') : ''}
+      </div>
+
+      <div class="u-charts">
+        <figure class="u-fig">
+          <figcaption>Students per day, last 30 days</figcaption>
+          ${monthChart}
+          ${hasEstimates ? `<div class="u-key"><span class="u-swatch is-est"></span>Before ${esc(shortDay(u.trackedFrom))}: estimate — students who did a mock, writing or chat (people who only looked around were not counted then)</div>` : ''}
+        </figure>
+        <figure class="u-fig">
+          <figcaption>Today by hour (Tashkent time)</figcaption>
+          ${hourChart}
+        </figure>
+      </div>
+    </div>`;
+  }
+
+  function refreshUsageCard() {
+    const card = document.getElementById('usage-card');
+    if (!card) return;
+    card.outerHTML = usageCard();
+    wireUsage();
+  }
+
+  async function refreshUsage() {
+    if (!state.token || state.screen === 'login') return;
+    try {
+      state.usage = await api('/admin/usage');
+      state.usageError = '';
+    } catch (error) {
+      state.usageError = `Could not load the numbers: ${error.message}`;
+    }
+    refreshUsageCard();
+  }
+
+  function wireUsage() {
+    document.querySelector('[data-usage-refresh]')?.addEventListener('click', e => {
+      e.currentTarget.disabled = true;
+      refreshUsage();
+    });
+    if (!usageTimer) {
+      usageTimer = setInterval(() => { if (!document.hidden) refreshUsage(); }, USAGE_EVERY_MS);
+      // Coming back to the tab after a while: catch up straight away.
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden || !state.usage) return;
+        if (Date.now() - new Date(state.usage.updatedAt).getTime() > USAGE_EVERY_MS) refreshUsage();
+      });
+    }
   }
 
   // ------------------------------------------------------ speaking rooms

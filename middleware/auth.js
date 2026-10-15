@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { noteUser } from '../services/UsageStats.js';
 
 /**
  * Authentication middleware to verify JWT tokens
@@ -16,6 +17,9 @@ export const authenticate = (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
+    // Daily usage statistics. Admins are left out so checking the panel
+    // does not count as a student using the site.
+    if (decoded.role !== 'admin') noteUser(decoded.id);
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {

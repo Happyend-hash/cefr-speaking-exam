@@ -30,6 +30,7 @@ import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark } from './
 import { listUnmarked, retryOne, retryAll } from '../services/MarkingRetry.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
+import { usageReport } from '../services/UsageStats.js';
 
 const router = express.Router();
 
@@ -554,6 +555,19 @@ router.get('/overview', async (req, res, next) => {
       success: true,
       data: { students, tests, published, attempts, completed }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/admin/usage
+ * @desc    How many people used the site today, this hour and over 30 days
+ *          (the panel asks again every 2 minutes)
+ */
+router.get('/usage', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await usageReport() });
   } catch (error) {
     next(error);
   }

@@ -8083,9 +8083,29 @@
     }
   }
 
+  /*
+   * Usage statistics for the admin panel: a visitor who has not signed in
+   * says so once a day, with a random id this browser makes up. Signed-in
+   * students are counted by the server from their normal requests.
+   */
+  function countGuestVisit() {
+    try {
+      const day = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
+      if (store.get('visitDay') === day) return;
+      let id = store.get('visitorId');
+      if (!id) {
+        id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36));
+        store.set('visitorId', id);
+      }
+      store.set('visitDay', day);
+      fetch(`${API}/visit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: id }), keepalive: true }).catch(() => {});
+    } catch { /* statistics must never break the page */ }
+  }
+
   (function boot() {
     const token = store.get('token');
     const user = store.get('user');
+    if (!token) countGuestVisit();
     if (token && user) {
       try {
         state.token = token;

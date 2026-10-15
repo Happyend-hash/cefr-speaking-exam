@@ -70,6 +70,7 @@ import chatRoutes from './routes/chat.js';
 import avatarRoutes from './routes/avatars.js';
 import gameRoutes from './routes/games.js';
 import assistantRoutes from './routes/assistant.js';
+import { noteGuest } from './services/UsageStats.js';
 import { resumeStuckMarking } from './routes/exam.js';
 import { retryAll, RETRY_EVERY_MS } from './services/MarkingRetry.js';
 import PronunciationService from './services/PronunciationService.js';
@@ -287,6 +288,12 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/avatars', avatarRoutes);
 // Sponsor banners: public so <img> and links work (see routes/sponsors.js).
 app.use('/api/sponsors', sponsorRoutes);
+// Daily usage statistics: a browser that opened the site without signing in
+// says so once a day, with a random id it made up (nothing personal).
+app.post('/api/visit', (req, res) => {
+  noteGuest(req.body?.v);
+  res.status(204).end();
+});
 
 // Protected routes (require authentication)
 app.use('/api/exam', authenticate, requireVerifiedEmail, examRoutes);
