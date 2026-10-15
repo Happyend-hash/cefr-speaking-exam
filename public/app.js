@@ -3767,50 +3767,13 @@
   // in Uzbek. 18+ only, by Google's terms — see services/SpeakingAssistant.js.
 
   /*
-   * The teachers students talk to. Each picture is AI-generated. `face` marks,
-   * in the original photo's pixels, where the animation moves things
-   * (public/avatar.js): where the lips meet, the mouth corners, the chin and
-   * each eye. Voice and manner are set on the server (CHARACTERS in
-   * services/SpeakingAssistant.js) under the same id.
+   * The teachers students talk to. Lesley is an original animated robot
+   * (public/robot.js): her face changes with what she is doing and with the
+   * mood of what she says. Voice and manner are set on the server
+   * (CHARACTERS in services/SpeakingAssistant.js) under the same id.
    */
   const AI_CHARACTERS = [
-    {
-      id: 'lesley',
-      name: 'Lesley',
-      role: 'English teacher',
-      image: '/assistants/lesley-room.jpg',
-      thumb: '/assistants/lesley-face.jpg',
-      // Measured on the 1584 x 672 photo.
-      scene: {
-        width: 1584, height: 672, focus: [792, 330],
-        framing: { tall: { zoom: 1.35, focus: [796, 285] }, wide: { zoom: 1.08, focus: [792, 320] } },
-        body: { cx: 787, cy: 480, rx: 230, ry: 300 },
-        chest: { cx: 787, cy: 410, rx: 170, ry: 110 },
-        head: { cx: 800, cy: 195, rx: 95, ry: 150 },
-        pivot: [800, 330],
-        face: { cx: 801, cy: 225, rx: 46, ry: 62 },
-        brows: [{ cx: 770, cy: 172, rx: 20, ry: 8 }, { cx: 833, cy: 172, rx: 22, ry: 8 }],
-        hands: { cx: 790, cy: 592, rx: 95, ry: 55 },
-        mouth: {
-          cx: 801, seam: 258.5, half: 27, curve: -0.0038,
-          above: 247, lowerLip: 269, chin: 292, neck: 312,
-          chinHalf: 24, jaw: 55, maxOpen: 15, teeth: 4
-        },
-        // Her real teeth, cut from the smiling version of the same photo
-        // (lesley-teeth.png = that photo's x 755-840, y 240-276).
-        teeth: {
-          src: '/assistants/lesley-teeth.png', box: [755, 240, 85, 36],
-          cx: 795, top: 249.5, bottom: 266.5, half: 30, curve: -0.0125,
-          tip: 261.9, tipCurve: -0.0068, show: 7.5      // upper teeth tips, and most of them that shows
-        },
-        eyes: [
-          { cx: 771, cy: 192.5, rx: 15, top: 5, bottom: 5 },
-          { cx: 834, cy: 192.5, rx: 16, top: 5, bottom: 5.5 }
-        ],
-        lid: [6, 3.5],
-        breath: 1.1, handLift: 3, browLift: 1.6
-      }
-    }
+    { id: 'lesley', name: 'Lesley', role: 'English teacher', kind: 'robot', thumb: '/assistants/robot.svg' }
   ];
   const aiCharacter = () => AI_CHARACTERS.find(c => c.id === ai.character) || AI_CHARACTERS[0];
 
@@ -3922,8 +3885,8 @@
             <img src="${esc(c.thumb)}" alt=""><span>${esc(c.name)}</span></button>`).join('')}
         </div>` : '';
 
-    return `<section class="ai-stage has-scene ${live ? 'is-live' : ''} is-${ai.phase} act-${ai.activity}">
-        <canvas id="ai-face" class="ai-scene" data-persist="${esc(who.id)}" role="img" aria-label="${esc(who.name)}" style="background-image:url('${esc(who.image)}')"></canvas>
+    return `<section class="ai-stage has-scene has-robot ${live ? 'is-live' : ''} is-${ai.phase} act-${ai.activity}">
+        <div id="ai-face" class="ai-robot" data-persist="robot-${esc(who.id)}" role="img" aria-label="${esc(who.name)}"></div>
         <div class="ai-scene-top">
           <div class="ai-face-name"><strong>${esc(who.name)}</strong><span>${esc(AI_UZ.isAi)}</span></div>
           ${left}
@@ -4032,24 +3995,45 @@
 
   /** Her face on screen: started once, kept alive across redraws. */
   function mountPortrait() {
-    const canvas = document.getElementById('ai-face');
-    if (!canvas || !window.LivingPortrait) {
+    const el = document.getElementById('ai-face');
+    if (!el || !window.RobotFace) {
       if (ai.portrait && !ai.portrait.canvas.isConnected) { ai.portrait.instance.destroy(); ai.portrait = null; }
       return;
     }
-    if (ai.portrait?.canvas === canvas) return setPortraitMode();
+    if (ai.portrait?.canvas === el) return setPortraitMode();
     ai.portrait?.instance.destroy();
-    const who = aiCharacter();
-    ai.portrait = {
-      canvas,
-      instance: window.LivingPortrait.mount(canvas, { src: who.image, scene: who.scene, getLevel: aiVoiceLevel })
-    };
+    ai.portrait = { canvas: el, instance: window.RobotFace.mount(el, { getLevel: aiVoiceLevel }) };
     setPortraitMode();
   }
 
+  /** Asleep before and after a call, waking while it connects, then what she is doing. */
   function setPortraitMode() {
-    const mode = ai.phase !== 'live' ? 'idle' : ai.activity;
+    const mode = ai.phase === 'live' ? ai.activity : ai.phase === 'connecting' ? 'connecting' : 'sleeping';
     ai.portrait?.instance.setMode(mode);
+  }
+
+  /*
+   * Her mood, from the words she is saying (English or Uzbek). Strong praise
+   * gives heart eyes, praise a happy face, surprise wide eyes, and mistakes or
+   * comfort a sympathetic face. Each lasts a few seconds, then she goes back
+   * to talking or listening.
+   */
+  const AI_MOODS = [
+    ['love', /\b(excellent|perfect|fantastic|brilliant|outstanding|amazing job|love (it|that)|ajoyib|a'lo|barakalla|zo'r[- ]zo'r|mukammal)\b/i],
+    ['surprised', /\b(wow|really\?|oh!|no way|interesting|surprising|voy|rostdanmi|qiziq)\b/i],
+    ['sad', /\b(sorry|don't worry|mistake|unfortunately|oops|not quite|that's okay|afsus|xato|tashvishlanmang|kechirasiz|qo'rqmang)\b/i],
+    ['joy', /\b(great|good job|well done|nice|good|correct|right|exactly|haha|yaxshi|to'g'ri|zo'r|juda yaxshi|qoyil)\b/i]
+  ];
+  let aiMoodText = '';
+  function aiMoodFrom(text) {
+    aiMoodText = (aiMoodText + text).slice(-80);
+    for (const [mood, re] of AI_MOODS) {
+      if (re.test(aiMoodText)) {
+        ai.portrait?.instance.setMood?.(mood, mood === 'love' ? 3000 : 3600);
+        aiMoodText = '';
+        return;
+      }
+    }
   }
 
   /** The student started talking over the AI: stop its voice at once. */
@@ -4193,6 +4177,7 @@
       if (sc.outputTranscription?.text) {
         if (ai.turns.length && ai.turns[ai.turns.length - 1].who === 'you') aiCloseTurns();
         aiAppend('ai', sc.outputTranscription.text);
+        aiMoodFrom(sc.outputTranscription.text);
       }
       for (const part of sc.modelTurn?.parts || []) {
         if (part.inlineData?.data && /audio/.test(part.inlineData.mimeType || 'audio')) playPcm(part.inlineData.data);
