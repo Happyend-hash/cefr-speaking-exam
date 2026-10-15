@@ -69,6 +69,7 @@ import voiceRoutes from './routes/voice.js';
 import chatRoutes from './routes/chat.js';
 import avatarRoutes from './routes/avatars.js';
 import gameRoutes from './routes/games.js';
+import assistantRoutes from './routes/assistant.js';
 import { resumeStuckMarking } from './routes/exam.js';
 import { retryAll, RETRY_EVERY_MS } from './services/MarkingRetry.js';
 import PronunciationService from './services/PronunciationService.js';
@@ -110,7 +111,9 @@ app.use(
       directives: {
         ...helmet.contentSecurityPolicy.getDefaultDirectives(),
         'img-src': ["'self'", 'data:', 'blob:'],
-        'media-src': ["'self'", 'blob:']
+        'media-src': ["'self'", 'blob:'],
+        // AI Ustoz: the browser talks to Google's Gemini Live directly.
+        'connect-src': ["'self'", 'wss://generativelanguage.googleapis.com']
       }
     }
   })
@@ -294,6 +297,7 @@ app.use('/api/leaderboard', authenticate, requireVerifiedEmail, leaderboardRoute
 app.use('/api/voice', authenticate, requireVerifiedEmail, voiceRoutes);
 app.use('/api/chat', authenticate, requireVerifiedEmail, chatRoutes);
 app.use('/api/games', authenticate, requireVerifiedEmail, gameRoutes);
+app.use('/api/assistant', authenticate, requireVerifiedEmail, assistantRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);

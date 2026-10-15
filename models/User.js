@@ -55,6 +55,13 @@ const userSchema = new mongoose.Schema(
     // not available until they have — being told is the point of recording
     // being acceptable at all.
     voiceConsentAt: Date,
+    // AI Ustoz (Gemini Live): when the student confirmed they are 18+ and read
+    // that Google may review conversations, and today's session count.
+    assistantAdultAt: Date,
+    assistantUsage: {
+      day: String,
+      sessions: { type: Number, default: 0 }
+    },
 
     // Premium runs until this moment (services/Premium.js). Set from each
     // payment and by the teacher; null or past means a free account.

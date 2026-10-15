@@ -2095,7 +2095,12 @@
       pr.state = premium;
       state.loading = false;
       if (vc.status.blocked) return setState({ error: ACCESS_UZ.blockedTitle });
-      if (tab === 'chat') {
+      if (tab !== 'ai') endAssistant({ quiet: true });
+      if (tab === 'ai') {
+        stopVoice();
+        stopChat();
+        loadAssistant();
+      } else if (tab === 'chat') {
         stopVoice();
         startChat();
       } else if (tab === 'games') {
@@ -2532,7 +2537,7 @@
     }
     // In a call the call is the whole screen; its own chat is inside it.
     if (vc.room) return roomScreen();
-    const tab = ['chat', 'games'].includes(ch.tab) ? ch.tab : 'voice';
+    const tab = ['chat', 'games', 'ai'].includes(ch.tab) ? ch.tab : 'voice';
     // Inside a chat room the room is the whole screen, like a messenger.
     if (tab === 'chat' && ch.view === 'room' && ch.room) return chatScreen();
     const tabBtn = (id, label, iconName) =>
@@ -2540,14 +2545,15 @@
     return `
       <div class="page-head">
         <h1>Klub</h1>
-        <p class="muted">${tab === 'chat' ? CH_UZ.sub : tab === 'games' ? GM_UZ.sub : VC_UZ.sub}</p>
+        <p class="muted">${tab === 'chat' ? CH_UZ.sub : tab === 'games' ? GM_UZ.sub : tab === 'ai' ? AI_UZ.sub : VC_UZ.sub}</p>
       </div>
-      <div class="ch-tabs is-three" role="group">
+      <div class="ch-tabs is-three is-four" role="group">
+        ${tabBtn('ai', AI_UZ.tab, 'sparkle')}
         ${tabBtn('voice', CH_UZ.tabVoice, 'mic')}
         ${tabBtn('chat', CH_UZ.tabChat, 'message')}
         ${tabBtn('games', GM_UZ.tab, 'target')}
       </div>
-      ${tab === 'chat' ? chatScreen() : tab === 'games' ? gamesHubScreen() : !vc.status.consented ? consentScreen() : lobbyScreen()}`;
+      ${tab === 'chat' ? chatScreen() : tab === 'games' ? gamesHubScreen() : tab === 'ai' ? aiScreen() : !vc.status.consented ? consentScreen() : lobbyScreen()}`;
   }
 
   function consentScreen() {
@@ -2769,9 +2775,11 @@
       // nobody can mute or leave.
       if (vc.active || vc.room || vc.local) stopVoice();
       if (ch.active) stopChat();
+      if (ai.ws || ai.mic) endAssistant({ quiet: true });
       return;
     }
     wireChat();
+    wireAssistant();
     wirePremium();
     root.querySelectorAll('[data-vc]').forEach(el =>
       el.addEventListener('click', () => vcAction(el.dataset.vc, el)));
@@ -3748,6 +3756,420 @@
     root.querySelectorAll('.cx-voice').forEach(el =>
       el.addEventListener('click', () => toggleVoice(el)));
     paintVoice();
+  }
+
+  // ============================================================ AI USTOZ
+  //
+  // A live voice speaking coach (Google Gemini Live). The browser opens a
+  // WebSocket to Google with a single-use token from our server, streams the
+  // microphone as 16 kHz PCM, plays the 24 kHz PCM reply, and answers the
+  // model's tool calls (real mock questions) from our own API. Feedback comes
+  // in Uzbek. 18+ only, by Google's terms — see services/SpeakingAssistant.js.
+
+  const AI_UZ = {
+    tab: 'AI Ustoz',
+    sub: "AI Ustoz bilan ovozli suhbat: mock savollari, kundalik suhbat va o'zbekcha izoh.",
+    soonTitle: 'AI Ustoz tez orada',
+    soonBody: "Bu bo'lim hali ishga tushirilmagan. Ustozingiz sozlagandan keyin shu yerda ochiladi.",
+    gateTitle: 'AI Ustoz bilan gaplashing',
+    gateBody: "Sun'iy intellekt bilan jonli ovozli suhbat — xuddi telefonda gaplashgandek.",
+    gatePoints: [
+      'Istalgan mockning savollarini so\'rang: "Mock 5, Part 2 savollarini bering"',
+      "Javobingizdan keyin o'zbek tilida izoh: xatolar, to'g'ri variant va taxminiy daraja",
+      'Yoki shunchaki ingliz tilida kundalik mavzularda suhbatlashing'
+    ],
+    gateNotice: "AI Ustoz Google Gemini orqali ishlaydi. Google xizmatni yaxshilash uchun suhbatlarni ko'rib chiqishi mumkin, shuning uchun shaxsiy ma'lumotlaringizni (to'liq ism, manzil, telefon, parol) aytmang.",
+    gateTick: 'Men 18 yoshdan kattaman va yuqoridagi shartlarga roziman',
+    gateGo: 'Davom etish',
+    start: 'Suhbatni boshlash',
+    end: 'Tugatish',
+    mute: "Mikrofonni o'chirish",
+    unmute: 'Mikrofonni yoqish',
+    connecting: 'Ulanmoqda…',
+    listening: 'Tinglayapman — gapiring',
+    speaking: 'AI Ustoz gapiryapti…',
+    thinking: "O'ylayapti…",
+    muted: "Mikrofon o'chiq",
+    ended: 'Suhbat tugadi.',
+    left: (n, l) => `Bugun: ${l - n}/${l} suhbat qoldi`,
+    headphones: 'Maslahat: quloqchin taqsangiz, AI o\'z ovozini eshitib qolmaydi.',
+    tryTitle: 'Masalan, ayting:',
+    tries: ['Mock 3, Part 1.1 savollarini bering', 'Random Part 2 savol bering', 'Part 3 bo\'yicha mashq qilaylik', "Let's just chat about my day"],
+    you: 'Siz',
+    ai: 'AI Ustoz',
+    noMic: "Mikrofonga ruxsat berilmadi. Brauzer sozlamalaridan ruxsat bering.",
+    lost: "Aloqa uzildi. Yana boshlash uchun tugmani bosing.",
+    pictures: 'Rasmlar'
+  };
+
+  const ai = {
+    status: null,        // { available, adult, used, limit, left }
+    loading: false,
+    error: '',
+    tick: false,
+    phase: 'idle',       // idle | connecting | live | ended
+    activity: 'listening',
+    muted: false,
+    turns: [],           // { who: 'you'|'ai'|'pics', text, images }
+    ws: null,
+    mic: null,           // { stream, ctx, node, source }
+    out: null,           // { ctx, next, sources:Set }
+    pending: '',         // text to send once the session is ready
+    level: 0
+  };
+
+  async function loadAssistant() {
+    ai.loading = true;
+    try {
+      ai.status = await api('/assistant/status');
+      ai.error = '';
+    } catch (error) {
+      ai.error = error.message;
+    }
+    ai.loading = false;
+    if (state.screen === 'speak' && ch.tab === 'ai') render();
+  }
+
+  function aiScreen() {
+    if (ai.loading || !ai.status) return `<div class="center-note"><span class="spinner"></span></div>`;
+    const s = ai.status;
+    if (!s.available) {
+      return `<section class="card ai-card"><h2>${AI_UZ.soonTitle}</h2><p class="muted" style="margin-top:6px">${AI_UZ.soonBody}</p></section>`;
+    }
+    if (!s.adult) {
+      return `<section class="card ai-card ai-gate">
+        <div class="ai-orb is-small"><span></span></div>
+        <h2>${AI_UZ.gateTitle}</h2>
+        <p class="muted">${AI_UZ.gateBody}</p>
+        <ul class="ai-points">${AI_UZ.gatePoints.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+        <p class="ai-notice">${esc(AI_UZ.gateNotice)}</p>
+        <label class="ai-tick"><input type="checkbox" id="ai-tick" ${ai.tick ? 'checked' : ''}> <span>${AI_UZ.gateTick}</span></label>
+        ${ai.error ? `<div class="alert alert-error">${esc(ai.error)}</div>` : ''}
+        <button class="btn btn-lg btn-block" data-ai="confirm" ${ai.tick ? '' : 'disabled'}>${AI_UZ.gateGo}</button>
+      </section>`;
+    }
+
+    const live = ai.phase === 'live' || ai.phase === 'connecting';
+    const status = ai.phase === 'connecting' ? AI_UZ.connecting
+      : ai.phase === 'live' ? (ai.muted ? AI_UZ.muted : ai.activity === 'speaking' ? AI_UZ.speaking : ai.activity === 'thinking' ? AI_UZ.thinking : AI_UZ.listening)
+      : ai.phase === 'ended' ? AI_UZ.ended : '';
+    const left = s.limit ? `<span class="ai-left">${esc(AI_UZ.left(s.used, s.limit))}</span>` : '';
+
+    const turns = ai.turns.map(t => t.who === 'pics'
+      ? `<div class="ai-pics"><div class="ai-pics-label">${AI_UZ.pictures}</div><div class="ai-pics-row">${t.images.map(src => `<img data-authsrc="${esc(src)}" alt="">`).join('')}</div></div>`
+      : `<div class="cx-row ${t.who === 'you' ? 'is-mine' : ''}">
+          ${t.who === 'ai' ? '<span class="ch-av ai-av">AI</span>' : ''}
+          <div class="cx-col">
+            <div class="cx-bubble">${esc(t.text)}</div>
+          </div>
+        </div>`).join('');
+
+    return `<section class="ai-stage ${live ? 'is-live' : ''} is-${ai.phase} act-${ai.activity}">
+        <div class="ai-top">${left}</div>
+        <div class="ai-orb" id="ai-orb"><span></span></div>
+        <div class="ai-status" id="ai-status" role="status">${esc(status)}</div>
+        <div class="ai-controls">
+          ${live
+            ? `<button class="vr-btn ${ai.muted ? 'is-on' : ''}" data-ai="mute"><span class="vr-btn-ic">${icon('mic')}</span><span>${ai.muted ? AI_UZ.unmute : AI_UZ.mute}</span></button>
+               <button class="vr-btn vc-leave" data-ai="end"><span class="vr-btn-ic">${CLOSE_X}</span><span>${AI_UZ.end}</span></button>`
+            : `<button class="btn btn-lg ai-start" data-ai="start" ${s.left === 0 ? 'disabled' : ''}>${icon('mic')} ${AI_UZ.start}</button>`}
+        </div>
+        <p class="ai-hint">${AI_UZ.headphones}</p>
+      </section>
+      ${ai.error ? `<div class="alert alert-warn">${esc(ai.error)}</div>` : ''}
+      <section class="ai-try">
+        <div class="cx-section">${AI_UZ.tryTitle}</div>
+        <div class="ai-chips">${AI_UZ.tries.map(t => `<button class="ai-chip" data-ai-say="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+      </section>
+      ${ai.turns.length ? `<section class="card ai-log"><div class="ch-list cx-msgs ai-msgs" id="ai-log" data-keep-scroll>${turns}</div></section>` : ''}`;
+  }
+
+  // ----- conversation log, updated in place (transcripts arrive word by word)
+
+  function aiAppend(who, text) {
+    if (!text) return;
+    const last = ai.turns[ai.turns.length - 1];
+    if (last && last.who === who && !last.closed) last.text += text;
+    else ai.turns.push({ who, text });
+    paintAiLog();
+  }
+
+  function aiCloseTurns() {
+    for (const t of ai.turns) t.closed = true;
+  }
+
+  let aiPaintQueued = false;
+  function paintAiLog() {
+    if (aiPaintQueued) return;
+    aiPaintQueued = true;
+    requestAnimationFrame(() => {
+      aiPaintQueued = false;
+      if (state.screen === 'speak' && ch.tab === 'ai') render();
+    });
+  }
+
+  function setActivity(activity) {
+    if (ai.activity === activity) return;
+    ai.activity = activity;
+    const stage = root.querySelector('.ai-stage');
+    if (stage) {
+      stage.classList.remove('act-listening', 'act-speaking', 'act-thinking');
+      stage.classList.add(`act-${activity}`);
+    }
+    const el = document.getElementById('ai-status');
+    if (el && ai.phase === 'live') {
+      el.textContent = ai.muted ? AI_UZ.muted : activity === 'speaking' ? AI_UZ.speaking : activity === 'thinking' ? AI_UZ.thinking : AI_UZ.listening;
+    }
+  }
+
+  // ----- audio out: 24 kHz 16-bit PCM chunks, played back to back
+
+  function playPcm(base64) {
+    if (!ai.out) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx({ sampleRate: 24000 });
+      ai.out = { ctx, next: 0, sources: new Set() };
+    }
+    const { ctx } = ai.out;
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const samples = new Int16Array(bytes.buffer, 0, Math.floor(bytes.length / 2));
+    const buffer = ctx.createBuffer(1, samples.length, 24000);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 32768;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    const at = Math.max(ctx.currentTime + 0.03, ai.out.next);
+    src.start(at);
+    ai.out.next = at + buffer.duration;
+    ai.out.sources.add(src);
+    src.onended = () => {
+      ai.out?.sources.delete(src);
+      if (ai.out && !ai.out.sources.size) setActivity('listening');
+    };
+    setActivity('speaking');
+  }
+
+  /** The student started talking over the AI: stop its voice at once. */
+  function stopPlayback() {
+    if (!ai.out) return;
+    for (const src of ai.out.sources) { try { src.stop(); } catch { /* already ended */ } }
+    ai.out.sources.clear();
+    ai.out.next = 0;
+  }
+
+  // ----- audio in: microphone -> 16 kHz 16-bit PCM, ~100 ms chunks
+
+  async function startMic() {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+    });
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const source = ctx.createMediaStreamSource(stream);
+    const node = ctx.createScriptProcessor(4096, 1, 1);
+    const ratio = ctx.sampleRate / 16000;
+    node.onaudioprocess = event => {
+      if (!ai.ws || ai.ws.readyState !== 1 || ai.muted || ai.phase !== 'live') return;
+      const input = event.inputBuffer.getChannelData(0);
+      const outLength = Math.floor(input.length / ratio);
+      const pcm = new Int16Array(outLength);
+      let sum = 0;
+      for (let i = 0; i < outLength; i++) {
+        // Average the samples that fall into each 16 kHz slot (simple low-pass).
+        const from = Math.floor(i * ratio);
+        const to = Math.min(input.length, Math.floor((i + 1) * ratio));
+        let acc = 0;
+        for (let j = from; j < to; j++) acc += input[j];
+        const v = Math.max(-1, Math.min(1, acc / Math.max(1, to - from)));
+        sum += v * v;
+        pcm[i] = v < 0 ? v * 32768 : v * 32767;
+      }
+      ai.level = Math.sqrt(sum / Math.max(1, outLength));
+      const orb = document.getElementById('ai-orb');
+      if (orb) orb.style.setProperty('--lvl', Math.min(1, ai.level * 6).toFixed(2));
+      let binary = '';
+      const bytes = new Uint8Array(pcm.buffer);
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      ai.ws.send(JSON.stringify({ realtimeInput: { audio: { data: btoa(binary), mimeType: 'audio/pcm;rate=16000' } } }));
+    };
+    source.connect(node);
+    // A ScriptProcessor only runs while connected to the output; it writes silence.
+    node.connect(ctx.destination);
+    ai.mic = { stream, ctx, node, source };
+  }
+
+  function stopMic() {
+    const m = ai.mic;
+    ai.mic = null;
+    if (!m) return;
+    try { m.node.disconnect(); m.source.disconnect(); } catch { /* gone */ }
+    m.stream.getTracks().forEach(t => t.stop());
+    m.ctx.close().catch(() => {});
+  }
+
+  // ----- the session
+
+  async function startAssistant(firstText = '') {
+    if (ai.phase === 'connecting' || ai.phase === 'live') {
+      if (firstText) sendAiText(firstText);
+      return;
+    }
+    ai.error = '';
+    ai.phase = 'connecting';
+    ai.turns = [];
+    ai.pending = firstText;
+    ai.muted = false;
+    render();
+    try {
+      await startMic();
+    } catch {
+      ai.phase = 'idle';
+      ai.error = AI_UZ.noMic;
+      return render();
+    }
+    let session;
+    try {
+      session = await api('/assistant/session', { method: 'POST' });
+    } catch (error) {
+      stopMic();
+      ai.phase = 'idle';
+      ai.error = error.message;
+      return render();
+    }
+    if (ai.status) { ai.status.used = (ai.status.used || 0) + 1; ai.status.left = session.left; }
+
+    const ws = new WebSocket(session.url);
+    ai.ws = ws;
+    ws.onopen = () => ws.send(JSON.stringify(session.setup));
+    ws.onmessage = async event => {
+      const raw = typeof event.data === 'string' ? event.data : await event.data.text();
+      let msg;
+      try { msg = JSON.parse(raw); } catch { return; }
+      onAiMessage(msg);
+    };
+    ws.onerror = () => { ai.error = AI_UZ.lost; };
+    ws.onclose = event => {
+      if (ai.ws !== ws) return;
+      const wasLive = ai.phase === 'live' || ai.phase === 'connecting';
+      endAssistant({ quiet: true });
+      if (wasLive && event.code !== 1000) {
+        ai.error = event.reason ? `${AI_UZ.lost} (${event.reason})` : AI_UZ.lost;
+      }
+      if (state.screen === 'speak' && ch.tab === 'ai') render();
+    };
+  }
+
+  function sendAiText(text) {
+    if (!ai.ws || ai.ws.readyState !== 1 || ai.phase !== 'live') { ai.pending = text; return; }
+    aiCloseTurns();
+    aiAppend('you', text);
+    aiCloseTurns();
+    ai.ws.send(JSON.stringify({ realtimeInput: { text } }));
+    setActivity('thinking');
+  }
+
+  async function onAiMessage(msg) {
+    if (msg.setupComplete) {
+      ai.phase = 'live';
+      setActivity('listening');
+      render();
+      // Ask it to greet, or pass on what the student tapped before connecting.
+      const first = ai.pending || 'Hello!';
+      ai.pending = '';
+      if (first === 'Hello!') ai.ws.send(JSON.stringify({ realtimeInput: { text: 'Hello! (The student has just opened AI Ustoz.)' } }));
+      else sendAiText(first);
+      return;
+    }
+    const sc = msg.serverContent;
+    if (sc) {
+      if (sc.interrupted) { stopPlayback(); setActivity('listening'); }
+      if (sc.inputTranscription?.text) {
+        if (ai.turns.length && ai.turns[ai.turns.length - 1].who === 'ai') aiCloseTurns();
+        aiAppend('you', sc.inputTranscription.text);
+      }
+      if (sc.outputTranscription?.text) {
+        if (ai.turns.length && ai.turns[ai.turns.length - 1].who === 'you') aiCloseTurns();
+        aiAppend('ai', sc.outputTranscription.text);
+      }
+      for (const part of sc.modelTurn?.parts || []) {
+        if (part.inlineData?.data && /audio/.test(part.inlineData.mimeType || 'audio')) playPcm(part.inlineData.data);
+      }
+      if (sc.turnComplete) aiCloseTurns();
+    }
+    if (msg.toolCall?.functionCalls?.length) {
+      setActivity('thinking');
+      const functionResponses = [];
+      for (const call of msg.toolCall.functionCalls) {
+        let result;
+        try {
+          if (call.name === 'get_mock_questions') {
+            const q = new URLSearchParams();
+            if (call.args?.mock !== undefined && call.args?.mock !== null) q.set('mock', call.args.mock);
+            q.set('part', call.args?.part || '');
+            result = await api(`/assistant/questions?${q}`);
+            if (result?.images?.length) {
+              aiCloseTurns();
+              ai.turns.push({ who: 'pics', images: result.images, closed: true });
+              paintAiLog();
+            }
+          } else if (call.name === 'list_mocks') {
+            result = await api('/assistant/mocks');
+          } else {
+            result = { error: `Unknown tool ${call.name}` };
+          }
+        } catch (error) {
+          result = { error: error.message };
+        }
+        // The model does not need the picture addresses; the student sees them.
+        const { images, ...forModel } = result || {};
+        functionResponses.push({ id: call.id, name: call.name, response: { result: { ...forModel, picturesShownToStudent: Boolean(images?.length) } } });
+      }
+      if (ai.ws?.readyState === 1) ai.ws.send(JSON.stringify({ toolResponse: { functionResponses } }));
+    }
+    if (msg.goAway) {
+      // Google is about to close the connection (session length limit).
+      ai.error = AI_UZ.lost;
+    }
+  }
+
+  function endAssistant({ quiet = false } = {}) {
+    const ws = ai.ws;
+    ai.ws = null;
+    if (ws && ws.readyState <= 1) { try { ws.close(1000); } catch { /* closed */ } }
+    stopMic();
+    stopPlayback();
+    if (ai.out) { ai.out.ctx.close().catch(() => {}); ai.out = null; }
+    if (ai.phase === 'live' || ai.phase === 'connecting') ai.phase = ai.turns.length ? 'ended' : 'idle';
+    aiCloseTurns();
+    if (!quiet && state.screen === 'speak' && ch.tab === 'ai') render();
+  }
+
+  function wireAssistant() {
+    if (ch.tab !== 'ai') return;
+    document.getElementById('ai-tick')?.addEventListener('change', event => { ai.tick = event.target.checked; render(); });
+    root.querySelectorAll('[data-ai]').forEach(el =>
+      el.addEventListener('click', async () => {
+        const action = el.dataset.ai;
+        if (action === 'confirm') {
+          try {
+            await api('/assistant/confirm-age', { method: 'POST', body: { adult: true } });
+            ai.status = { ...ai.status, adult: true };
+            ai.error = '';
+          } catch (error) {
+            ai.error = error.message;
+          }
+          return render();
+        }
+        if (action === 'start') return startAssistant();
+        if (action === 'end') return endAssistant();
+        if (action === 'mute') {
+          ai.muted = !ai.muted;
+          return render();
+        }
+      }));
+    root.querySelectorAll('[data-ai-say]').forEach(el =>
+      el.addEventListener('click', () => startAssistant(el.dataset.aiSay)));
   }
 
   // ============================================================== INSTALL
@@ -5337,7 +5759,8 @@
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
     lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><path d="M12 15V3"/>',
-    flag: '<path d="M4 22V4"/><path d="M4 4h13l-2.5 4L17 12H4"/>'
+    flag: '<path d="M4 22V4"/><path d="M4 4h13l-2.5 4L17 12H4"/>',
+    sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>'
   };
 
   const icon = name =>
