@@ -3766,6 +3766,35 @@
   // model's tool calls (real mock questions) from our own API. Feedback comes
   // in Uzbek. 18+ only, by Google's terms — see services/SpeakingAssistant.js.
 
+  /*
+   * The teachers students talk to. Each picture is AI-generated. `face` marks,
+   * in the original photo's pixels, where the animation moves things
+   * (public/avatar.js): where the lips meet, the mouth corners, the chin and
+   * each eye. Voice and manner are set on the server (CHARACTERS in
+   * services/SpeakingAssistant.js) under the same id.
+   */
+  const AI_CHARACTERS = [
+    {
+      id: 'lesley',
+      name: 'Lesley',
+      role: 'English teacher',
+      image: '/assistants/lesley.jpg',
+      face: {
+        width: 864,
+        mouth: {
+          seam: [[425, 615], [450, 623], [475, 626], [510, 627.5], [550, 628], [575, 626], [592, 622.5]],
+          left: 425, right: 592, above: 585, lowerLip: 655, chin: 768, neck: 835,
+          chinHalf: 105, jaw: 190, maxOpen: 19
+        },
+        eyes: [
+          { cx: 414, cy: 427, rx: 47, top: 17, bottom: 13 },
+          { cx: 613, cy: 427, rx: 57, top: 17, bottom: 15 }
+        ]
+      }
+    }
+  ];
+  const aiCharacter = () => AI_CHARACTERS.find(c => c.id === ai.character) || AI_CHARACTERS[0];
+
   const AI_UZ = {
     tab: 'AI Ustoz',
     sub: "AI Ustoz bilan ovozli suhbat: mock savollari, kundalik suhbat va o'zbekcha izoh.",
@@ -3787,7 +3816,7 @@
     unmute: 'Mikrofonni yoqish',
     connecting: 'Ulanmoqda…',
     listening: 'Tinglayapman — gapiring',
-    speaking: 'AI Ustoz gapiryapti…',
+    speaking: name => `${name} gapiryapti…`,
     thinking: "O'ylayapti…",
     muted: "Mikrofon o'chiq",
     ended: 'Suhbat tugadi.',
@@ -3796,7 +3825,8 @@
     tryTitle: 'Masalan, ayting:',
     tries: ['Mock 3, Part 1.1 savollarini bering', 'Random Part 2 savol bering', 'Part 3 bo\'yicha mashq qilaylik', "Let's just chat about my day"],
     you: 'Siz',
-    ai: 'AI Ustoz',
+    choose: 'Kim bilan gaplashasiz?',
+    isAi: "Sun'iy intellekt ustoz",
     noMic: "Mikrofonga ruxsat berilmadi. Brauzer sozlamalaridan ruxsat bering.",
     lost: "Aloqa uzildi. Yana boshlash uchun tugmani bosing.",
     pictures: 'Rasmlar'
@@ -3815,7 +3845,9 @@
     mic: null,           // { stream, ctx, node, source }
     out: null,           // { ctx, next, sources:Set }
     pending: '',         // text to send once the session is ready
-    level: 0
+    level: 0,
+    character: store.get('aiCharacter') || 'lesley',
+    portrait: null       // { canvas, instance } while her face is on screen
   };
 
   async function loadAssistant() {
@@ -3838,7 +3870,7 @@
     }
     if (!s.adult) {
       return `<section class="card ai-card ai-gate">
-        <div class="ai-orb is-small"><span></span></div>
+        <div class="ai-gate-faces">${AI_CHARACTERS.map(c => `<img src="${esc(c.image)}" alt="${esc(c.name)}">`).join('')}</div>
         <h2>${AI_UZ.gateTitle}</h2>
         <p class="muted">${AI_UZ.gateBody}</p>
         <ul class="ai-points">${AI_UZ.gatePoints.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
@@ -3851,22 +3883,33 @@
 
     const live = ai.phase === 'live' || ai.phase === 'connecting';
     const status = ai.phase === 'connecting' ? AI_UZ.connecting
-      : ai.phase === 'live' ? (ai.muted ? AI_UZ.muted : ai.activity === 'speaking' ? AI_UZ.speaking : ai.activity === 'thinking' ? AI_UZ.thinking : AI_UZ.listening)
+      : ai.phase === 'live' ? (ai.muted ? AI_UZ.muted : ai.activity === 'speaking' ? AI_UZ.speaking(aiCharacter().name) : ai.activity === 'thinking' ? AI_UZ.thinking : AI_UZ.listening)
       : ai.phase === 'ended' ? AI_UZ.ended : '';
     const left = s.limit ? `<span class="ai-left">${esc(AI_UZ.left(s.used, s.limit))}</span>` : '';
 
     const turns = ai.turns.map(t => t.who === 'pics'
       ? `<div class="ai-pics"><div class="ai-pics-label">${AI_UZ.pictures}</div><div class="ai-pics-row">${t.images.map(src => `<img data-authsrc="${esc(src)}" alt="">`).join('')}</div></div>`
       : `<div class="cx-row ${t.who === 'you' ? 'is-mine' : ''}">
-          ${t.who === 'ai' ? '<span class="ch-av ai-av">AI</span>' : ''}
+          ${t.who === 'ai' ? `<img class="ch-av ai-av-face" src="${esc(aiCharacter().image)}" alt="">` : ''}
           <div class="cx-col">
             <div class="cx-bubble">${esc(t.text)}</div>
           </div>
         </div>`).join('');
 
+    const who = aiCharacter();
+    const picker = AI_CHARACTERS.length > 1 && !live ? `
+        <div class="ai-pick" role="radiogroup" aria-label="${esc(AI_UZ.choose)}">
+          ${AI_CHARACTERS.map(c => `<button class="ai-pick-btn ${c.id === who.id ? 'is-on' : ''}" role="radio" aria-checked="${c.id === who.id}" data-ai-character="${esc(c.id)}">
+            <img src="${esc(c.image)}" alt=""><span>${esc(c.name)}</span></button>`).join('')}
+        </div>` : '';
+
     return `<section class="ai-stage ${live ? 'is-live' : ''} is-${ai.phase} act-${ai.activity}">
         <div class="ai-top">${left}</div>
-        <div class="ai-orb" id="ai-orb"><span></span></div>
+        ${picker}
+        <div class="ai-face">
+          <canvas id="ai-face" data-persist="${esc(who.id)}" role="img" aria-label="${esc(who.name)}" style="background-image:url('${esc(who.image)}')"></canvas>
+          <div class="ai-face-name"><strong>${esc(who.name)}</strong><span>${esc(AI_UZ.isAi)}</span></div>
+        </div>
         <div class="ai-status" id="ai-status" role="status">${esc(status)}</div>
         <div class="ai-controls">
           ${live
@@ -3911,6 +3954,7 @@
   function setActivity(activity) {
     if (ai.activity === activity) return;
     ai.activity = activity;
+    setPortraitMode();
     const stage = root.querySelector('.ai-stage');
     if (stage) {
       stage.classList.remove('act-listening', 'act-speaking', 'act-thinking');
@@ -3918,7 +3962,7 @@
     }
     const el = document.getElementById('ai-status');
     if (el && ai.phase === 'live') {
-      el.textContent = ai.muted ? AI_UZ.muted : activity === 'speaking' ? AI_UZ.speaking : activity === 'thinking' ? AI_UZ.thinking : AI_UZ.listening;
+      el.textContent = ai.muted ? AI_UZ.muted : activity === 'speaking' ? AI_UZ.speaking(aiCharacter().name) : activity === 'thinking' ? AI_UZ.thinking : AI_UZ.listening;
     }
   }
 
@@ -3928,7 +3972,11 @@
     if (!ai.out) {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       const ctx = new Ctx({ sampleRate: 24000 });
-      ai.out = { ctx, next: 0, sources: new Set() };
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.2;
+      analyser.connect(ctx.destination);
+      ai.out = { ctx, analyser, next: 0, sources: new Set(), buf: new Float32Array(512) };
     }
     const { ctx } = ai.out;
     const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
@@ -3938,7 +3986,7 @@
     for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 32768;
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(ctx.destination);
+    src.connect(ai.out.analyser);
     const at = Math.max(ctx.currentTime + 0.03, ai.out.next);
     src.start(at);
     ai.out.next = at + buffer.duration;
@@ -3948,6 +3996,39 @@
       if (ai.out && !ai.out.sources.size) setActivity('listening');
     };
     setActivity('speaking');
+  }
+
+  /** How loud her voice is right now, 0..1: how far her mouth opens. */
+  function aiVoiceLevel() {
+    const out = ai.out;
+    if (!out || !out.sources.size) return 0;
+    out.analyser.getFloatTimeDomainData(out.buf);
+    let sum = 0;
+    for (let i = 0; i < out.buf.length; i++) sum += out.buf[i] * out.buf[i];
+    const rms = Math.sqrt(sum / out.buf.length);
+    return Math.min(1, Math.pow(Math.max(0, rms - 0.012) / 0.13, 0.8));
+  }
+
+  /** Her face on screen: started once, kept alive across redraws. */
+  function mountPortrait() {
+    const canvas = document.getElementById('ai-face');
+    if (!canvas || !window.LivingPortrait) {
+      if (ai.portrait && !ai.portrait.canvas.isConnected) { ai.portrait.instance.destroy(); ai.portrait = null; }
+      return;
+    }
+    if (ai.portrait?.canvas === canvas) return setPortraitMode();
+    ai.portrait?.instance.destroy();
+    const who = aiCharacter();
+    ai.portrait = {
+      canvas,
+      instance: window.LivingPortrait.mount(canvas, { src: who.image, face: who.face, getLevel: aiVoiceLevel })
+    };
+    setPortraitMode();
+  }
+
+  function setPortraitMode() {
+    const mode = ai.phase !== 'live' ? 'idle' : ai.activity;
+    ai.portrait?.instance.setMode(mode);
   }
 
   /** The student started talking over the AI: stop its voice at once. */
@@ -4030,7 +4111,7 @@
     }
     let session;
     try {
-      session = await api('/assistant/session', { method: 'POST' });
+      session = await api('/assistant/session', { method: 'POST', body: { character: aiCharacter().id } });
     } catch (error) {
       stopMic();
       ai.phase = 'idle';
@@ -4146,7 +4227,15 @@
   }
 
   function wireAssistant() {
-    if (ch.tab !== 'ai') return;
+    if (ch.tab !== 'ai') { mountPortrait(); return; }
+    mountPortrait();
+    root.querySelectorAll('[data-ai-character]').forEach(el =>
+      el.addEventListener('click', () => {
+        if (ai.phase === 'live' || ai.phase === 'connecting') return;
+        ai.character = el.dataset.aiCharacter;
+        store.set('aiCharacter', ai.character);
+        render();
+      }));
     document.getElementById('ai-tick')?.addEventListener('change', event => { ai.tick = event.target.checked; render(); });
     root.querySelectorAll('[data-ai]').forEach(el =>
       el.addEventListener('click', async () => {
@@ -5464,8 +5553,17 @@
       atEnd: el.scrollHeight - el.scrollTop - el.clientHeight < 40
     }));
 
+    // Elements marked data-persist (her animated face) survive the redraw
+    // whole, so the animation never restarts or flickers.
+    const persisted = [...root.querySelectorAll('[data-persist][id]')];
+
     if (state.screen !== ads.lastScreen) { ads.visit += 1; ads.lastScreen = state.screen; }
     root.innerHTML = screenMarkup();
+
+    for (const node of persisted) {
+      const fresh = document.getElementById(node.id);
+      if (fresh && fresh.dataset.persist === node.dataset.persist) fresh.replaceWith(node);
+    }
 
     for (const k of kept) {
       const el = document.getElementById(k.id);

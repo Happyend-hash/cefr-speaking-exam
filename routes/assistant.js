@@ -2,7 +2,9 @@ import express from 'express';
 import User from '../models/User.js';
 import {
   isConfigured, setupMessage, createSessionToken, questionsFor, listMocks,
-  DAILY_SESSIONS, WS_URL, today
+  DAILY_SESSIONS, WS_URL, today,
+  CHARACTERS,
+  DEFAULT_CHARACTER
 } from '../services/SpeakingAssistant.js';
 import { isStaff } from '../services/Premium.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -56,7 +58,7 @@ router.post('/confirm-age', async (req, res, next) => {
 router.post('/session', async (req, res, next) => {
   try {
     if (!isConfigured()) throw new APIError("AI Ustoz hali ishga tushirilmagan.", 503, 'not_configured');
-    const user = await User.findById(req.user.id).select('assistantAdultAt assistantUsage role access premiumUntil');
+    const user = await User.findById(req.user.id).select('firstName assistantAdultAt assistantUsage role access premiumUntil');
     if (!user) throw new APIError('User not found', 404);
     if (user.access?.blocked && !isStaff(user)) throw new APIError('Your teacher has paused your access.', 403, 'blocked');
     if (!user.assistantAdultAt) throw new APIError("Avval 18 yoshdan kattaligingizni tasdiqlang.", 403, 'age');
@@ -79,7 +81,10 @@ router.post('/session', async (req, res, next) => {
       success: true,
       data: {
         url: `${WS_URL}?access_token=${encodeURIComponent(token)}`,
-        setup: setupMessage(),
+        setup: setupMessage({
+          character: CHARACTERS[req.body?.character] ? req.body.character : DEFAULT_CHARACTER,
+          studentName: user.firstName
+        }),
         left: isStaff(user) ? null : Math.max(0, DAILY_SESSIONS - used - 1)
       }
     });

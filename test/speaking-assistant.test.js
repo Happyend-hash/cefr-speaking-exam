@@ -69,3 +69,23 @@ test('the daily limit counts in Tashkent days', () => {
   assert.equal(today(Date.parse('2026-10-15T20:00:00Z')), '2026-10-16');
   assert.ok(DAILY_SESSIONS >= 1);
 });
+
+test('Lesley: her own voice and manner, the student by name, and honest that she is an AI', () => {
+  const s = setupMessage({ character: 'lesley', studentName: 'Nilufar<script>' }).setup;
+  const prompt = s.systemInstruction.parts[0].text;
+  assert.equal(s.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Sulafat');
+  assert.match(prompt, /Your name is Lesley/);
+  assert.match(prompt, /first name is Nilufarscript\./, 'the name is cleaned of anything but letters');
+  assert.match(prompt, /you are an AI teacher/i);
+  assert.match(prompt, /Never claim to be human/);
+  assert.match(prompt, /UZBEK/, 'the coaching rules are still there');
+});
+
+test('an unknown character falls back to Lesley; Arthur has his own voice', () => {
+  const unknown = setupMessage({ character: 'nobody' }).setup;
+  assert.match(unknown.systemInstruction.parts[0].text, /Your name is Lesley/);
+  assert.match(unknown.systemInstruction.parts[0].text, /Ask the student's first name/);
+  const arthur = setupMessage({ character: 'arthur' }).setup;
+  assert.equal(arthur.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Charon');
+  assert.match(arthur.systemInstruction.parts[0].text, /Your name is Arthur/);
+});
