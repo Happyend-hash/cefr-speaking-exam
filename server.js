@@ -71,6 +71,7 @@ import avatarRoutes from './routes/avatars.js';
 import gameRoutes from './routes/games.js';
 import { resumeStuckMarking } from './routes/exam.js';
 import { retryAll, RETRY_EVERY_MS } from './services/MarkingRetry.js';
+import PronunciationService from './services/PronunciationService.js';
 import AudioStorageService, { audioDir } from './services/AudioStorageService.js';
 import { publicRouter as sponsorRoutes, adminRouter as sponsorAdminRoutes } from './routes/sponsors.js';
 
@@ -329,6 +330,18 @@ app.get('/api/health', (req, res) => {
     // Where recordings are kept, and how moving the old ones is going —
     // counts only, nothing about any student.
     audioStorage: AudioStorageService.storage,
+    // Whether pronunciation is being measured — the last mock's result. An
+    // Azure key that stops working (e.g. the subscription is disabled) shows
+    // here instead of silently leaving every result "not assessed".
+    pronunciation: PronunciationService.isConfigured()
+      ? (PronunciationService.lastRun
+          ? {
+              lastRunAt: PronunciationService.lastRun.at,
+              working: PronunciationService.lastRun.assessed > 0,
+              lastError: PronunciationService.lastRun.assessed > 0 ? '' : PronunciationService.lastRun.error
+            }
+          : { lastRunAt: null, working: null, lastError: '' })
+      : { configured: false },
     audioMigration: AudioStorageService.migration,
     timestamp: new Date().toISOString(),
     version: '1.0.0'

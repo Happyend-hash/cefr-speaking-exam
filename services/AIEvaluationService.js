@@ -624,12 +624,25 @@ In this reply that means "reasoning", "feedback", "why", "overallFeedback",
       return lines.join('\n');
     }).join('\n\n');
 
-    const response = await this.callClaudeAPI({
-      cached,
-      user,
-      maxTokens: Math.max(this.maxTokens, 6000)
-    });
-    return this.parseWritingEvaluation(response, parts.map(p => p.key));
+    // The reply is long JSON full of quoted student text, and now and then the
+    // model leaves a quote unescaped — the whole attempt then failed on one
+    // stray character (2026-10-12). A broken reply is asked for once more
+    // before the attempt is marked failed; a second reply is a fresh write.
+    let lastError;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const response = await this.callClaudeAPI({
+        cached,
+        user,
+        maxTokens: Math.max(this.maxTokens, 6000)
+      });
+      try {
+        return this.parseWritingEvaluation(response, parts.map(p => p.key));
+      } catch (error) {
+        lastError = error;
+        if (attempt === 1) console.warn(`Writing reply unreadable, asking again: ${error.message}`);
+      }
+    }
+    throw lastError;
   }
 
   /**
@@ -644,8 +657,10 @@ In this reply that means "reasoning", "feedback", "why", "overallFeedback",
     if (typeof responseText !== 'string' || !responseText.trim()) {
       throw new Error('Failed to parse writing evaluation: the model returned no text');
     }
-    const match = responseText.match(/\{[\s\S]*\}/);
-    if (!match) {
+    // The first complete object, not "first { to last }" — prose with a brace
+    // after the JSON used to break the parse (see firstJsonObject).
+    const json = firstJsonObject(responseText) || responseText.match(/\{[\s\S]*\}/)?.[0];
+    if (!json) {
       throw new Error(
         `Failed to parse writing evaluation: no JSON in the reply (starts: "${responseText.slice(0, 120)}…")`
       );
@@ -653,7 +668,7 @@ In this reply that means "reasoning", "feedback", "why", "overallFeedback",
 
     let data;
     try {
-      data = JSON.parse(match[0]);
+      data = JSON.parse(json);
     } catch (error) {
       throw new Error(`Failed to parse writing evaluation: ${error.message}`);
     }

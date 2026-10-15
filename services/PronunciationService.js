@@ -209,6 +209,11 @@ class PronunciationService {
       const ffmpeg = spawn('ffmpeg', [
         '-hide_banner', '-loglevel', 'error',
         '-i', 'pipe:0',
+        // Drop the silence before the student starts speaking. Azure gives up
+        // on a clip that opens with ~5s of silence ("InitialSilenceTimeout"),
+        // which is how Part 2 and Part 3 answers — where students think first —
+        // kept failing to be assessed.
+        '-af', 'silenceremove=start_periods=1:start_duration=0.2:start_threshold=-45dB',
         '-t', String(seconds),
         '-ar', '16000',      // 16 kHz
         '-ac', '1',          // mono
@@ -465,6 +470,8 @@ class PronunciationService {
       `${((Date.now() - startedAt) / 1000).toFixed(1)}s ` +
       `(queue ${azureLimiter.stats.running} running, ${azureLimiter.stats.waiting} waiting)`
     );
+
+    this.lastRun = { at: new Date(), assessed: results.length, tried, error: failures[0] || '' };
 
     if (!results.length) {
       return { assessed: false, error: failures[0] || 'No answer could be assessed.' };
