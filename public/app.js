@@ -3793,7 +3793,13 @@
         mouth: {
           cx: 801, seam: 258.5, half: 27, curve: -0.0038,
           above: 247, lowerLip: 269, chin: 292, neck: 312,
-          chinHalf: 24, jaw: 55, maxOpen: 11, teeth: 4
+          chinHalf: 24, jaw: 55, maxOpen: 13, teeth: 4
+        },
+        // Her real teeth, cut from the smiling version of the same photo
+        // (lesley-teeth.png = that photo's x 755-840, y 240-276).
+        teeth: {
+          src: '/assistants/lesley-teeth.png', box: [755, 240, 85, 36],
+          cx: 795, top: 249.5, bottom: 266.5, half: 30, curve: -0.0125
         },
         eyes: [
           { cx: 771, cy: 192.5, rx: 15, top: 5, bottom: 5 },

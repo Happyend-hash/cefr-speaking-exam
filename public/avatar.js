@@ -49,6 +49,13 @@
     uniform float uOpen;          // opening, photo px
     uniform float uTeeth;         // most of the upper teeth that can show, photo px
 
+    // Her real teeth, cut from a smiling photo of the same picture.
+    uniform sampler2D uTeethImg;
+    uniform float uHasTeeth;
+    uniform vec4 uTeethBox;       // the cut-out's x, y, width, height in the smiling photo
+    uniform vec4 uSmile;          // centre x, top lip inner edge y, bottom lip inner edge y, half width of the opening
+    uniform float uSmileCurve;    // how the bottom lip rises toward the corners
+
     uniform vec4 uEyeL; uniform vec4 uEyeR;   // cx, cy, half width, upper lid distance
     uniform vec2 uEyeBottom;                  // lower lid distance, left and right
     uniform vec2 uLid;                        // lid skin rows, lash rows
@@ -98,7 +105,7 @@
       q = eyeInv(q, uEyeR, uEyeBottom.y);
 
       // The mouth: the line between the lips opens, the lower lip and chin drop.
-      float gapT = -1.0, lipsW = 0.0, gapH = 0.0, dx = abs(q.x - uMouth.x);
+      float gapT = -1.0, lipsW = 0.0, gapH = 0.0, gapIn = 0.0, dx = abs(q.x - uMouth.x), sx = q.x - uMouth.x;
       if (uOpen > 0.05 && dx < uJaw.y && q.y > uMouthRows.x && q.y < uMouthRows.w) {
         float halfW = uMouth.z;
         float B = uMouth.y + uMouth.w * dx * dx;
@@ -108,7 +115,7 @@
         float above = uMouthRows.x, LL = uMouthRows.y, C = uMouthRows.z, N = uMouthRows.w;
         float y = q.y;
         if (y < B - up) q.y = remap(y, above, B - up, above, B - 0.5);
-        else if (y < B + low) { q.y = B; gapT = (y - (B - up)) / max(up + low, 0.001); lipsW = lw; gapH = up + low; }
+        else if (y < B + low) { q.y = B; gapIn = y - (B - up); gapT = gapIn / max(up + low, 0.001); lipsW = lw; gapH = up + low; }
         else if (y < LL + low) q.y = remap(y, B + low, LL + low, B + 0.5, LL);
         else if (y < C + chin) q.y = remap(y, LL + low, C + chin, LL, C);
         else q.y = remap(y, C + chin, N, C, N);
@@ -127,6 +134,18 @@
         float lowerT = gapH > uTeeth * 1.6 ? 0.16 * front : 0.0;
         vec3 inside = mix(teeth, dark, smoothstep(teethT - 0.07, teethT + 0.07, gapT));
         inside = mix(inside, vec3(0.62, 0.56, 0.52) * (0.7 + 0.3 * front), smoothstep(1.0 - lowerT - 0.05, 1.0 - lowerT + 0.05, gapT) * step(0.001, lowerT));
+        if (uHasTeeth > 0.5) {
+          // Her own mouth: upper teeth hang from the top lip, lower teeth rise
+          // from the bottom lip, and the gap between shows more as she opens.
+          float xs = uSmile.x + clamp(sx / (halfW * 0.86), -1.0, 1.0) * uSmile.w;
+          float topS = uSmile.y;
+          float botS = uSmile.z + uSmileCurve * (xs - uSmile.x) * (xs - uSmile.x);
+          float full = botS - topS;
+          float c = mix(1.0, full / max(gapH, 0.5), clamp(gapH / full, 0.0, 1.0));
+          float ys = gapT < 0.7 ? topS + gapIn * c : botS - (gapH - gapIn) * c;
+          inside = texture2D(uTeethImg, clamp((vec2(xs, ys) - uTeethBox.xy) / uTeethBox.zw, vec2(0.0), vec2(1.0))).rgb;
+          inside *= mix(0.82, 1.0, smoothstep(0.0, 6.0, gapH));   // a slightly open mouth is darker inside
+        }
         float a = smoothstep(0.02, 0.3, lipsW) * smoothstep(0.0, 0.1, gapT) * (1.0 - smoothstep(0.92, 1.0, gapT));
         col = mix(col, inside, a);
       }
@@ -179,6 +198,30 @@
 
     const img = new Image();
     let ready = false;
+    let teethReady = !scene.teeth;
+    if (scene.teeth) {
+      const t = new Image();
+      t.onload = () => {
+        gl.activeTexture(gl.TEXTURE1);
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, t);
+        gl.activeTexture(gl.TEXTURE0);
+        const T = scene.teeth;
+        gl.uniform1i(u('uTeethImg'), 1);
+        gl.uniform1f(u('uHasTeeth'), 1);
+        gl.uniform4f(u('uTeethBox'), ...T.box);
+        gl.uniform4f(u('uSmile'), T.cx, T.top, T.bottom, T.half);
+        gl.uniform1f(u('uSmileCurve'), T.curve);
+        teethReady = true;
+      };
+      t.onerror = () => { teethReady = true; };   // fall back to drawn teeth
+      t.src = scene.teeth.src;
+    }
     img.onload = () => {
       const tex = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -186,6 +229,7 @@
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.activeTexture(gl.TEXTURE0);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
       setStatic();
       ready = true;
@@ -196,6 +240,7 @@
     function setStatic() {
       const S = scene, m = S.mouth;
       gl.uniform1i(u('uImg'), 0);
+      if (!scene.teeth) gl.uniform1f(u('uHasTeeth'), 0);
       gl.uniform2f(u('uImgSize'), S.width, S.height);
       gl.uniform4f(u('uBody'), ...v4(S.body));
       gl.uniform4f(u('uChest'), ...v4(S.chest));
@@ -291,7 +336,7 @@
       if (!alive) return;
       if (ready && !canvas.isConnected) { alive = false; return; }
       raf = requestAnimationFrame(frame);
-      if (!ready) return;
+      if (!ready || !teethReady) return;
       fit();
 
       const level = fixed ? fixed.level : mode === 'speaking' || mode === 'idle' ? clamp(getLevel() || 0, 0, 1) : 0;
