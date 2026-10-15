@@ -3778,18 +3778,29 @@
       id: 'lesley',
       name: 'Lesley',
       role: 'English teacher',
-      image: '/assistants/lesley.jpg',
-      face: {
-        width: 864,
+      image: '/assistants/lesley-room.jpg',
+      thumb: '/assistants/lesley-face.jpg',
+      // Measured on the 1584 x 672 photo.
+      scene: {
+        width: 1584, height: 672, focus: [792, 330],
+        body: { cx: 787, cy: 480, rx: 230, ry: 300 },
+        chest: { cx: 787, cy: 410, rx: 170, ry: 110 },
+        head: { cx: 800, cy: 195, rx: 95, ry: 150 },
+        pivot: [800, 330],
+        face: { cx: 801, cy: 225, rx: 46, ry: 62 },
+        brows: [{ cx: 770, cy: 172, rx: 20, ry: 8 }, { cx: 833, cy: 172, rx: 22, ry: 8 }],
+        hands: { cx: 790, cy: 592, rx: 95, ry: 55 },
         mouth: {
-          seam: [[425, 615], [450, 623], [475, 626], [510, 627.5], [550, 628], [575, 626], [592, 622.5]],
-          left: 425, right: 592, above: 585, lowerLip: 655, chin: 768, neck: 835,
-          chinHalf: 105, jaw: 190, maxOpen: 19
+          cx: 801, seam: 258.5, half: 27, curve: -0.0038,
+          above: 247, lowerLip: 269, chin: 292, neck: 312,
+          chinHalf: 24, jaw: 55, maxOpen: 11, teeth: 4
         },
         eyes: [
-          { cx: 414, cy: 427, rx: 47, top: 17, bottom: 13 },
-          { cx: 613, cy: 427, rx: 57, top: 17, bottom: 15 }
-        ]
+          { cx: 771, cy: 192.5, rx: 15, top: 5, bottom: 5 },
+          { cx: 834, cy: 192.5, rx: 16, top: 5, bottom: 5.5 }
+        ],
+        lid: [6, 3.5],
+        breath: 1.1, handLift: 3, browLift: 1.6
       }
     }
   ];
@@ -3870,7 +3881,7 @@
     }
     if (!s.adult) {
       return `<section class="card ai-card ai-gate">
-        <div class="ai-gate-faces">${AI_CHARACTERS.map(c => `<img src="${esc(c.image)}" alt="${esc(c.name)}">`).join('')}</div>
+        <div class="ai-gate-faces">${AI_CHARACTERS.map(c => `<img src="${esc(c.thumb)}" alt="${esc(c.name)}">`).join('')}</div>
         <h2>${AI_UZ.gateTitle}</h2>
         <p class="muted">${AI_UZ.gateBody}</p>
         <ul class="ai-points">${AI_UZ.gatePoints.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
@@ -3890,7 +3901,7 @@
     const turns = ai.turns.map(t => t.who === 'pics'
       ? `<div class="ai-pics"><div class="ai-pics-label">${AI_UZ.pictures}</div><div class="ai-pics-row">${t.images.map(src => `<img data-authsrc="${esc(src)}" alt="">`).join('')}</div></div>`
       : `<div class="cx-row ${t.who === 'you' ? 'is-mine' : ''}">
-          ${t.who === 'ai' ? `<img class="ch-av ai-av-face" src="${esc(aiCharacter().image)}" alt="">` : ''}
+          ${t.who === 'ai' ? `<img class="ch-av ai-av-face" src="${esc(aiCharacter().thumb)}" alt="">` : ''}
           <div class="cx-col">
             <div class="cx-bubble">${esc(t.text)}</div>
           </div>
@@ -3900,16 +3911,17 @@
     const picker = AI_CHARACTERS.length > 1 && !live ? `
         <div class="ai-pick" role="radiogroup" aria-label="${esc(AI_UZ.choose)}">
           ${AI_CHARACTERS.map(c => `<button class="ai-pick-btn ${c.id === who.id ? 'is-on' : ''}" role="radio" aria-checked="${c.id === who.id}" data-ai-character="${esc(c.id)}">
-            <img src="${esc(c.image)}" alt=""><span>${esc(c.name)}</span></button>`).join('')}
+            <img src="${esc(c.thumb)}" alt=""><span>${esc(c.name)}</span></button>`).join('')}
         </div>` : '';
 
-    return `<section class="ai-stage ${live ? 'is-live' : ''} is-${ai.phase} act-${ai.activity}">
-        <div class="ai-top">${left}</div>
-        ${picker}
-        <div class="ai-face">
-          <canvas id="ai-face" data-persist="${esc(who.id)}" role="img" aria-label="${esc(who.name)}" style="background-image:url('${esc(who.image)}')"></canvas>
+    return `<section class="ai-stage has-scene ${live ? 'is-live' : ''} is-${ai.phase} act-${ai.activity}">
+        <canvas id="ai-face" class="ai-scene" data-persist="${esc(who.id)}" role="img" aria-label="${esc(who.name)}" style="background-image:url('${esc(who.image)}')"></canvas>
+        <div class="ai-scene-top">
           <div class="ai-face-name"><strong>${esc(who.name)}</strong><span>${esc(AI_UZ.isAi)}</span></div>
+          ${left}
         </div>
+        ${picker}
+        <div class="ai-scene-bottom">
         <div class="ai-status" id="ai-status" role="status">${esc(status)}</div>
         <div class="ai-controls">
           ${live
@@ -3918,6 +3930,7 @@
             : `<button class="btn btn-lg ai-start" data-ai="start" ${s.left === 0 ? 'disabled' : ''}>${icon('mic')} ${AI_UZ.start}</button>`}
         </div>
         <p class="ai-hint">${AI_UZ.headphones}</p>
+        </div>
       </section>
       ${ai.error ? `<div class="alert alert-warn">${esc(ai.error)}</div>` : ''}
       <section class="ai-try">
@@ -4021,7 +4034,7 @@
     const who = aiCharacter();
     ai.portrait = {
       canvas,
-      instance: window.LivingPortrait.mount(canvas, { src: who.image, face: who.face, getLevel: aiVoiceLevel })
+      instance: window.LivingPortrait.mount(canvas, { src: who.image, scene: who.scene, getLevel: aiVoiceLevel })
     };
     setPortraitMode();
   }

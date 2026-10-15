@@ -1,200 +1,344 @@
 /*
- * Living portrait — makes a still photo of an AI teacher look alive.
+ * Living scene — makes a still photo of an AI teacher look like a video call.
  *
- * No video and no paid service: the photo is redrawn every frame in thin
- * vertical strips, each strip stretched a little, which is enough to
- *   - open the jaw and lips in time with the voice (the loudness of the audio
- *     that is playing, read by the app and passed in as getLevel()),
- *   - blink now and then, behind the glasses,
- *   - breathe and move slightly, so she never looks frozen.
+ * No video and no paid service. The photo is drawn by a small WebGL shader
+ * that bends it smoothly every frame, region by region:
+ *   - body: breathing, a slow sway of the whole figure;
+ *   - head: tilts, nods and small turns, which change with what she is doing
+ *     (talking, listening, thinking) and with the rhythm of her voice;
+ *   - face: eyebrows lift on emphasis, eyes blink, the jaw and lips open with
+ *     the loudness of her voice, with teeth and the inside of the mouth;
+ *   - hands: a small movement on stressed words.
+ * The photo fills the whole area ("cover"), kept centred on her.
  *
- * Every face is described once, in the photo's own pixels (see FACES in
- * app.js): where the lips meet, the mouth corners, the chin, and each eye.
+ * Every photo is described once, in its own pixels (see AI_CHARACTERS in
+ * app.js). If WebGL is unavailable the photo is shown still.
  *
  * Usage:
- *   const p = LivingPortrait.mount(canvas, { src, face, getLevel });
- *   p.setMode('idle' | 'listening' | 'thinking' | 'speaking');
- *   p.destroy();
+ *   const s = LivingPortrait.mount(canvas, { src, scene, getLevel });
+ *   s.setMode('idle' | 'listening' | 'thinking' | 'speaking');
+ *   s.destroy();
  */
 (function () {
   'use strict';
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
   const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  /** y of the line where the lips meet, at column x (photo pixels). */
-  function seamAt(points, x) {
-    if (x <= points[0][0]) return points[0][1];
-    for (let i = 1; i < points.length; i += 1) {
-      const [x1, y1] = points[i];
-      if (x <= x1) {
-        const [x0, y0] = points[i - 1];
-        return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+  const VERT = `
+    attribute vec2 aPos;
+    void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
+
+  const FRAG = `
+    precision highp float;
+    uniform sampler2D uImg;
+    uniform vec2 uImgSize;
+    uniform vec2 uView;
+    uniform vec3 uFit;            // canvas px per photo px, photo x/y at the canvas origin
+
+    uniform vec4 uBody;  uniform vec2 uBodyShift;
+    uniform vec4 uChest; uniform float uBreath;
+    uniform vec4 uHead;  uniform vec2 uPivot; uniform float uTilt; uniform vec2 uHeadShift;
+    uniform vec4 uFace;  uniform float uYaw;
+    uniform vec4 uBrowL; uniform vec4 uBrowR; uniform float uBrow;
+    uniform vec4 uHands; uniform vec2 uHandShift;
+
+    uniform vec4 uMouth;          // centre x, lip line y at centre, half width, curve
+    uniform vec4 uMouthRows;      // above, lower lip, chin, neck
+    uniform vec2 uJaw;            // chin half width, jaw half width
+    uniform float uOpen;          // opening, photo px
+    uniform float uTeeth;         // most of the upper teeth that can show, photo px
+
+    uniform vec4 uEyeL; uniform vec4 uEyeR;   // cx, cy, half width, upper lid distance
+    uniform vec2 uEyeBottom;                  // lower lid distance, left and right
+    uniform vec2 uLid;                        // lid skin rows, lash rows
+    uniform float uBlink;
+
+    float ell(vec2 p, vec4 e, float inner) {
+      float r = length((p - e.xy) / e.zw);
+      return 1.0 - smoothstep(inner, 1.0, r);
+    }
+    float remap(float y, float d0, float d1, float s0, float s1) {
+      return s0 + (y - d0) * (s1 - s0) / max(d1 - d0, 0.001);
+    }
+
+    // A blink: lid skin stretches down, the lashes slide down whole, the eye folds away.
+    vec2 eyeInv(vec2 q, vec4 e, float bottom) {
+      float u = (q.x - e.x) / e.z;
+      if (abs(u) >= 1.0 || uBlink < 0.01) return q;
+      float sh = sqrt(1.0 - u * u);
+      float t = e.y - e.w * sh;
+      float btm = e.y + bottom * sh;
+      float c = uBlink * (btm - t) * 0.96;
+      float A = t - uLid.x, L = t - uLid.y;
+      if (q.y < A || q.y > btm) return q;
+      if (q.y < L + c) return vec2(q.x, remap(q.y, A, L + c, A, L));
+      if (q.y < t + c) return vec2(q.x, remap(q.y, L + c, t + c, L, t));
+      return vec2(q.x, remap(q.y, t + c, btm, t, btm));
+    }
+
+    void main() {
+      vec2 px = vec2(gl_FragCoord.x, uView.y - gl_FragCoord.y);
+      vec2 q = px / uFit.x + uFit.yz;
+
+      // Whole figure, then the head on it, then the face in the head.
+      q -= uBodyShift * ell(q, uBody, 0.62);
+      q.y += uBreath * ell(q, uChest, 0.35);
+      q -= uHandShift * ell(q, uHands, 0.45);
+
+      float wh = ell(q, uHead, 0.58);
+      float cs = cos(uTilt), sn = sin(uTilt);
+      vec2 r = q - uPivot;
+      vec2 moved = vec2(cs * r.x - sn * r.y, sn * r.x + cs * r.y) + uPivot + uHeadShift;
+      q -= (moved - q) * wh;
+      q.x -= uYaw * ell(q, uFace, 0.45);
+      q.y += uBrow * (ell(q, uBrowL, 0.3) + ell(q, uBrowR, 0.3));
+
+      q = eyeInv(q, uEyeL, uEyeBottom.x);
+      q = eyeInv(q, uEyeR, uEyeBottom.y);
+
+      // The mouth: the line between the lips opens, the lower lip and chin drop.
+      float gapT = -1.0, lipsW = 0.0, gapH = 0.0, dx = abs(q.x - uMouth.x);
+      if (uOpen > 0.05 && dx < uJaw.y && q.y > uMouthRows.x && q.y < uMouthRows.w) {
+        float halfW = uMouth.z;
+        float B = uMouth.y + uMouth.w * dx * dx;
+        float lw = dx < halfW ? pow(max(0.0, 1.0 - pow(dx / (halfW * 0.86), 2.0)), 1.6) : 0.0;
+        float jw = 1.0 - smoothstep(uJaw.x, uJaw.y, dx);
+        float up = uOpen * 0.3 * lw, low = uOpen * 0.7 * lw, chin = uOpen * 0.7 * jw;
+        float above = uMouthRows.x, LL = uMouthRows.y, C = uMouthRows.z, N = uMouthRows.w;
+        float y = q.y;
+        if (y < B - up) q.y = remap(y, above, B - up, above, B - 0.5);
+        else if (y < B + low) { q.y = B; gapT = (y - (B - up)) / max(up + low, 0.001); lipsW = lw; gapH = up + low; }
+        else if (y < LL + low) q.y = remap(y, B + low, LL + low, B + 0.5, LL);
+        else if (y < C + chin) q.y = remap(y, LL + low, C + chin, LL, C);
+        else q.y = remap(y, C + chin, N, C, N);
       }
-    }
-    return points[points.length - 1][1];
+
+      vec2 uv = clamp(q / uImgSize, vec2(0.0), vec2(1.0));
+      vec3 col = texture2D(uImg, uv).rgb;
+
+      if (gapT >= 0.0) {
+        float halfW = uMouth.z;
+        float front = max(0.0, 1.0 - dx / (halfW * 0.78));
+        float teethT = min(gapH * 0.48, uTeeth) * pow(front, 0.6) / max(gapH, 0.001);
+        vec3 dark = mix(vec3(0.29, 0.10, 0.12), vec3(0.19, 0.06, 0.08), gapT);
+        vec3 teeth = mix(vec3(0.66, 0.60, 0.56), vec3(0.85, 0.81, 0.76), front);
+        teeth *= mix(0.72, 1.0, smoothstep(0.0, 0.45, gapT / max(teethT, 0.001)));   // shadow of the top lip
+        float lowerT = gapH > uTeeth * 1.6 ? 0.16 * front : 0.0;
+        vec3 inside = mix(teeth, dark, smoothstep(teethT - 0.07, teethT + 0.07, gapT));
+        inside = mix(inside, vec3(0.62, 0.56, 0.52) * (0.7 + 0.3 * front), smoothstep(1.0 - lowerT - 0.05, 1.0 - lowerT + 0.05, gapT) * step(0.001, lowerT));
+        float a = smoothstep(0.02, 0.3, lipsW) * smoothstep(0.0, 0.1, gapT) * (1.0 - smoothstep(0.92, 1.0, gapT));
+        col = mix(col, inside, a);
+      }
+      gl_FragColor = vec4(col, 1.0);
+    }`;
+
+  function compile(gl, type, source) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, source);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
   }
 
-  /**
-   * Draw one column of the photo, its rows moved: `map` is a list of
-   * [sourceY, destY] control points, straight lines between them.
-   */
-  function drawColumn(ctx, img, x, w, map, s) {
-    for (let i = 1; i < map.length; i += 1) {
-      const [sy0, dy0] = map[i - 1];
-      const [sy1, dy1] = map[i];
-      const sh = sy1 - sy0, dh = dy1 - dy0;
-      if (sh <= 0 || dh <= 0) continue;
-      ctx.drawImage(img, x * s, sy0 * s, w * s, sh * s, x * s, dy0 * s, w * s, dh * s);
-    }
-  }
+  /** A value that eases toward its target like a soft spring. */
+  const spring = (value = 0) => ({ value, target: value, ease(rate) { this.value += (this.target - this.value) * rate; return this.value; } });
 
-  function mount(canvas, { src, face, getLevel = () => 0, fixedBlink }) {
-    const ctx = canvas.getContext('2d');
-    const work = document.createElement('canvas');
-    const wctx = work.getContext('2d');
-    const img = new Image();
-    let s = 1;                 // asset pixels per photo pixel
+  function mount(canvas, { src, scene, getLevel = () => 0, fixed }) {
+    const gl = canvas.getContext('webgl', { antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: Boolean(fixed) });
+    let alive = true;
     let raf = 0;
     let mode = 'idle';
-    let open = 0;              // smoothed mouth opening, 0..1
-    let nextBlink = performance.now() + 1500;
-    let blinkStart = -1;
-    let doubleBlink = false;
-    let alive = true;
-    const still = reducedMotion();
+    if (!gl) {
+      canvas.style.backgroundImage = `url('${src}')`;
+      return { setMode() {}, destroy() {} };
+    }
 
+    let prog;
+    try {
+      prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl, gl.VERTEX_SHADER, VERT));
+      gl.attachShader(prog, compile(gl, gl.FRAGMENT_SHADER, FRAG));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    } catch (error) {
+      console.warn('Living scene unavailable:', error.message);
+      canvas.style.backgroundImage = `url('${src}')`;
+      return { setMode() {}, destroy() {} };
+    }
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, 'aPos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    const U = {};
+    const u = name => (U[name] ||= gl.getUniformLocation(prog, name));
+    const v4 = e => [e.cx, e.cy, e.rx, e.ry];
+
+    const img = new Image();
+    let ready = false;
     img.onload = () => {
-      s = img.naturalWidth / face.width;
-      canvas.width = work.width = img.naturalWidth;
-      canvas.height = work.height = img.naturalHeight;
-      frame(performance.now());
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      setStatic();
+      ready = true;
     };
     img.src = src;
+
+    // The parts of the photo that never change.
+    function setStatic() {
+      const S = scene, m = S.mouth;
+      gl.uniform1i(u('uImg'), 0);
+      gl.uniform2f(u('uImgSize'), S.width, S.height);
+      gl.uniform4f(u('uBody'), ...v4(S.body));
+      gl.uniform4f(u('uChest'), ...v4(S.chest));
+      gl.uniform4f(u('uHead'), ...v4(S.head));
+      gl.uniform2f(u('uPivot'), ...S.pivot);
+      gl.uniform4f(u('uFace'), ...v4(S.face));
+      gl.uniform4f(u('uBrowL'), ...v4(S.brows[0]));
+      gl.uniform4f(u('uBrowR'), ...v4(S.brows[1]));
+      gl.uniform4f(u('uHands'), ...v4(S.hands));
+      gl.uniform4f(u('uMouth'), m.cx, m.seam, m.half, m.curve);
+      gl.uniform4f(u('uMouthRows'), m.above, m.lowerLip, m.chin, m.neck);
+      gl.uniform2f(u('uJaw'), m.chinHalf, m.jaw);
+      gl.uniform1f(u('uTeeth'), m.teeth);
+      const [L, R] = S.eyes;
+      gl.uniform4f(u('uEyeL'), L.cx, L.cy, L.rx, L.top);
+      gl.uniform4f(u('uEyeR'), R.cx, R.cy, R.rx, R.top);
+      gl.uniform2f(u('uEyeBottom'), L.bottom, R.bottom);
+      gl.uniform2f(u('uLid'), ...S.lid);
+    }
+
+    // Size the drawing to the element, and fit the photo to cover it, centred on her.
+    let lastW = 0, lastH = 0;
+    function fit() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      if (w === lastW && h === lastH) return;
+      lastW = w; lastH = h;
+      canvas.width = w; canvas.height = h;
+      gl.viewport(0, 0, w, h);
+      const S = scene;
+      const k = Math.max(w / S.width, h / S.height) * 1.02;   // a little extra, so moving edges never show
+      const [fx, fy] = S.focus;
+      const ox = clamp(fx - w / k / 2, 0, S.width - w / k);
+      const oy = clamp(fy - h / k / 2, 0, S.height - h / k);
+      gl.uniform2f(u('uView'), w, h);
+      gl.uniform3f(u('uFit'), k, ox, oy);
+    }
+
+    // ------------------------------------------------------------- behaviour
+    const still = reducedMotion();
+    const tilt = spring(0), yaw = spring(0), headX = spring(0), headY = spring(0), brow = spring(0), sway = spring(0);
+    let open = 0, emphasis = 0, slow = 0;
+    let nextPose = 0, nextBlink = performance.now() + 1200, blinkStart = -1, doubleBlink = false, nextNod = 0, nod = 0;
 
     function blinkAmount(now) {
       if (blinkStart < 0 && now >= nextBlink) { blinkStart = now; doubleBlink = Math.random() < 0.18; }
       if (blinkStart < 0) return 0;
-      // One blink: closes in 70 ms, stays shut 40 ms, opens in 120 ms.
       const one = t => (t < 70 ? t / 70 : t < 110 ? 1 : t < 230 ? 1 - (t - 110) / 120 : 0);
       const t = now - blinkStart;
       if (t < 230) return one(t);
       if (doubleBlink && t < 290) return 0;
       if (doubleBlink && t < 520) return one(t - 290);
       blinkStart = -1;
-      // People blink more while talking and less while listening closely.
-      const base = mode === 'speaking' ? 2600 : mode === 'listening' ? 4800 : 3600;
+      const base = mode === 'speaking' ? 2600 : mode === 'listening' ? 4600 : 3600;
       nextBlink = now + base * (0.55 + Math.random() * 0.9);
       return 0;
     }
 
-    /**
-     * A blink. Per column: the eyelid skin between the glasses and the lashes
-     * stretches down, the lashes slide down with it intact, and the eye folds
-     * away under them, so the lashes end up resting on the lower lid.
-     */
-    function drawEye(eye, b) {
-      const { cx, cy, rx, top, bottom, lid = 20, lashes = 11 } = eye;
-      for (let x = Math.floor(cx - rx * 1.05); x <= Math.ceil(cx + rx * 1.05); x += 1) {
-        const u = (x - cx) / rx;
-        const shape = Math.sqrt(Math.max(0, 1 - u * u));
-        if (shape <= 0) continue;
-        const t = cy - top * shape;          // upper lash line at this column
-        const btm = cy + bottom * shape;     // lower lid
-        const c = b * (btm - t) * 0.96;      // how far the lid has come down
-        drawColumn(wctx, img, x, 1, [
-          [t - lid, t - lid],
-          [t - lashes, t - lashes + c],      // lid skin stretches
-          [t, t + c],                        // lashes slide down whole
-          [btm, btm],                        // the eye folds away
-          [btm + 3, btm + 3]
-        ], s);
+    /** A new head pose now and then: what a person does without thinking. */
+    function choosePose(now) {
+      if (now < nextPose) return;
+      const r = a => (Math.random() * 2 - 1) * a;
+      if (mode === 'speaking') {
+        tilt.target = r(1.1) * Math.PI / 180;
+        yaw.target = r(1.6);
+        headX.target = r(1.2);
+        sway.target = r(1.6);
+        nextPose = now + 1200 + Math.random() * 1800;
+      } else if (mode === 'listening') {
+        // Head a little to one side: paying attention.
+        tilt.target = (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 0.6) * Math.PI / 180;
+        yaw.target = r(0.6);
+        headX.target = r(0.6);
+        sway.target = r(0.8);
+        nextPose = now + 3000 + Math.random() * 3000;
+      } else if (mode === 'thinking') {
+        tilt.target = r(0.5) * Math.PI / 180;
+        yaw.target = (Math.random() < 0.5 ? -1 : 1) * 1.4;   // a glance away while thinking
+        headX.target = 0;
+        brow.target = 0.8;
+        nextPose = now + 1600;
+      } else {
+        tilt.target = r(0.4) * Math.PI / 180;
+        yaw.target = r(0.5);
+        headX.target = r(0.4);
+        sway.target = r(0.6);
+        nextPose = now + 4000 + Math.random() * 3000;
       }
-    }
-
-    function drawMouth(o) {
-      const m = face.mouth;
-      const d = o * m.maxOpen;              // jaw drop at full opening, photo px
-      if (d < 0.3) return;
-      const half = (m.right - m.left) / 2;
-      const mcx = (m.left + m.right) / 2;
-      const gapTop = [], gapBottom = [];
-      for (let x = Math.floor(mcx - m.jaw); x <= Math.ceil(mcx + m.jaw); x += 2) {
-        const dx = Math.abs(x + 1 - mcx);
-        const jaw = 1 - smooth(m.chinHalf, m.jaw, dx);            // the chin moves as one
-        const lips = dx < half ? Math.pow(1 - (dx / half) ** 2, 0.6) : 0; // the corners stay closed
-        const B = seamAt(m.seam, x + 1);
-        const up = d * 0.22 * lips;
-        const low = d * 0.78 * lips;
-        const chin = d * 0.78 * jaw;
-        drawColumn(wctx, img, x, 2, [
-          [m.above, m.above],
-          [B - 0.5, B - up],                // upper lip lifts a little
-          [B + 0.5, B + low],               // the line between the lips opens
-          [m.lowerLip, m.lowerLip + low],   // lower lip moves with the jaw
-          [m.chin, m.chin + chin],          // so does the chin
-          [m.neck, m.neck]                  // the neck takes up the difference
-        ], s);
-        if (lips > 0) { gapTop.push([x + 1, B - up]); gapBottom.push([x + 1, B + low]); }
-      }
-      if (gapTop.length < 2 || d < 1) return;
-
-      // Inside of the mouth: dark, a little lighter at the top (teeth).
-      const path = new Path2D();
-      path.moveTo(gapTop[0][0] * s, gapTop[0][1] * s);
-      gapTop.forEach(([x, y]) => path.lineTo(x * s, y * s));
-      for (let i = gapBottom.length - 1; i >= 0; i -= 1) path.lineTo(gapBottom[i][0] * s, gapBottom[i][1] * s);
-      path.closePath();
-      const yTop = Math.min(...gapTop.map(p => p[1])) * s;
-      const yBot = Math.max(...gapBottom.map(p => p[1])) * s;
-      const g = wctx.createLinearGradient(0, yTop, 0, yBot);
-      const teeth = clamp((d - 5) / 8, 0, 1) * 0.45;
-      g.addColorStop(0, `rgba(236, 226, 220, ${teeth})`);
-      g.addColorStop(0.28, `rgba(92, 34, 38, ${0.55 + 0.25 * o})`);
-      g.addColorStop(1, `rgba(58, 18, 24, ${0.65 + 0.25 * o})`);
-      wctx.save();
-      wctx.fillStyle = g;
-      wctx.fill(path);
-      wctx.restore();
     }
 
     function frame(now) {
       if (!alive) return;
-      // Taken off the page (another screen opened): stop for good.
-      if (img.naturalWidth && !canvas.isConnected) { alive = false; return; }
+      if (ready && !canvas.isConnected) { alive = false; return; }
       raf = requestAnimationFrame(frame);
-      if (!img.naturalWidth) return;
+      if (!ready) return;
+      fit();
 
-      // Mouth: follow the voice, opening fast and closing a little slower.
-      const level = mode === 'speaking' || mode === 'idle' ? clamp(getLevel() || 0, 0, 1) : 0;
+      const level = fixed ? fixed.level : mode === 'speaking' || mode === 'idle' ? clamp(getLevel() || 0, 0, 1) : 0;
       open += (level - open) * (level > open ? 0.55 : 0.32);
+      if (fixed) {                          // test pictures: hold one pose exactly
+        open = fixed.level || 0;
+        tilt.value = tilt.target = (fixed.tilt || 0) * Math.PI / 180;
+        yaw.value = yaw.target = fixed.yaw || 0;
+        brow.target = brow.value = fixed.brow || 0;
+      }
       if (open < 0.01) open = 0;
+      emphasis += (level - emphasis) * (level > emphasis ? 0.12 : 0.04);   // the stress of a phrase
+      slow += (emphasis - slow) * 0.02;
 
-      wctx.drawImage(img, 0, 0);
-      const b = fixedBlink !== undefined ? fixedBlink : still ? 0 : blinkAmount(now);
-      if (b > 0.02) face.eyes.forEach(eye => drawEye(eye, b));
-      drawMouth(open);
-
-      // The whole picture: breathing, a slow drift, small nods while talking.
       const t = now / 1000;
-      const breathe = still ? 0 : Math.sin(t * 2 * Math.PI / 4.6);
-      const drift = still ? 0 : Math.sin(t * 2 * Math.PI / 9.3);
-      const nod = still ? 0 : open * 0.6 + (mode === 'listening' ? Math.sin(t * 2 * Math.PI / 3.1) * 0.25 : 0);
-      const W = canvas.width, H = canvas.height;
-      const zoom = 1.035 + breathe * 0.004 + (mode === 'listening' ? 0.008 : 0);
-      ctx.save();
-      ctx.clearRect(0, 0, W, H);
-      ctx.translate(W / 2, H * 0.62);
-      ctx.rotate((drift * 0.35 + nod * 0.25) * Math.PI / 180);
-      ctx.scale(zoom, zoom);
-      ctx.translate(-W / 2 + drift * W * 0.003, -H * 0.62 + breathe * H * 0.0025 + nod * H * 0.003);
-      ctx.drawImage(work, 0, 0);
-      ctx.restore();
+      if (!still && !fixed) choosePose(now);
+      if (mode !== 'thinking' && !fixed) brow.target = clamp((emphasis - slow) * 4, 0, 1);
+
+      // Listening: a small nod every few seconds.
+      if (mode === 'listening' && now > nextNod && !still) { nod = 1; nextNod = now + 2500 + Math.random() * 3500; }
+      nod *= 0.93;
+
+      const breath = still ? 0 : Math.sin(t * 2 * Math.PI / 4.4);
+      const talkNod = open * 1.1 + Math.max(0, emphasis - slow) * 3;
+      const listenNod = Math.sin((1 - nod) * Math.PI) * nod * 2.2;
+
+      const S = scene;
+      gl.uniform2f(u('uBodyShift'), sway.ease(0.025) + (still ? 0 : Math.sin(t * 2 * Math.PI / 8.3) * 0.6), 0);
+      gl.uniform1f(u('uBreath'), breath * S.breath);
+      gl.uniform2f(u('uHandShift'), 0, -Math.max(0, emphasis - slow) * S.handLift + breath * 0.4);
+      gl.uniform1f(u('uTilt'), tilt.ease(0.04));
+      gl.uniform2f(u('uHeadShift'), headX.ease(0.04), headY.ease(0.1) + talkNod + listenNod - breath * S.breath * 0.6);
+      gl.uniform1f(u('uYaw'), yaw.ease(0.035));
+      gl.uniform1f(u('uBrow'), brow.ease(0.12) * S.browLift);
+      gl.uniform1f(u('uOpen'), open * S.mouth.maxOpen);
+      gl.uniform1f(u('uBlink'), fixed ? fixed.blink || 0 : still ? 0 : blinkAmount(now));
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
+    raf = requestAnimationFrame(frame);
 
     return {
-      setMode(next) { mode = next; },
+      setMode(next) {
+        if (next === mode) return;
+        mode = next;
+        nextPose = 0;                       // react at once
+        if (next === 'speaking') nextBlink = Math.min(nextBlink, performance.now() + 300);
+      },
       destroy() { alive = false; cancelAnimationFrame(raf); }
     };
   }

@@ -2379,37 +2379,54 @@ button.cx-seat { cursor: pointer; }
   .ai-stage .ai-orb { animation: none !important; transition: none; }
 }
 
-/* ---- AI Ustoz: the teacher's living portrait (public/avatar.js) */
+/* ---- AI Ustoz: the teacher's room fills the stage (public/avatar.js) */
 .ai-gate-faces { display: flex; gap: 10px; }
 .ai-gate-faces img {
-  width: 76px; height: 76px; border-radius: 50%; object-fit: cover; object-position: 50% 30%;
+  width: 76px; height: 76px; border-radius: 50%; object-fit: cover;
   border: 3px solid #fff; box-shadow: var(--shadow);
 }
-.ai-face { position: relative; width: min(100%, 290px); margin: 4px auto 0; }
-.ai-face canvas {
-  display: block; width: 100%; aspect-ratio: 640 / 904; height: auto;
-  border-radius: 22px; background: #d9d2c8 center / cover no-repeat;
-  box-shadow: 0 18px 40px rgba(10, 8, 40, .35);
-  transition: box-shadow .3s ease;
+.ai-stage.has-scene {
+  overflow: hidden; isolation: isolate;
+  justify-content: space-between; gap: 0;
+  padding: 0; min-height: min(74svh, 660px);
+  background: #3b3128;
 }
-.ai-stage.is-live.act-listening .ai-face canvas { box-shadow: 0 0 0 3px rgba(134, 239, 172, .75), 0 18px 40px rgba(10, 8, 40, .35); }
-.ai-stage.is-live.act-speaking .ai-face canvas { box-shadow: 0 0 0 3px rgba(253, 230, 138, .8), 0 18px 40px rgba(10, 8, 40, .35); }
+@media (min-width: 900px) { .ai-stage.has-scene { min-height: 560px; } }
+.ai-scene {
+  position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1;
+  display: block; background: #3b3128 center 35% / cover no-repeat;
+}
+.ai-scene-top {
+  align-self: stretch; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+  padding: 14px 14px 30px;
+  background: linear-gradient(rgba(12, 10, 30, .45), transparent);
+}
+.ai-scene-bottom {
+  align-self: stretch; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 60px 16px 16px;
+  background: linear-gradient(transparent, rgba(12, 10, 30, .55) 35%, rgba(12, 10, 30, .78));
+}
+.ai-scene-bottom .ai-status { text-shadow: 0 1px 6px rgba(0, 0, 0, .5); }
+.ai-scene-bottom .ai-hint { color: rgba(255, 255, 255, .78); }
 .ai-face-name {
-  position: absolute; left: 12px; bottom: 12px;
-  display: flex; flex-direction: column; gap: 1px;
+  display: flex; flex-direction: column; gap: 1px; text-align: left;
   padding: 7px 12px; border-radius: 12px;
-  background: rgba(15, 14, 40, .58); color: #fff;
+  background: rgba(15, 14, 40, .5); color: #fff;
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .ai-face-name strong { font-size: 16px; line-height: 1.2; }
-.ai-face-name span { font-size: 11px; opacity: .8; letter-spacing: .02em; }
-.ai-av-face { object-fit: cover; object-position: 50% 30%; }
-.ai-pick { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.ai-face-name span { font-size: 11px; opacity: .82; letter-spacing: .02em; }
+.ai-stage.has-scene .ai-left { background: rgba(15, 14, 40, .5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.ai-stage.has-scene.is-live.act-listening { box-shadow: inset 0 0 0 3px rgba(134, 239, 172, .7), var(--shadow-lg); }
+.ai-stage.has-scene.is-live.act-speaking { box-shadow: inset 0 0 0 3px rgba(253, 230, 138, .75), var(--shadow-lg); }
+.ai-av-face { object-fit: cover; }
+.ai-pick { position: absolute; top: 64px; left: 0; right: 0; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .ai-pick-btn {
   display: flex; align-items: center; gap: 8px; padding: 5px 14px 5px 5px;
-  border-radius: 999px; border: 1px solid rgba(255, 255, 255, .25);
-  background: rgba(255, 255, 255, .08); color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+  border-radius: 999px; border: 1px solid rgba(255, 255, 255, .3);
+  background: rgba(15, 14, 40, .45); color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
-.ai-pick-btn img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; object-position: 50% 30%; }
+.ai-pick-btn img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
 .ai-pick-btn.is-on { background: #fff; color: var(--indigo-700); }
 .ai-pick-btn:focus-visible { outline: 3px solid #fde68a; outline-offset: 2px; }
