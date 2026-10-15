@@ -3783,6 +3783,7 @@
       // Measured on the 1584 x 672 photo.
       scene: {
         width: 1584, height: 672, focus: [792, 330],
+        framing: { tall: { zoom: 1.35, focus: [796, 285] }, wide: { zoom: 1.08, focus: [792, 320] } },
         body: { cx: 787, cy: 480, rx: 230, ry: 300 },
         chest: { cx: 787, cy: 410, rx: 170, ry: 110 },
         head: { cx: 800, cy: 195, rx: 95, ry: 150 },
@@ -3793,13 +3794,14 @@
         mouth: {
           cx: 801, seam: 258.5, half: 27, curve: -0.0038,
           above: 247, lowerLip: 269, chin: 292, neck: 312,
-          chinHalf: 24, jaw: 55, maxOpen: 13, teeth: 4
+          chinHalf: 24, jaw: 55, maxOpen: 15, teeth: 4
         },
         // Her real teeth, cut from the smiling version of the same photo
         // (lesley-teeth.png = that photo's x 755-840, y 240-276).
         teeth: {
           src: '/assistants/lesley-teeth.png', box: [755, 240, 85, 36],
-          cx: 795, top: 249.5, bottom: 266.5, half: 30, curve: -0.0125
+          cx: 795, top: 249.5, bottom: 266.5, half: 30, curve: -0.0125,
+          tip: 261.9, tipCurve: -0.0068, show: 7.5      // upper teeth tips, and most of them that shows
         },
         eyes: [
           { cx: 771, cy: 192.5, rx: 15, top: 5, bottom: 5 },

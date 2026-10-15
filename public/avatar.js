@@ -55,6 +55,8 @@
     uniform vec4 uTeethBox;       // the cut-out's x, y, width, height in the smiling photo
     uniform vec4 uSmile;          // centre x, top lip inner edge y, bottom lip inner edge y, half width of the opening
     uniform float uSmileCurve;    // how the bottom lip rises toward the corners
+    uniform vec3 uTips;           // upper teeth: tip y at the centre, how the tips rise to the sides, most that shows
+    uniform float uTongue;        // how high the tongue is, 0..1 (moves while she talks)
 
     uniform vec4 uEyeL; uniform vec4 uEyeR;   // cx, cy, half width, upper lid distance
     uniform vec2 uEyeBottom;                  // lower lid distance, left and right
@@ -135,16 +137,37 @@
         vec3 inside = mix(teeth, dark, smoothstep(teethT - 0.07, teethT + 0.07, gapT));
         inside = mix(inside, vec3(0.62, 0.56, 0.52) * (0.7 + 0.3 * front), smoothstep(1.0 - lowerT - 0.05, 1.0 - lowerT + 0.05, gapT) * step(0.001, lowerT));
         if (uHasTeeth > 0.5) {
-          // Her own mouth: upper teeth hang from the top lip, lower teeth rise
-          // from the bottom lip, and the gap between shows more as she opens.
-          float xs = uSmile.x + clamp(sx / (halfW * 0.86), -1.0, 1.0) * uSmile.w;
-          float topS = uSmile.y;
-          float botS = uSmile.z + uSmileCurve * (xs - uSmile.x) * (xs - uSmile.x);
-          float full = botS - topS;
-          float c = mix(1.0, full / max(gapH, 0.5), clamp(gapH / full, 0.0, 1.0));
-          float ys = gapT < 0.7 ? topS + gapIn * c : botS - (gapH - gapIn) * c;
-          inside = texture2D(uTeethImg, clamp((vec2(xs, ys) - uTeethBox.xy) / uTeethBox.zw, vec2(0.0), vec2(1.0))).rgb;
-          inside *= mix(0.82, 1.0, smoothstep(0.0, 6.0, gapH));   // a slightly open mouth is darker inside
+          // Her own mouth, top to bottom, as in real speech: the tips of her
+          // upper teeth below the top lip, then the inside of the mouth (the
+          // dark of the throat, the tongue rising from the bottom), then a
+          // little of her lower teeth above the bottom lip when she opens wide.
+          float xn = clamp(sx / (halfW * 0.86), -1.0, 1.0);
+          float xs = uSmile.x + xn * uSmile.w;
+          float dxs = xs - uSmile.x;
+          float tipS = uTips.x + uTips.y * dxs * dxs;
+          float botS = uSmile.z + uSmileCurve * dxs * dxs;
+          float upperVis = min(gapH * 0.42, uTips.z);
+          float lowerVis = min(max(gapH - 6.0, 0.0) * 0.3, 2.5);
+          float midTop = upperVis, midBot = gapH - lowerVis;
+
+          vec3 up = texture2D(uTeethImg, clamp((vec2(xs, tipS - (upperVis - gapIn)) - uTeethBox.xy) / uTeethBox.zw, vec2(0.0), vec2(1.0))).rgb;
+          vec3 lowT = texture2D(uTeethImg, clamp((vec2(xs, botS - (gapH - gapIn)) - uTeethBox.xy) / uTeethBox.zw, vec2(0.0), vec2(1.0))).rgb;
+
+          float m = clamp((gapIn - midTop) / max(midBot - midTop, 0.001), 0.0, 1.0);
+          float side = xn * xn;
+          vec3 throat = mix(vec3(0.17, 0.045, 0.06), vec3(0.32, 0.11, 0.12), side);
+          float tongueTop = 1.0 - uTongue * (1.0 - side * 0.85);
+          vec3 tongue = vec3(0.66, 0.36, 0.37) * (1.0 - 0.32 * side);
+          tongue *= 0.72 + 0.28 * smoothstep(tongueTop, tongueTop + 0.6, m);       // its back is in shadow
+          tongue += vec3(0.06, 0.04, 0.04) * (1.0 - smoothstep(0.0, 0.35, abs(xn))) * smoothstep(tongueTop + 0.1, tongueTop + 0.45, m); // wet sheen
+          vec3 mid = mix(throat, tongue, smoothstep(tongueTop - 0.07, tongueTop + 0.07, m));
+          mid *= mix(0.65, 1.0, smoothstep(0.0, 0.3, m));                        // shadow under the upper teeth
+
+          float px1 = 0.45;                                                       // soft edges between the parts
+          inside = mid;
+          inside = mix(inside, up, 1.0 - smoothstep(midTop - px1, midTop + px1, gapIn));
+          inside = mix(inside, lowT, smoothstep(midBot - px1, midBot + px1, gapIn) * step(0.01, lowerVis));
+          inside *= mix(0.85, 1.0, smoothstep(0.0, 5.0, gapH));                  // a slightly open mouth is darker inside
         }
         float a = smoothstep(0.02, 0.3, lipsW) * smoothstep(0.0, 0.1, gapT) * (1.0 - smoothstep(0.92, 1.0, gapT));
         col = mix(col, inside, a);
@@ -217,6 +240,7 @@
         gl.uniform4f(u('uTeethBox'), ...T.box);
         gl.uniform4f(u('uSmile'), T.cx, T.top, T.bottom, T.half);
         gl.uniform1f(u('uSmileCurve'), T.curve);
+        gl.uniform3f(u('uTips'), T.tip, T.tipCurve, T.show);
         teethReady = true;
       };
       t.onerror = () => { teethReady = true; };   // fall back to drawn teeth
@@ -272,8 +296,11 @@
       canvas.width = w; canvas.height = h;
       gl.viewport(0, 0, w, h);
       const S = scene;
-      const k = Math.max(w / S.width, h / S.height) * 1.02;   // a little extra, so moving edges never show
-      const [fx, fy] = S.focus;
+      // On a tall phone screen come in closer, head to waist, so her face is
+      // bigger; on a wide screen show more of the room.
+      const frame = (h > w * 1.1 ? S.framing?.tall : S.framing?.wide) || {};
+      const k = Math.max(w / S.width, h / S.height) * 1.02 * (frame.zoom || 1);   // a little extra, so moving edges never show
+      const [fx, fy] = frame.focus || S.focus;
       const ox = clamp(fx - w / k / 2, 0, S.width - w / k);
       const oy = clamp(fy - h / k / 2, 0, S.height - h / k);
       gl.uniform2f(u('uView'), w, h);
@@ -284,6 +311,8 @@
     const still = reducedMotion();
     const tilt = spring(0), yaw = spring(0), headX = spring(0), headY = spring(0), brow = spring(0), sway = spring(0);
     let open = 0, emphasis = 0, slow = 0;
+    const tongue = spring(0.5);
+    let nextTongue = 0;
     let nextPose = 0, nextBlink = performance.now() + 1200, blinkStart = -1, doubleBlink = false, nextNod = 0, nod = 0;
 
     function blinkAmount(now) {
@@ -372,6 +401,12 @@
       gl.uniform1f(u('uYaw'), yaw.ease(0.035));
       gl.uniform1f(u('uBrow'), brow.ease(0.12) * S.browLift);
       gl.uniform1f(u('uOpen'), open * S.mouth.maxOpen);
+      // The tongue: up and down with the sounds, every syllable or so.
+      if (now > nextTongue) {
+        tongue.target = mode === 'speaking' ? 0.4 + Math.random() * 0.45 : 0.5;
+        nextTongue = now + 110 + Math.random() * 120;
+      }
+      gl.uniform1f(u('uTongue'), fixed && fixed.tongue !== undefined ? fixed.tongue : tongue.ease(0.22));
       gl.uniform1f(u('uBlink'), fixed ? fixed.blink || 0 : still ? 0 : blinkAmount(now));
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
