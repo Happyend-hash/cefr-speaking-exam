@@ -20,7 +20,7 @@ export const MAX_LENGTH = 500;
  * Roots, matched at the START of a word so that ordinary words containing the
  * letters ("class", "assume", "Scunthorpe") are left alone.
  */
-const ROOTS = [
+export const ROOTS = [
   // English
   'fuck', 'fck', 'fuk', 'shit', 'bitch', 'cunt', 'asshole', 'dick', 'bastard', 'whore',
   'slut', 'nigg', 'fagg', 'motherf', 'retard', 'wank', 'twat', 'pussy', 'porn',

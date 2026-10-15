@@ -39,6 +39,12 @@
     <linearGradient id="${id}-cup" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#4338ca"/>
     </linearGradient>
+ <linearGradient id="${id}-redhead" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fca5a5"/><stop offset="1" stop-color="#dc2626"/>
+    </linearGradient>
+    <linearGradient id="${id}-redscreen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7f1d1d"/><stop offset="1" stop-color="#450a0a"/>
+    </linearGradient>
     <filter id="${id}-glow" x="-50%" y="-50%" width="200%" height="200%">
       <feGaussianBlur stdDeviation="2.4" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
@@ -54,6 +60,7 @@
       <circle class="rb-light" cx="150" cy="54" r="8"/>
       <rect x="60" y="80" width="180" height="150" rx="66" fill="url(#${id}-head)"/>
       <rect x="60" y="80" width="180" height="150" rx="66" fill="none" stroke="#ffffff" stroke-opacity=".7" stroke-width="2"/>
+      <rect class="rb-red" x="60" y="80" width="180" height="150" rx="66" fill="url(#${id}-redhead)"/>
       <rect x="38" y="122" width="32" height="62" rx="15" fill="url(#${id}-cup)"/>
       <rect x="230" y="122" width="32" height="62" rx="15" fill="url(#${id}-cup)"/>
       <path d="M 250 178 C 252 214, 228 226, 206 226" fill="none" stroke="#3730a3" stroke-width="6" stroke-linecap="round"/>
@@ -61,6 +68,7 @@
 
       <!-- the screen -->
       <rect x="80" y="102" width="140" height="106" rx="40" fill="url(#${id}-screen)"/>
+      <rect class="rb-red" x="80" y="102" width="140" height="106" rx="40" fill="url(#${id}-redscreen)"/>
       <rect x="86" y="106" width="128" height="34" rx="17" fill="#ffffff" opacity=".05"/>
 
       <g clip-path="url(#${id}-clip)" filter="url(#${id}-glow)">
@@ -102,6 +110,11 @@
             <rect x="175" y="126" width="15" height="22" rx="7.5" fill="#a5f3fc"/>
             <g class="rb-dots"><circle cx="168" cy="186" r="3.5" fill="#a5f3fc"/><circle cx="180" cy="186" r="3.5" fill="#a5f3fc"/><circle cx="192" cy="186" r="3.5" fill="#a5f3fc"/></g>
           </g>
+          <g class="rb-eyes" data-eyes="angry">
+            <circle cx="122.5" cy="146" r="10" fill="#fecaca"/><circle cx="177.5" cy="146" r="10" fill="#fecaca"/>
+            <circle cx="125" cy="148" r="4" fill="#7f1d1d"/><circle cx="175" cy="148" r="4" fill="#7f1d1d"/>
+            <path d="M 106 124 L 136 134 M 194 124 L 164 134" fill="none" stroke="#fecaca" stroke-width="6" stroke-linecap="round"/>
+          </g>
           <g class="rb-eyes" data-eyes="sleepy">
             <path d="M 110 144 Q 122.5 154 135 144 M 165 144 Q 177.5 154 190 144" fill="none" stroke="#a5f3fc" stroke-width="5" stroke-linecap="round"/>
           </g>
@@ -110,6 +123,10 @@
         <path class="rb-mouth" d="" fill="#a5f3fc" stroke="#a5f3fc" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
       </g>
     </g>
+  </g>
+  <g class="rb-steam">
+    <path d="M 84 70 q -8 -8 0 -14 q 8 -6 4 -14" fill="none" stroke="#fecaca" stroke-width="5" stroke-linecap="round"/>
+    <path d="M 216 70 q 8 -8 0 -14 q -8 -6 -4 -14" fill="none" stroke="#fecaca" stroke-width="5" stroke-linecap="round"/>
   </g>
   <g class="rb-zzz" font-family="Inter, system-ui, sans-serif" font-weight="800" fill="#c7d2fe">
     <text x="214" y="88" font-size="22">z</text><text x="232" y="66" font-size="28">z</text><text x="252" y="40" font-size="34">Z</text>
@@ -121,7 +138,7 @@
   const MODE_FACE = { sleeping: 'sleepy', connecting: 'surprised', idle: 'joy', listening: 'listening', thinking: 'thinking', speaking: 'talk' };
   const LIGHT = {
     sleepy: '#64748b', surprised: '#fde047', joy: '#a5b4fc', listening: '#4ade80', thinking: '#fbbf24',
-    talk: '#a5b4fc', love: '#fb7185', sad: '#7dd3fc'
+    talk: '#a5b4fc', love: '#fb7185', sad: '#7dd3fc', angry: '#ef4444'
   };
 
   function mount(el, { getLevel = () => 0 } = {}) {
@@ -136,7 +153,7 @@
 
     let mode = 'sleeping', mood = null, moodUntil = 0, face = '';
     let open = 0, tilt = 0, tiltTarget = 0, nextPose = 0, nextBlink = performance.now() + 1500, blinkAt = -1;
-    let alive = true, raf = 0, lookX = 0, lookY = 0, floatAmp = 2;
+    let alive = true, raf = 0, lookX = 0, lookY = 0, floatAmp = 2, angryAt = -1e9;
 
     // A change of expression happens behind a quick blink, like a cartoon
     // face: the eyes close, the new eyes are put in, they open again.
@@ -148,6 +165,10 @@
       zzz.classList.toggle('is-on', next === 'sleepy');
       light.style.fill = LIGHT[next] || '#a5b4fc';
       svg.dataset.face = next;
+      const ink = next === 'angry' ? '#fecaca' : '#a5f3fc';
+      mouth.setAttribute('fill', ink);
+      mouth.setAttribute('stroke', ink);
+      if (next === 'angry') angryAt = performance.now();
     }
     function wantFace(next, now) {
       if (next === face || next === pending) return;
@@ -161,7 +182,8 @@
     const MOUTH = {
       joy: { w: 32, s: 8, h: 0, r: 0 }, talk: { w: 30, s: 3, h: 0, r: 0.3 }, listening: { w: 22, s: 4, h: 0, r: 0 },
       thinking: { w: 18, s: -1, h: 0, r: 0 }, sad: { w: 26, s: -7, h: 0, r: 0 }, surprised: { w: 14, s: 0, h: 13, r: 1 },
-      sleepy: { w: 16, s: 0, h: 0, r: 0 }, love: { w: 30, s: 9, h: 2, r: 0 }
+      sleepy: { w: 16, s: 0, h: 0, r: 0 }, love: { w: 30, s: 9, h: 2, r: 0 },
+      angry: { w: 18, s: -6, h: 0, r: 0 }                       // a small pout
     };
     const m = { w: 16, s: 0, h: 0, r: 0 };
     function mouthPath(level) {
@@ -201,7 +223,7 @@
           blink = t < 120 ? 0.05 : Math.min(1, (t - 120) / 150);
           if (t >= 270) { swapAt = -1; blink = 1; }
         }
-      } else if (!still && !['sleepy', 'joy', 'love'].includes(face)) {
+      } else if (!still && !['sleepy', 'joy', 'love', 'angry'].includes(face)) {
         if (blinkAt < 0 && now > nextBlink) blinkAt = now;
         if (blinkAt >= 0) {
           const t = now - blinkAt;
@@ -231,7 +253,9 @@
       const float = still ? 0 : Math.sin(t * 2 * Math.PI / 3.4) * floatAmp;
       const nod = still ? 0 : open * 5;
       floatG.setAttribute('transform', `translate(0 ${float.toFixed(2)})`);
-      headG.setAttribute('transform', `rotate(${tilt.toFixed(2)} 150 200) translate(0 ${nod.toFixed(2)})`);
+      const since = now - angryAt;
+      const shake = !still && since < 700 ? Math.sin(since / 700 * Math.PI * 4) * 5 * (1 - since / 700) : 0;
+      headG.setAttribute('transform', `rotate(${(tilt + shake).toFixed(2)} 150 200) translate(0 ${nod.toFixed(2)})`);
       shadow.setAttribute('rx', (70 - float * 1.2).toFixed(1));
     }
     raf = requestAnimationFrame(frame);

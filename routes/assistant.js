@@ -4,7 +4,8 @@ import {
   isConfigured, setupMessage, createSessionToken, questionsFor, listMocks,
   DAILY_SESSIONS, WS_URL, today,
   CHARACTERS,
-  DEFAULT_CHARACTER
+  DEFAULT_CHARACTER,
+  RUDE_WORDS
 } from '../services/SpeakingAssistant.js';
 import { isStaff } from '../services/Premium.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -85,7 +86,8 @@ router.post('/session', async (req, res, next) => {
           character: CHARACTERS[req.body?.character] ? req.body.character : DEFAULT_CHARACTER,
           studentName: user.firstName
         }),
-        left: isStaff(user) ? null : Math.max(0, DAILY_SESSIONS - used - 1)
+        left: isStaff(user) ? null : Math.max(0, DAILY_SESSIONS - used - 1),
+        rudeWords: RUDE_WORDS
       }
     });
   } catch (error) {

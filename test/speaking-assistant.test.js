@@ -89,3 +89,14 @@ test('an unknown character falls back to Lesley; Arthur has his own voice', () =
   assert.equal(arthur.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Charon');
   assert.match(arthur.systemInstruction.parts[0].text, /Your name is Arthur/);
 });
+
+test('rudeness: the shared swear list plus insults, and a short polite reminder in the prompt', async () => {
+  const { RUDE_WORDS } = await import('../services/SpeakingAssistant.js');
+  assert.ok(RUDE_WORDS.includes('fuck') && RUDE_WORDS.includes('jalab'), 'the text chat list is reused');
+  assert.ok(RUDE_WORDS.includes('stupid') && RUDE_WORDS.includes('ahmoq') && RUDE_WORDS.includes('дурак'));
+  assert.ok(!RUDE_WORDS.some(w => w.length < 3), 'no tiny roots that would catch ordinary words');
+  const prompt = setupMessage({ character: 'lesley' }).setup.systemInstruction.parts[0].text;
+  assert.match(prompt, /Let's keep it polite, please/);
+  assert.match(prompt, /Iltimos, odobli gaplashaylik/);
+  assert.match(prompt, /do not repeat their words/);
+});

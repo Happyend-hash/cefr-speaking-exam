@@ -1,4 +1,5 @@
 import Exam from '../models/Exam.js';
+import { ROOTS as SWEAR_ROOTS } from './ChatFilter.js';
 
 /**
  * "AI Ustoz" — a live voice speaking coach, built on Google's Gemini Live API.
@@ -31,6 +32,18 @@ export const WS_URL =
 const TOKEN_URL = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
 
 export const isConfigured = () => Boolean(process.env.GEMINI_API_KEY);
+
+/**
+ * Words that make the teacher's face turn red (a cute angry face): the swear
+ * words the text chat already masks, plus everyday insults aimed at her.
+ * Sent to the browser with each session; matched at the start of a word.
+ */
+export const RUDE_INSULTS = [
+  'stupid', 'idiot', 'dumb', 'shut up', 'moron', 'loser', 'ugly', 'hate you', 'useless', 'trash', 'damn you',
+  'ahmoq', 'tentak', 'jinni', 'axmoq', 'yaramas', 'iflos', 'cho\'chqa', 'eshak',
+  'дурак', 'дура', 'тупой', 'тупая', 'идиот', 'заткнись', 'durak', 'tupoy', 'idiot', 'zatknis'
+];
+export const RUDE_WORDS = [...SWEAR_ROOTS, ...RUDE_INSULTS];
 
 /**
  * The teachers a student can talk to. Each has a voice and a manner; the
@@ -147,7 +160,8 @@ WHAT YOU DO:
 4. If the student speaks Uzbek, understand it and answer the request, but keep practice in English.
 
 STYLE: Short turns. Speak English clearly at a natural, slightly slow pace when asking questions. Be kind and specific; never mock the student. Do not lecture.
-LIMITS: Stay on English learning and the exam. Politely refuse unrelated, harmful or inappropriate requests. Never ask for personal information (full name, address, phone, passwords). You are not the official examiner: your level is an estimate; the website's mock exams give the real score.
+LIMITS: Stay on English learning and the exam. Politely refuse unrelated, harmful or inappropriate requests.
+RUDENESS: If the student swears, insults you or asks for something inappropriate, do not repeat their words. Say briefly, in a firm but friendly way, "Let's keep it polite, please" (or in Uzbek "Iltimos, odobli gaplashaylik"), then steer back to English practice. Your face on screen shows a cute angry look at that moment, so keep it light — never shame or lecture the student. Never ask for personal information (full name, address, phone, passwords). You are not the official examiner: your level is an estimate; the website's mock exams give the real score.
 
 Start by greeting the student briefly in English and Uzbek, and asking whether they want mock questions or everyday conversation.`;
 
@@ -232,4 +246,4 @@ export async function createSessionToken({ fetchImpl = fetch, now = Date.now() }
 /** Today's key for the daily limit (Tashkent time, UTC+5). */
 export const today = (now = Date.now()) => new Date(now + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-export default { loadMocks, listMocks, questionsFor, setupMessage, personaPrompt, createSessionToken, isConfigured, CHARACTERS };
+export default { loadMocks, listMocks, questionsFor, setupMessage, personaPrompt, createSessionToken, isConfigured, CHARACTERS, RUDE_WORDS };

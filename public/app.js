@@ -4019,17 +4019,31 @@
    * to talking or listening.
    */
   const AI_MOODS = [
+    // her polite reminder when the student was rude or asked for something inappropriate
+    ['angry', /(keep it polite|be polite|that's not (nice|okay|appropriate|polite)|not appropriate|i can't help with that|odobli gaplash|odobsiz|haqorat|bunday so'z)/i],
     ['love', /\b(excellent|perfect|fantastic|brilliant|outstanding|amazing job|love (it|that)|ajoyib|a'lo|barakalla|zo'r[- ]zo'r|mukammal)\b/i],
     ['surprised', /\b(wow|really\?|oh!|no way|interesting|surprising|voy|rostdanmi|qiziq)\b/i],
     ['sad', /\b(sorry|don't worry|mistake|unfortunately|oops|not quite|that's okay|afsus|xato|tashvishlanmang|kechirasiz|qo'rqmang)\b/i],
     ['joy', /\b(great|good job|well done|nice|good|correct|right|exactly|haha|yaxshi|to'g'ri|zo'r|juda yaxshi|qoyil)\b/i]
   ];
   let aiMoodText = '';
+  let aiStudentText = '';
+  let aiRude = null;   // built from the session's word list: swear words and insults
+
+  /** The student swore or insulted her: a cute angry face, at once. */
+  function aiStudentMood(text) {
+    if (!aiRude) return;
+    aiStudentText = (aiStudentText + text).slice(-60);
+    if (aiRude.test(aiStudentText)) {
+      ai.portrait?.instance.setMood?.('angry', 4000);
+      aiStudentText = '';
+    }
+  }
   function aiMoodFrom(text) {
     aiMoodText = (aiMoodText + text).slice(-80);
     for (const [mood, re] of AI_MOODS) {
       if (re.test(aiMoodText)) {
-        ai.portrait?.instance.setMood?.(mood, mood === 'love' ? 3000 : 3600);
+        ai.portrait?.instance.setMood?.(mood, mood === 'love' ? 3000 : mood === 'angry' ? 4000 : 3600);
         aiMoodText = '';
         return;
       }
@@ -4124,6 +4138,12 @@
       return render();
     }
     if (ai.status) { ai.status.used = (ai.status.used || 0) + 1; ai.status.left = session.left; }
+    // Rude words, matched at the start of a word ("class" and "assume" are fine).
+    try {
+      const words = (session.rudeWords || []).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      aiRude = words.length ? new RegExp(`(^|[^\\p{L}])(${words.join('|')})`, 'iu') : null;
+    } catch { aiRude = null; }
+    aiStudentText = '';
 
     const ws = new WebSocket(session.url);
     ai.ws = ws;
@@ -4173,6 +4193,7 @@
       if (sc.inputTranscription?.text) {
         if (ai.turns.length && ai.turns[ai.turns.length - 1].who === 'ai') aiCloseTurns();
         aiAppend('you', sc.inputTranscription.text);
+        aiStudentMood(sc.inputTranscription.text);
       }
       if (sc.outputTranscription?.text) {
         if (ai.turns.length && ai.turns[ai.turns.length - 1].who === 'you') aiCloseTurns();
