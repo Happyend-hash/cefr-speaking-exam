@@ -5850,6 +5850,11 @@
           ${isSignup ? 'Already registered?' : 'No account yet?'}
           <a href="#" data-go="${isSignup ? 'login' : 'signup'}">${isSignup ? 'Sign in' : 'Create one'}</a>
         </p>
+        <a class="parent-link" href="/ota-ona">
+          <span class="parent-link-ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.2c2.9.3 5 2.6 5 5.8"/></svg></span>
+          <span><strong>Ota-onalar uchun</strong><small>Farzandingiz natijalarini kod bilan ko‘ring</small></span>
+          <span aria-hidden="true">→</span>
+        </a>
       </div>`;
   }
 

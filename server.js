@@ -70,6 +70,8 @@ import chatRoutes from './routes/chat.js';
 import avatarRoutes from './routes/avatars.js';
 import gameRoutes from './routes/games.js';
 import assistantRoutes from './routes/assistant.js';
+import parentRoutes from './routes/parent.js';
+import courseStudentRoutes from './routes/courseStudents.js';
 import { noteGuest } from './services/UsageStats.js';
 import { resumeStuckMarking } from './routes/exam.js';
 import { retryAll, RETRY_EVERY_MS } from './services/MarkingRetry.js';
@@ -288,6 +290,8 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/avatars', avatarRoutes);
 // Sponsor banners: public so <img> and links work (see routes/sponsors.js).
 app.use('/api/sponsors', sponsorRoutes);
+// Parents' page: signs in with a child's 6-digit code, not an account (routes/parent.js).
+app.use('/api/parent', parentRoutes);
 // Daily usage statistics: a browser that opened the site without signing in
 // says so once a day, with a random id it made up (nothing personal).
 app.post('/api/visit', (req, res) => {
@@ -308,6 +312,7 @@ app.use('/api/assistant', authenticate, requireVerifiedEmail, assistantRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);
+app.use('/api/admin/course-students', authenticate, courseStudentRoutes);
 app.use('/api/admin', authenticate, adminRoutes);
 
 // Health check
@@ -374,6 +379,8 @@ app.use('/downloads', express.static(path.join(__dirname, 'public', 'downloads')
 
 // Static files for frontend
 app.use(express.static(path.join(__dirname, 'public')));
+// The parents' page, at a short address parents can type: /ota-ona or /parent.
+app.get(['/parent', '/ota-ona'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'parent.html')));
 
 // Any non-API GET falls through to the client, so deep links and reloads work.
 // Declared after express.static so real files always win.

@@ -56,6 +56,10 @@
     editingSection: null,     // "testId:sectionIndex"
     addingQuestionTo: null,   // "testId:sectionIndex"
     editingQuestion: null,    // "testId:sectionIndex:qIndex"
+    csOpen: false,           // parents' page: course students card
+    cs: null,                // { levels, skills, students }
+    csAddTest: null,         // child id whose "add test" form is open
+    csShow: null,            // child id whose tests are listed
     usage: null,             // the "Website use" numbers, refreshed every 2 min
     usageError: '',
     loading: false,
@@ -179,6 +183,7 @@
 
         ${usageCard()}
         ${unmarkedCard()}
+        ${courseCard()}
         ${reviewCard()}
         ${studentsCard()}
         ${voiceCard()}
@@ -1179,6 +1184,7 @@
 
   function wire() {
     wireUsage();
+    wireCourseAdmin();
     wireVoiceAdmin();
     wireChatAdmin();
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
@@ -1327,8 +1333,212 @@
     if (action === 'pictures-reload') return loadPictures({});
     if (action === 'sponsors-open') return loadSponsors({ open: true });
     if (action === 'sponsors-close') return setState({ sponsorsOpen: false });
+    if (action === 'cs-open') return loadCourse({ open: true });
+    if (action === 'cs-close') return setState({ csOpen: false, csAddTest: null, csShow: null });
     if (action === 'block-all') return changeAccessForAll('block');
     if (action === 'unblock-all') return changeAccessForAll('unblock');
+  }
+
+  // ----------------------------------------------- parents' page: course students
+
+  /**
+   * The children in the course, as their parents see them on /ota-ona:
+   * name, photo, CEFR level, a 6-digit parent code, and the six scores of
+   * every class test (percent). Parents need no account — only the code.
+   */
+  const CS_SKILLS = [
+    ['vocabulary', 'Vocabulary (Lug‘at)'], ['grammar', 'Grammar'], ['listening', 'Listening'],
+    ['reading', 'Reading'], ['speaking', 'Speaking'], ['writing', 'Writing']
+  ];
+  const csPhotos = new Map();   // "id:version" -> blob URL
+
+  const csInitials = name => String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const csToday = () => new Date().toISOString().slice(0, 10);
+
+  function courseCard() {
+    if (!state.csOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Parents' page — course students</h2>
+        <p class="muted" style="margin-top:6px">
+          Add the children in your course, their photo and level, and their class test scores.
+          Each child gets a 6-digit code; parents type it at <strong>${esc(location.host)}/ota-ona</strong> to see their child's progress.
+        </p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="cs-open">Open course students</button>
+      </div>`;
+    }
+    const data = state.cs || { students: [], levels: ['A1', 'A2', 'B1', 'B2', 'C1'] };
+    const levels = data.levels;
+    const levelOptions = sel => levels.map(l => `<option ${l === sel ? 'selected' : ''}>${l}</option>`).join('');
+
+    const rows = data.students.map(s => {
+      const photo = csPhotos.get(`${s.id}:${s.photoVersion}`);
+      const adding = state.csAddTest === s.id;
+      const showing = state.csShow === s.id;
+      const scores = CS_SKILLS.map(([k]) => s.latest?.[k]).filter(v => v !== null && v !== undefined);
+      return `<div class="cs-row ${s.active ? '' : 'is-paused'}">
+        <div class="cs-main">
+          <div class="cs-photo">${photo ? `<img src="${esc(photo)}" alt="">` : `<span>${esc(csInitials(s.name))}</span>`}</div>
+          <div class="cs-info">
+            <div class="cs-name"><strong>${esc(s.name)}</strong> ${s.active ? '' : '<span class="tag">paused</span>'}</div>
+            <div class="cs-meta">
+              <label>Level <select data-cs-level="${esc(s.id)}">${levelOptions(s.level)}</select></label>
+              <span>${s.results.length} test${s.results.length === 1 ? '' : 's'}${scores.length ? ` · overall <strong>${s.overall}%</strong>` : ''}</span>
+              <span class="muted">${s.lastParentVisit ? `parents last opened ${esc(new Date(s.lastParentVisit).toLocaleDateString())}` : 'parents have not opened it yet'}</span>
+            </div>
+          </div>
+          <div class="cs-code">
+            <span class="muted" style="font-size:12px">Parent code</span>
+            <strong>${esc(s.parentCode.slice(0, 3))} ${esc(s.parentCode.slice(3))}</strong>
+            <div class="row" style="gap:6px">
+              <button class="btn btn-ghost btn-sm" data-cs-copy="${esc(s.parentCode)}" data-name="${esc(s.name)}">Copy message</button>
+              <button class="btn btn-ghost btn-sm" data-cs-newcode="${esc(s.id)}" data-name="${esc(s.name)}">New code</button>
+            </div>
+          </div>
+        </div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          <button class="btn btn-sm" data-cs-addtest="${esc(s.id)}">${adding ? 'Cancel' : '+ Add test scores'}</button>
+          <button class="btn btn-ghost btn-sm" data-cs-show="${esc(s.id)}" ${s.results.length ? '' : 'disabled'}>${showing ? 'Hide tests' : 'Show tests'}</button>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer">${s.hasPhoto ? 'Change photo' : 'Add photo'}
+            <input type="file" accept="image/jpeg,image/png,image/webp" data-cs-photo="${esc(s.id)}" style="display:none"></label>
+          <button class="btn btn-ghost btn-sm" data-cs-active="${esc(s.id)}" data-active="${s.active ? '1' : ''}">${s.active ? 'Pause code' : 'Turn code on'}</button>
+          <button class="btn btn-ghost btn-sm" data-cs-delete="${esc(s.id)}" data-name="${esc(s.name)}">Delete</button>
+        </div>
+        ${adding ? `<form class="cs-test" data-cs-testform="${esc(s.id)}">
+          <div class="cs-test-top">
+            <label>Date <input type="date" name="date" value="${csToday()}" required></label>
+            <label>Test name <input type="text" name="title" maxlength="80" placeholder="e.g. Unit 4 test"></label>
+            <label>Level <select name="level">${levelOptions(s.level)}</select></label>
+          </div>
+          <div class="cs-test-grid">
+            ${CS_SKILLS.map(([k, label]) => `<label>${label}<span class="cs-pct"><input type="number" name="${k}" min="0" max="100" step="1" inputmode="numeric" placeholder="—"><span>%</span></span></label>`).join('')}
+          </div>
+          <p class="muted" style="font-size:13px">Leave a box empty if that skill wasn't tested.</p>
+          <button class="btn btn-sm" type="submit">Save test</button>
+        </form>` : ''}
+        ${showing && s.results.length ? `<div class="cs-results"><table>
+          <thead><tr><th>Date</th><th>Test</th><th>Level</th>${CS_SKILLS.map(([, l]) => `<th>${esc(l.split(' ')[0])}</th>`).join('')}<th></th></tr></thead>
+          <tbody>${[...s.results].reverse().map(r => `<tr>
+            <td>${esc(new Date(r.date).toLocaleDateString())}</td><td>${esc(r.title || '—')}</td><td>${esc(r.level)}</td>
+            ${CS_SKILLS.map(([k]) => `<td>${r.skills[k] ?? '—'}</td>`).join('')}
+            <td><button class="btn btn-ghost btn-sm" data-cs-deltest="${esc(s.id)}:${esc(r.id)}">Delete</button></td></tr>`).join('')}
+          </tbody></table></div>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Parents' page — course students (${data.students.length})</h2>
+        <button class="btn btn-ghost btn-sm" data-action="cs-close">Close</button>
+      </div>
+      <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type the child's 6-digit code. "New code" signs out every phone that used the old one.</p>
+      <form id="cs-add" class="cs-add">
+        <input name="name" type="text" maxlength="80" placeholder="Child's full name" required>
+        <select name="level">${levelOptions('A1')}</select>
+        <button class="btn btn-sm" type="submit">Add child</button>
+      </form>
+      ${rows || '<p class="muted" style="margin-top:12px">No children yet. Add the first one above.</p>'}
+    </div>`;
+  }
+
+  async function loadCourse({ open } = {}) {
+    setState({ csOpen: open || state.csOpen, loading: true, error: '' });
+    try {
+      const data = await api('/admin/course-students');
+      setState({ cs: data, loading: false });
+      loadCoursePhotos();
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  /** Photos need the admin's sign-in, so they are fetched and shown from memory. */
+  async function loadCoursePhotos() {
+    const missing = (state.cs?.students || []).filter(s => s.hasPhoto && !csPhotos.has(`${s.id}:${s.photoVersion}`));
+    for (const s of missing) {
+      try {
+        const res = await fetch(`${API}/admin/course-students/${s.id}/photo`, { headers: { Authorization: `Bearer ${state.token}` } });
+        if (res.ok) csPhotos.set(`${s.id}:${s.photoVersion}`, URL.createObjectURL(await res.blob()));
+      } catch { /* initials stay */ }
+    }
+    if (missing.length) render();
+  }
+
+  /** Make the photo small and square before upload: 480 px, JPEG. */
+  function shrinkPhoto(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = (img.naturalWidth - side) / 2;
+        const sy = Math.max(0, (img.naturalHeight - side) / 2 - side * 0.08);  // a little above centre: faces
+        const c = document.createElement('canvas');
+        c.width = c.height = Math.min(480, side);
+        c.getContext('2d').drawImage(img, sx, sy, side, side, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(img.src);
+        resolve(c.toDataURL('image/jpeg', 0.86));
+      };
+      img.onerror = () => reject(new Error('That file could not be read as a picture.'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  function wireCourseAdmin() {
+    if (!state.csOpen) return;
+    const reload = () => loadCourse({});
+    const call = async (path, opts, notice) => {
+      try { await api(path, opts); if (notice) state.notice = notice; reload(); }
+      catch (error) { setState({ error: error.message }); }
+    };
+    document.getElementById('cs-add')?.addEventListener('submit', e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      call('/admin/course-students', { method: 'POST', body: { name: f.get('name'), level: f.get('level') } }, 'Child added — copy the parent code and send it to the parents.');
+    });
+    root.querySelectorAll('[data-cs-level]').forEach(el => el.addEventListener('change', () =>
+      call(`/admin/course-students/${el.dataset.csLevel}`, { method: 'PATCH', body: { level: el.value } }, 'Level updated.')));
+    root.querySelectorAll('[data-cs-active]').forEach(el => el.addEventListener('click', () =>
+      call(`/admin/course-students/${el.dataset.csActive}`, { method: 'PATCH', body: { active: !el.dataset.active } })));
+    root.querySelectorAll('[data-cs-newcode]').forEach(el => el.addEventListener('click', () => {
+      if (!confirm(`Give ${el.dataset.name} a new parent code? Phones that remember the old code will be signed out.`)) return;
+      call(`/admin/course-students/${el.dataset.csNewcode}/code`, { method: 'POST' }, 'New code made — send it to the parents.');
+    }));
+    root.querySelectorAll('[data-cs-delete]').forEach(el => el.addEventListener('click', () => {
+      if (!confirm(`Delete ${el.dataset.name}, their photo and all their test scores? This cannot be undone.`)) return;
+      call(`/admin/course-students/${el.dataset.csDelete}`, { method: 'DELETE' }, 'Child removed.');
+    }));
+    root.querySelectorAll('[data-cs-copy]').forEach(el => el.addEventListener('click', async () => {
+      const text = `Assalomu alaykum! ${el.dataset.name}ning ingliz tilidagi natijalarini shu yerda kuzatishingiz mumkin: ${location.origin}/ota-ona\nKod: ${el.dataset.csCopy}`;
+      try { await navigator.clipboard.writeText(text); setState({ notice: 'Message with the link and code copied — paste it to the parents (Telegram, SMS).' }); }
+      catch { prompt('Copy this message for the parents:', text); }
+    }));
+    root.querySelectorAll('[data-cs-addtest]').forEach(el => el.addEventListener('click', () =>
+      setState({ csAddTest: state.csAddTest === el.dataset.csAddtest ? null : el.dataset.csAddtest })));
+    root.querySelectorAll('[data-cs-show]').forEach(el => el.addEventListener('click', () =>
+      setState({ csShow: state.csShow === el.dataset.csShow ? null : el.dataset.csShow })));
+    root.querySelectorAll('[data-cs-deltest]').forEach(el => el.addEventListener('click', () => {
+      const [id, rid] = el.dataset.csDeltest.split(':');
+      if (!confirm('Delete this test and its scores?')) return;
+      call(`/admin/course-students/${id}/results/${rid}`, { method: 'DELETE' }, 'Test deleted.');
+    }));
+    root.querySelectorAll('[data-cs-testform]').forEach(form => form.addEventListener('submit', e => {
+      e.preventDefault();
+      const f = new FormData(form);
+      const skills = Object.fromEntries(CS_SKILLS.map(([k]) => [k, f.get(k) === '' ? null : Number(f.get(k))]));
+      state.csAddTest = null;
+      call(`/admin/course-students/${form.dataset.csTestform}/results`, {
+        method: 'POST', body: { date: f.get('date'), title: f.get('title'), level: f.get('level'), skills }
+      }, 'Test saved — parents see it now.');
+    }));
+    root.querySelectorAll('[data-cs-photo]').forEach(el => el.addEventListener('change', async () => {
+      const file = el.files?.[0];
+      if (!file) return;
+      try {
+        const photo = await shrinkPhoto(file);
+        await api(`/admin/course-students/${el.dataset.csPhoto}/photo`, { method: 'POST', body: { photo } });
+        state.notice = 'Photo saved.';
+        reload();
+      } catch (error) { setState({ error: error.message }); }
+    }));
   }
 
   // ----------------------------------------------------------- website use
