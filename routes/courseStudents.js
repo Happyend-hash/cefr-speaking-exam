@@ -1,7 +1,9 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import CourseStudent, { LEVELS, SKILLS } from '../models/CourseStudent.js';
-import { newParentCode, readPhoto, dashboard, leaderboard, monthOf, familyOf } from '../services/ParentPortal.js';
+import CourseStudent, { LEVELS, SKILLS, ATTENDANCE } from '../models/CourseStudent.js';
+import {
+  newParentCode, readPhoto, dashboard, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
+} from '../services/ParentPortal.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -36,6 +38,12 @@ const row = s => {
     latest: d.latest,
     month: d.month,
     results: d.results,
+    attendance: attendanceSummary(s),
+    // the marks of the last 70 days, so a roll call for an earlier date opens filled in
+    marks: Object.fromEntries((s.attendance || []).filter(a => a.date >= dayOf(Date.now() - 70 * 864e5)).map(a => [a.date, a.status])),
+    monthlyFee: typeof s.monthlyFee === 'number' ? s.monthlyFee : null,
+    payment: paymentStatus(s),
+    paymentHistory: paymentHistory(s),
     lastParentVisit: s.lastParentVisit || null
   };
 };
@@ -99,6 +107,11 @@ router.patch('/:id', async (req, res, next) => {
       s.level = level;
     }
     if (req.body?.active !== undefined) s.active = Boolean(req.body.active);
+    if (req.body?.monthlyFee !== undefined) {
+      const fee = req.body.monthlyFee === null || req.body.monthlyFee === '' ? null : Math.round(Number(req.body.monthlyFee));
+      if (fee !== null && (!Number.isFinite(fee) || fee < 0 || fee > 100_000_000)) throw new APIError('Enter the monthly fee in so\u2019m', 400);
+      s.monthlyFee = fee;
+    }
     await s.save();
     res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }
@@ -197,6 +210,68 @@ router.delete('/:id/results/:rid', async (req, res, next) => {
     const r = s.results.id(req.params.rid);
     if (!r) throw new APIError('Homework not found', 404);
     r.deleteOne();
+    await s.save();
+    res.json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+/**
+ * Attendance for one level on one day (the roll call): { date, level,
+ * marks: { studentId: 'present' | 'late' | 'absent' } }. Saving the same day
+ * again replaces it.
+ */
+router.post('/attendance', async (req, res, next) => {
+  try {
+    const date = String(req.body?.date || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) throw new APIError('Choose the lesson date', 400);
+    if (date > dayOf(Date.now() + 864e5)) throw new APIError('That date is in the future', 400);
+    const marks = req.body?.marks || {};
+    const ids = Object.keys(marks).filter(isId);
+    if (!ids.length) throw new APIError('No students to mark', 400);
+    for (const id of ids) if (!ATTENDANCE.includes(marks[id])) throw new APIError('Unknown attendance mark', 400);
+    const students = await CourseStudent.find({ _id: { $in: ids } });
+    for (const s of students) {
+      s.attendance = (s.attendance || []).filter(a => a.date !== date);
+      s.attendance.push({ date, status: marks[String(s._id)] });
+      await s.save();
+    }
+    res.json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+/** "No lesson that day after all": remove one day's marks for a level. */
+router.delete('/attendance', async (req, res, next) => {
+  try {
+    const date = String(req.query?.date || '');
+    const level = cleanLevel(req.query?.level);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !level) throw new APIError('Choose the date and level', 400);
+    await CourseStudent.updateMany({ level }, { $pull: { attendance: { date } } });
+    res.json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+/** A payment towards a month (part payments add up). */
+router.post('/:id/payments', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    const month = String(req.body?.month || monthOf());
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new APIError('Choose the month', 400);
+    const amount = Math.round(Number(req.body?.amount));
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 100_000_000) throw new APIError('Enter the amount paid in so\u2019m', 400);
+    const paidAt = req.body?.paidAt ? new Date(req.body.paidAt) : new Date();
+    if (Number.isNaN(paidAt.getTime())) throw new APIError('Invalid payment date', 400);
+    s.payments.push({ month, amount, paidAt, note: String(req.body?.note || '').trim().slice(0, 80) });
+    await s.save();
+    res.status(201).json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+router.delete('/:id/payments/:pid', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    const p = s.payments.id(req.params.pid);
+    if (!p) throw new APIError('Payment not found', 404);
+    p.deleteOne();
     await s.save();
     res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }

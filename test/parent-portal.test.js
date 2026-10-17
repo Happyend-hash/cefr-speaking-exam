@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isWeakCode, newParentCode, signInBlocked, noteWrongCode, noteRightCode, dashboard, readPhoto,
-  leaderboard, monthAverage, monthOf, familyOf, MAX_TRIES, GLOBAL_MAX_FAILS, _guard
+  leaderboard, monthAverage, monthOf, familyOf, MAX_TRIES, GLOBAL_MAX_FAILS, _guard,
+  attendanceSummary, paymentStatus, paymentHistory, dayOf
 } from '../services/ParentPortal.js';
 
 /** The parents' page: 6-digit codes, guessing kept out, and the numbers shown. */
@@ -123,4 +124,50 @@ test('the ranking: one level, this month, highest first, equal averages share a 
 test('a family is its familyId, or the child itself when added alone', () => {
   assert.equal(familyOf({ _id: 'x1', familyId: 'f9' }), 'f9');
   assert.equal(familyOf({ _id: 'x1' }), 'x1');
+});
+
+test('attendance: one month, counts, and the days missed or late', () => {
+  const s = { attendance: [
+    { date: '2026-09-30', status: 'absent' },
+    { date: '2026-10-02', status: 'present' },
+    { date: '2026-10-09', status: 'absent' },
+    { date: '2026-10-07', status: 'late' },
+    { date: '2026-10-14', status: 'present' }
+  ] };
+  const a = attendanceSummary(s, '2026-10');
+  assert.equal(a.lessons, 4);
+  assert.equal(a.attended, 3, 'late still counts as came');
+  assert.equal(a.absent, 1);
+  assert.equal(a.percent, 75);
+  assert.deepEqual(a.missed, ['2026-10-09']);
+  assert.deepEqual(a.lateDays, ['2026-10-07']);
+  assert.deepEqual(a.days.map(d => d.date), ['2026-10-02', '2026-10-07', '2026-10-09', '2026-10-14'], 'in date order');
+  assert.equal(attendanceSummary({ attendance: [] }, '2026-10').percent, null, 'no lessons: no percent, not 0%');
+});
+
+const at = iso => Date.parse(iso);
+test('payment: paid, part paid, a gentle reminder until the 10th, then overdue', () => {
+  const fee = { monthlyFee: 500000 };
+  const oct5 = at('2026-10-05T06:00:00Z'), oct11 = at('2026-10-11T06:00:00Z');
+  assert.equal(paymentStatus({ ...fee, payments: [] }, '2026-10', oct5).status, 'due');
+  assert.equal(paymentStatus({ ...fee, payments: [] }, '2026-10', oct11).status, 'overdue');
+  const part = paymentStatus({ ...fee, payments: [{ month: '2026-10', amount: 300000, paidAt: new Date(oct5) }] }, '2026-10', oct11);
+  assert.equal(part.status, 'partial');
+  assert.equal(part.overdue, true, 'part paid after the 10th is flagged');
+  assert.equal(part.left, 200000);
+  const full = paymentStatus({ ...fee, payments: [
+    { month: '2026-10', amount: 300000, paidAt: new Date(oct5) }, { month: '2026-10', amount: 200000, paidAt: new Date(oct11) }
+  ] }, '2026-10', oct11);
+  assert.equal(full.status, 'paid');
+  assert.equal(full.paid, 500000);
+  assert.equal(paymentStatus({ payments: [{ month: '2026-10', amount: 1000, paidAt: new Date(oct5) }] }, '2026-10', oct11).status, 'paid', 'no fee set: any payment counts');
+  assert.equal(paymentStatus({ ...fee, payments: [{ month: '2026-09', amount: 500000 }] }, '2026-10', oct5).status, 'due', 'last month does not pay this month');
+});
+
+test('payment history: earlier months, from the month the child joined', () => {
+  const s = { monthlyFee: 500000, createdAt: new Date('2026-08-20'), payments: [
+    { month: '2026-08', amount: 500000 }, { month: '2026-09', amount: 200000 }
+  ] };
+  const h = paymentHistory(s, 6, at('2026-10-17T06:00:00Z'));
+  assert.deepEqual(h.map(x => [x.month, x.status]), [['2026-09', 'partial'], ['2026-08', 'paid']]);
 });

@@ -192,3 +192,45 @@
 .cs-name-form input { flex: 1; min-width: 180px; font-size: 18px; font-weight: 800; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .cs-name-form input:focus { outline: none; border-color: var(--indigo-500); box-shadow: 0 0 0 3px var(--indigo-100); }
 .cs-link { align-self: flex-start; border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: #b91c1c; cursor: pointer; text-decoration: underline; }
+
+/* ---- attendance and payments */
+.cs-level-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.cs-level-head h3 { margin: 0; }
+.cs-roll { border: 1px solid var(--indigo-200); background: #fff; border-radius: 14px; padding: 14px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px; }
+.cs-roll-top { display: flex; gap: 8px 16px; align-items: center; flex-wrap: wrap; }
+.cs-roll-top label { display: flex; gap: 6px; align-items: center; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.cs-roll-top input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.cs-saved { font-size: 12px; color: #92400e; background: #fef3c7; padding: 2px 8px; border-radius: 99px; }
+.cs-roll-list { display: flex; flex-direction: column; }
+.cs-roll-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.cs-roll-name { flex: 1; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.cs-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; flex: none; }
+.cs-seg-btn { border: 0; background: #fff; padding: 7px 12px; font: inherit; font-size: 13px; font-weight: 700; color: var(--ink-faint); cursor: pointer; }
+.cs-seg-btn + .cs-seg-btn { border-left: 1px solid var(--line); }
+.cs-seg-btn.is-present.is-on { background: #dcfce7; color: #15803d; }
+.cs-seg-btn.is-late.is-on { background: #fef3c7; color: #b45309; }
+.cs-seg-btn.is-absent.is-on { background: #fee2e2; color: #b91c1c; }
+.cs-roll-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cs-miss { color: #b91c1c; font-weight: 700; font-size: 12px; }
+.cs-late { color: #b45309; font-weight: 700; font-size: 12px; }
+.cs-pay { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 99px; white-space: nowrap; }
+.cs-pay.is-paid { background: #dcfce7; color: #15803d; }
+.cs-pay.is-partial { background: #fef3c7; color: #b45309; }
+.cs-pay.is-due { background: #f1f5f9; color: #64748b; }
+.cs-pay.is-overdue { background: #fee2e2; color: #b91c1c; }
+.cs-two { display: grid; gap: 12px; grid-template-columns: 1fr; }
+@media (min-width: 760px) { .cs-two { grid-template-columns: 1fr 1fr; } }
+.cs-box { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.cs-box-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.cs-att-dots { display: flex; gap: 5px; flex-wrap: wrap; }
+.cs-dot { width: 14px; height: 14px; border-radius: 4px; }
+.cs-dot.is-present { background: #22c55e; } .cs-dot.is-late { background: #f59e0b; } .cs-dot.is-absent { background: #ef4444; }
+.cs-att-line { font-size: 13px; margin: 0; }
+.cs-pay-form, .cs-fee-form { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.cs-pay-form label, .cs-fee-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.cs-pay-form input, .cs-fee-form input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.cs-sum { display: flex; align-items: center; gap: 6px; }
+.cs-sum input { width: 140px; font-weight: 700; }
+.cs-pay-list { list-style: none; margin: 0; padding: 0; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
+.cs-pay-list .cs-link { margin-left: 6px; }
+.cs-pay-hist { display: flex; gap: 6px 10px; flex-wrap: wrap; font-size: 12px; color: var(--ink-soft); }

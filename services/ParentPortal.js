@@ -30,6 +30,12 @@ const TZ_MS = 5 * 60 * 60 * 1000;
 /** "2026-10" for a moment, in Tashkent time. */
 export const monthOf = (when = Date.now()) => new Date(new Date(when).getTime() + TZ_MS).toISOString().slice(0, 7);
 
+/** "2026-10-17" for a moment, in Tashkent time. */
+export const dayOf = (when = Date.now()) => new Date(new Date(when).getTime() + TZ_MS).toISOString().slice(0, 10);
+
+/** Payment is expected by this day of the month; after it, parents see the red message. */
+export const PAYMENT_DUE_DAY = 10;
+
 /** The family a child belongs to (their own id when added alone). */
 export const familyOf = s => String(s.familyId || s._id);
 
@@ -202,10 +208,100 @@ export function dashboard(student) {
     previous,
     overall: avg(Object.values(latest)),
     month: monthAverage(student),
+    attendance: attendanceSummary(student),
+    attendanceHistory: attendanceHistory(student),
+    payment: paymentStatus(student),
+    paymentHistory: paymentHistory(student),
     levelsStudied: levels,
     results,
     lastTest: results.length ? results[results.length - 1].date : null
   };
+}
+
+// --------------------------------------------------------- attendance
+
+/** One month of attendance: the counts, each lesson day, and the days missed or late. */
+export function attendanceSummary(student, month = monthOf()) {
+  const days = (student.attendance || [])
+    .filter(a => a.date.startsWith(month))
+    .map(a => ({ date: a.date, status: a.status }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const count = st => days.filter(d => d.status === st).length;
+  const present = count('present'), late = count('late'), absent = count('absent');
+  return {
+    month,
+    lessons: days.length,
+    present,
+    late,
+    absent,
+    attended: present + late,
+    percent: days.length ? Math.round(((present + late) / days.length) * 100) : null,
+    days,
+    missed: days.filter(d => d.status === 'absent').map(d => d.date),
+    lateDays: days.filter(d => d.status === 'late').map(d => d.date)
+  };
+}
+
+/** The last few months of attendance, newest first (for "previous months"). */
+export function attendanceHistory(student, months = 4, now = Date.now()) {
+  const out = [];
+  const [y, m] = monthOf(now).split('-').map(Number);
+  for (let i = 1; i <= months; i += 1) {
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+    const key = d.toISOString().slice(0, 7);
+    const sum = attendanceSummary(student, key);
+    if (sum.lessons) out.push({ month: key, lessons: sum.lessons, attended: sum.attended, late: sum.late, absent: sum.absent, percent: sum.percent });
+  }
+  return out;
+}
+
+// ------------------------------------------------------------ payment
+
+/**
+ * One month's payment:
+ *   paid     — paid in full (or any amount when no fee is set)
+ *   partial  — part of the fee paid
+ *   due      — nothing yet, but before the due day (a gentle reminder)
+ *   overdue  — nothing (or only part) after the due day: the red message
+ */
+export function paymentStatus(student, month = monthOf(), now = Date.now()) {
+  const list = (student.payments || []).filter(p => p.month === month);
+  const paid = list.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const fee = typeof student.monthlyFee === 'number' && student.monthlyFee > 0 ? student.monthlyFee : null;
+  const current = month === monthOf(now);
+  const day = Number(dayOf(now).slice(8, 10));
+  const pastDue = !current || day > PAYMENT_DUE_DAY;   // an earlier month is always past due
+  let status;
+  if (paid > 0 && (fee === null || paid >= fee)) status = 'paid';
+  else if (paid > 0) status = 'partial';
+  else status = 'due';
+  const overdue = status !== 'paid' && pastDue;
+  const last = list.reduce((a, p) => (!a || new Date(p.paidAt) > new Date(a.paidAt) ? p : a), null);
+  return {
+    month,
+    fee,
+    paid,
+    left: fee !== null ? Math.max(0, fee - paid) : null,
+    status: overdue && status === 'due' ? 'overdue' : status,
+    overdue,
+    dueDay: PAYMENT_DUE_DAY,
+    lastPaidAt: last ? last.paidAt : null,
+    payments: list.map(p => ({ id: String(p._id), amount: p.amount, paidAt: p.paidAt, note: p.note || '' }))
+  };
+}
+
+/** The last few months of payments, newest first, from the month the child was added. */
+export function paymentHistory(student, months = 6, now = Date.now()) {
+  const out = [];
+  const [y, m] = monthOf(now).split('-').map(Number);
+  const since = student.createdAt ? monthOf(student.createdAt) : '0000-00';
+  for (let i = 1; i <= months; i += 1) {
+    const key = new Date(Date.UTC(y, m - 1 - i, 1)).toISOString().slice(0, 7);
+    if (key < since) break;
+    const p = paymentStatus(student, key, now);
+    out.push({ month: key, status: p.status, paid: p.paid, fee: p.fee });
+  }
+  return out;
 }
 
 /** The short card of a child in the family list. */
@@ -213,6 +309,7 @@ export const childCard = s => ({
   id: String(s._id),
   name: s.name,
   level: s.level,
+  payment: (({ status, month }) => ({ status, month }))(paymentStatus(s)),
   hasPhoto: Boolean(s.photo?.data?.length || s.photo?.updatedAt),
   photoVersion: s.photo?.updatedAt ? new Date(s.photo.updatedAt).getTime() : 0
 });
@@ -234,5 +331,6 @@ export function readPhoto(dataUrl) {
 
 export default {
   newParentCode, isWeakCode, signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth,
-  familyChildren, familyOf, dashboard, childCard, leaderboard, monthAverage, monthOf, readPhoto
+  familyChildren, familyOf, dashboard, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto,
+  attendanceSummary, attendanceHistory, paymentStatus, paymentHistory, PAYMENT_DUE_DAY
 };

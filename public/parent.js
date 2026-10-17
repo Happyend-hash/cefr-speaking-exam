@@ -59,6 +59,27 @@
     lvl: 'Daraja',
     good: 'Yaxshi', mid: 'O‘rtacha', low: 'E’tibor kerak',
     loading: 'Yuklanmoqda…',
+    // payment
+    payPaid: m => `${m} oyi uchun to‘lov: To‘langan`,
+    payPartial: m => `${m} oyi uchun to‘lov: Qisman to‘langan`,
+    payDue: (m, d) => `${m} oyi uchun to‘lov: ${d}\u2011${m.toLowerCase()}gacha to‘lash kerak`,
+    payOverdue: m => `Siz ${m} oyi uchun to‘lov qilishingiz kerak`,
+    payOverduePart: m => `Siz ${m} oyi uchun to‘lovni to‘liq qilishingiz kerak`,
+    left: 'qolgan',
+    deadlineWas: (d, m) => `to‘lov muddati ${d}\u2011${m.toLowerCase()} edi`,
+    badgePaid: 'To‘langan', badgePartial: 'Qisman to‘langan', badgeDue: 'To‘lov 10-gacha', badgeOverdue: 'To‘lov kerak',
+    payHistTitle: 'To‘lovlar tarixi',
+    // attendance
+    attTitle: m => `Davomat — ${m}`,
+    attLessons: 'Darslar', attPresent: 'Keldi', attLate: 'Kechikdi', attAbsent: 'Kelmadi',
+    attPercent: p => `Darslarning ${p} foiziga qatnashdi`,
+    attMissed: 'Kelmagan kunlar',
+    attLateDays: 'Kechikkan kunlar',
+    attNoMiss: 'Bu oy birorta ham darsni qoldirmadi. Barakalla!',
+    attNone: 'Bu oy hali davomat kiritilmagan.',
+    attPrev: 'Oldingi oylar',
+    attPrevRow: (a, l) => `${a}/${l} dars`,
+    noLesson: 'dars yo‘q',
     footer: 'Natijalarni ustoz har bir darsdan keyin kiritadi.'
   };
 
@@ -70,6 +91,8 @@
     speaking: 'Gapirish',
     writing: 'Yozish'
   };
+  const WEEKDAYS = ['yakshanba', 'dushanba', 'seshanba', 'chorshanba', 'payshanba', 'juma', 'shanba'];
+  const WEEK_SHORT = ['Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh', 'Ya'];
   const LEVEL_NAME = { A1: 'Boshlang‘ich', A2: 'Elementar', B1: 'O‘rta', B2: 'O‘rtadan yuqori', C1: 'Yuqori' };
   const MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
 
@@ -81,6 +104,9 @@
   const band = v => (v === null || v === undefined ? '' : v >= 75 ? 'is-good' : v >= 50 ? 'is-mid' : 'is-low');
   const bandWord = v => (v === null || v === undefined ? '' : v >= 75 ? T.good : v >= 50 ? T.mid : T.low);
   const initials = name => String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const money = n => `${Math.round(n || 0).toLocaleString('en-US').replace(/,/g, ' ')} so‘m`;
+  /** "2026-10-09" -> "9-oktabr, payshanba" (dates are lesson days, not moments). */
+  const dayName = iso => { const [y, m, d] = iso.split('-').map(Number); const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); return `${d}-${MONTHS[m - 1]}, ${WEEKDAYS[w]}`; };
   const pct = v => (v === null || v === undefined ? T.noScore : `${Number.isInteger(v) ? v : v.toFixed(1)}%`);
 
   // The token lives in localStorage when "remember" is ticked, otherwise only for this tab.
@@ -253,6 +279,80 @@
       <button class="btn btn-ghost btn-sm" data-action="signout">${T.signOut}</button>
     </header>`;
 
+  function payBadge(p) {
+    if (!p) return '';
+    const [cls, text] = { paid: ['is-paid', T.badgePaid], partial: ['is-partial', T.badgePartial], due: ['is-due', T.badgeDue], overdue: ['is-overdue', T.badgeOverdue] }[p.status] || [];
+    return cls ? `<span class="pp-paybadge ${cls}">${text}</span>` : '';
+  }
+
+  /** The payment banner at the top of a child's page. */
+  function paymentBanner(p) {
+    const m = cap(monthOnly(p.month));
+    const last = p.lastPaidAt ? fmtDate(p.lastPaidAt) : '';
+    let cls, icon, title, sub;
+    if (p.status === 'paid') {
+      cls = 'is-paid'; icon = '✓'; title = T.payPaid(m);
+      sub = [p.paid ? money(p.paid) : '', last].filter(Boolean).join(' · ');
+    } else if (p.status === 'partial' && !p.overdue) {
+      cls = 'is-partial'; icon = '◐'; title = T.payPartial(m);
+      sub = `${money(p.paid)}${p.fee ? ` / ${money(p.fee)} · ${T.left} ${money(p.left)}` : ''}`;
+    } else if (p.status === 'partial') {
+      cls = 'is-overdue'; icon = '!'; title = T.payOverduePart(m);
+      sub = `${T.left} ${money(p.left)} · ${T.deadlineWas(p.dueDay, m)}`;
+    } else if (p.status === 'due') {
+      cls = 'is-due'; icon = '⏳'; title = T.payDue(m, p.dueDay);
+      sub = p.fee ? money(p.fee) : '';
+    } else {
+      cls = 'is-overdue'; icon = '!'; title = T.payOverdue(m);
+      sub = [p.fee ? money(p.fee) : '', T.deadlineWas(p.dueDay, m)].filter(Boolean).join(' · ');
+    }
+    return `<section class="pp-pay ${cls}" role="status">
+      <span class="pp-pay-icon" aria-hidden="true">${icon}</span>
+      <div><strong>${esc(title)}</strong>${sub ? `<small>${esc(sub)}</small>` : ''}</div>
+    </section>`;
+  }
+
+  /** Attendance this month: counts, a calendar of lesson days, and the days missed. */
+  function attendanceCard(a, history) {
+    const m = monthName(a.month);
+    if (!a.lessons) {
+      return `<section class="pp-card"><div class="pp-card-head"><h2>${T.attTitle(m)}</h2></div><p class="pp-muted">${T.attNone}</p></section>`;
+    }
+    const [y, mo] = a.month.split('-').map(Number);
+    const daysIn = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    const lead = (new Date(Date.UTC(y, mo - 1, 1)).getUTCDay() + 6) % 7;   // Monday first
+    const marks = Object.fromEntries(a.days.map(d => [d.date, d.status]));
+    const word = { present: T.attPresent, late: T.attLate, absent: T.attAbsent };
+    const cells = [];
+    for (let i = 0; i < lead; i += 1) cells.push('<span class="pp-cal-pad"></span>');
+    for (let d = 1; d <= daysIn; d += 1) {
+      const key = `${a.month}-${String(d).padStart(2, '0')}`;
+      const st = marks[key];
+      cells.push(`<span class="pp-cal-day ${st ? `is-${st}` : ''}" title="${esc(dayName(key))}: ${st ? word[st] : T.noLesson}">${d}</span>`);
+    }
+    return `<section class="pp-card pp-att">
+      <div class="pp-card-head"><h2>${T.attTitle(m)}</h2><p>${T.attPercent(a.percent)}</p></div>
+      <div class="pp-att-stats">
+        <div><strong>${a.lessons}</strong><span>${T.attLessons}</span></div>
+        <div class="is-present"><strong>${a.present}</strong><span>${T.attPresent}</span></div>
+        <div class="is-late"><strong>${a.late}</strong><span>${T.attLate}</span></div>
+        <div class="is-absent"><strong>${a.absent}</strong><span>${T.attAbsent}</span></div>
+      </div>
+      <div class="pp-att-bar" role="img" aria-label="${T.attPercent(a.percent)}">
+        <span class="is-present" style="width:${(a.present / a.lessons) * 100}%"></span><span class="is-late" style="width:${(a.late / a.lessons) * 100}%"></span><span class="is-absent" style="width:${(a.absent / a.lessons) * 100}%"></span>
+      </div>
+      <div class="pp-cal">
+        ${WEEK_SHORT.map(w => `<span class="pp-cal-head">${w}</span>`).join('')}
+        ${cells.join('')}
+      </div>
+      <div class="pp-cal-key"><span><i class="is-present"></i>${T.attPresent}</span><span><i class="is-late"></i>${T.attLate}</span><span><i class="is-absent"></i>${T.attAbsent}</span><span><i></i>${T.noLesson}</span></div>
+      ${a.missed.length ? `<div class="pp-days is-absent"><h3>${T.attMissed} (${a.missed.length})</h3><div>${a.missed.map(d => `<span>${esc(dayName(d))}</span>`).join('')}</div></div>`
+        : `<p class="pp-att-good">${T.attNoMiss}</p>`}
+      ${a.lateDays.length ? `<div class="pp-days is-late"><h3>${T.attLateDays} (${a.lateDays.length})</h3><div>${a.lateDays.map(d => `<span>${esc(dayName(d))}</span>`).join('')}</div></div>` : ''}
+      ${history?.length ? `<div class="pp-att-prev"><h3>${T.attPrev}</h3>${history.map(h => `<div><span>${esc(cap(monthName(h.month)))}</span><span>${T.attPrevRow(h.attended, h.lessons)}${h.absent ? ` · <b class="pp-red">${h.absent} ${T.attAbsent.toLowerCase()}</b>` : ''}</span></div>`).join('')}</div>` : ''}
+    </section>`;
+  }
+
   function childrenScreen() {
     return `${topBar()}
       <main class="pp-dash">
@@ -266,6 +366,7 @@
                 <strong>${esc(c.name)}</strong>
                 <span class="pp-lvl">${esc(c.level)}</span>
                 <small>${esc(LEVEL_NAME[c.level] || '')}</small>
+                ${payBadge(c.payment)}
               </button>`).join('')}
           </div>
         </section>
@@ -375,6 +476,7 @@
     return `${topBar()}
       <main class="pp-dash">
         ${state.children.length > 1 ? `<button class="pp-back" data-action="back">← ${T.back}</button>` : ''}
+        ${paymentBanner(d.payment)}
         <section class="pp-hero">
           ${avatar(d, 'is-big')}
           <h1>${esc(d.name)}</h1>
@@ -393,6 +495,8 @@
           </div>
         </section>
 
+        ${attendanceCard(d.attendance, d.attendanceHistory)}
+
         ${d.results.length ? `
         <section class="pp-card">
           <div class="pp-card-head"><h2>${T.skillsTitle}</h2><p>${T.skillsNote}</p></div>
@@ -401,6 +505,8 @@
         ${ranking}
         ${byLevel}
         ${history}
+        ${d.paymentHistory?.length ? `<section class="pp-card"><div class="pp-card-head"><h2>${T.payHistTitle}</h2></div>
+          <div class="pp-payhist">${d.paymentHistory.map(h => `<div><span>${esc(cap(monthName(h.month)))}</span>${payBadge(h)}${h.paid ? `<small>${money(h.paid)}</small>` : ''}</div>`).join('')}</div></section>` : ''}
 
         <p class="pp-foot">${T.footer}</p>
       </main>`;

@@ -65,6 +65,12 @@
     csTitle: '',
     csDate: '',
     csHistory: false,
+    csRoll: null,            // the level whose attendance roll call is open
+    csRollDate: '',
+    csRollMarks: {},         // id -> 'present' | 'late' | 'absent', as tapped
+    csPayAmount: undefined,
+    csPayDate: '',
+    csFee: undefined,
     usage: null,             // the "Website use" numbers, refreshed every 2 min
     usageError: '',
     loading: false,
@@ -1365,6 +1371,12 @@
   const csMonthName = ym => { const [y, m] = String(ym || '').split('-'); return `${CS_MONTHS[Number(m) - 1] || ''} ${y || ''}`; };
   const csPct = v => (v === null || v === undefined ? '—' : `${Number.isInteger(v) ? v : v.toFixed(1)}%`);
   const csBand = v => (v === null || v === undefined ? '' : v >= 75 ? 'is-good' : v >= 50 ? 'is-mid' : 'is-low');
+  const csMoney = n => `${Math.round(n || 0).toLocaleString('en-US').replace(/,/g, ' ')} so‘m`;
+  const CS_MARKS = [['present', 'Came'], ['late', 'Late'], ['absent', 'Missed']];
+  const CS_PAY = {
+    paid: ['is-paid', '✓ Paid'], partial: ['is-partial', 'Part paid'], due: ['is-due', 'Not yet'], overdue: ['is-overdue', '✗ Not paid']
+  };
+  const csPayBadge = p => { const [cls, text] = CS_PAY[p?.status] || CS_PAY.due; return `<span class="cs-pay ${cls}">${text}</span>`; };
   const csFace = (s, size = 40) => {
     const url = s?.hasPhoto ? csPhotos.get(`${s.id}:${s.photoVersion}`) : '';
     return `<span class="cs-face" style="width:${size}px;height:${size}px">${url ? `<img src="${esc(url)}" alt="">` : esc(csInitials(s?.name))}</span>`;
@@ -1419,21 +1431,25 @@
       const list = data.students.filter(s => s.level === level);
       if (!list.length) return '';
       return `<div class="cs-level">
-        <h3><span class="tag">${level}</span> ${list.length} student${list.length === 1 ? '' : 's'}</h3>
+        <div class="cs-level-head">
+          <h3><span class="tag">${level}</span> ${list.length} student${list.length === 1 ? '' : 's'}</h3>
+          <button class="btn btn-sm ${state.csRoll === level ? 'btn-ghost' : ''}" data-cs-roll="${level}">${state.csRoll === level ? 'Close attendance' : '✓ Take attendance'}</button>
+        </div>
+        ${state.csRoll === level ? rollCall(level, list) : ''}
         <div class="cs-table-wrap"><table class="cs-table">
-          <thead><tr><th></th><th>Name</th><th>${esc(csMonthName(data.month).split(' ')[0])} average</th><th>Homeworks</th><th>Last homework</th><th>Parent code</th></tr></thead>
+          <thead><tr><th></th><th>Name</th><th>${esc(csMonthName(data.month).split(' ')[0])} average</th><th>Homeworks</th><th>Attendance</th><th>Payment</th><th>Parent code</th></tr></thead>
           <tbody>${list.map(s => {
-            const last = s.results.length ? s.results[s.results.length - 1].date : null;
             const open = state.csSel === s.id;
             return `<tr class="cs-tr ${open ? 'is-open' : ''} ${s.active ? '' : 'is-paused'}" data-cs-sel="${esc(s.id)}" tabindex="0">
                 <td>${csFace(s, 36)}</td>
                 <td><strong>${esc(s.name)}</strong>${s.active ? '' : ' <span class="tag">paused</span>'}${familySize(s.family) > 1 ? ' <span class="cs-fam" title="Shares the parent code with brothers/sisters">family</span>' : ''}</td>
                 <td class="cs-num ${csBand(s.month.percent)}">${csPct(s.month.percent)}</td>
                 <td class="cs-num">${s.month.homeworks}</td>
-                <td>${last ? esc(new Date(last).toLocaleDateString()) : '<span class="muted">—</span>'}</td>
+                <td class="cs-num">${s.attendance.lessons ? `${s.attendance.attended}/${s.attendance.lessons}${s.attendance.absent ? ` <span class="cs-miss">${s.attendance.absent} missed</span>` : ''}` : '<span class="muted">—</span>'}</td>
+                <td>${csPayBadge(s.payment)}</td>
                 <td class="cs-code-cell">${esc(s.parentCode)}</td>
               </tr>
-              ${open ? `<tr class="cs-panel-row"><td colspan="6">${studentPanel(s, { levelOptions, familyOptions, byId })}</td></tr>` : ''}`;
+              ${open ? `<tr class="cs-panel-row"><td colspan="7">${studentPanel(s, { levelOptions, familyOptions, byId })}</td></tr>` : ''}`;
           }).join('')}</tbody>
         </table></div>
       </div>`;
@@ -1458,6 +1474,73 @@
       ${boards ? `<h3 class="cs-board-title">Ranking — ${esc(csMonthName(data.month))}</h3>
         <p class="muted" style="font-size:13px">Average of every homework percent this month, per level. Parents see their child's level ranking.</p>
         <div class="cs-boards">${boards}</div>` : ''}
+    </div>`;
+  }
+
+  /**
+   * Attendance for one level: everyone starts as "Came" (or as already saved
+   * for that date); tap who was late or missed, then Save.
+   */
+  function rollCall(level, list) {
+    const date = state.csRollDate || csToday();
+    const saved = list.some(s => s.marks?.[date]);
+    const markOf = s => state.csRollMarks[s.id] || s.marks?.[date] || 'present';
+    const counts = { present: 0, late: 0, absent: 0 };
+    list.filter(s => s.active).forEach(s => { counts[markOf(s)] += 1; });
+    return `<div class="cs-roll">
+      <div class="cs-roll-top">
+        <strong>Attendance — ${level}</strong>
+        <label>Date <input type="date" id="cs-roll-date" value="${esc(date)}" max="${csToday()}"></label>
+        ${saved ? '<span class="cs-saved">already saved for this date — saving again replaces it</span>' : ''}
+      </div>
+      <div class="cs-roll-list">${list.filter(s => s.active).map(s => `<div class="cs-roll-row">
+          ${csFace(s, 32)}<span class="cs-roll-name">${esc(s.name)}</span>
+          <div class="cs-seg" role="radiogroup" aria-label="${esc(s.name)}">${CS_MARKS.map(([k, label]) => `
+            <button type="button" class="cs-seg-btn is-${k} ${markOf(s) === k ? 'is-on' : ''}" role="radio" aria-checked="${markOf(s) === k}" data-cs-mark="${esc(s.id)}:${k}">${label}</button>`).join('')}
+          </div></div>`).join('')}
+      </div>
+      <div class="cs-roll-foot">
+        <span class="muted">${counts.present} came · ${counts.late} late · ${counts.absent} missed</span>
+        <div class="row" style="gap:8px">
+          ${saved ? `<button class="btn btn-ghost btn-sm" data-cs-rollclear="${level}">No lesson this day</button>` : ''}
+          <button class="btn btn-sm" data-cs-rollsave="${level}">Save attendance</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /** Attendance and payment of one student, in their panel. */
+  function moneyAndDays(s) {
+    const a = s.attendance;
+    const p = s.payment;
+    const monthWord = csMonthName(p.month).split(' ')[0];
+    const fmt = d => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', weekday: 'short' });
+    return `<div class="cs-two">
+      <div class="cs-box">
+        <div class="cs-box-head"><strong>Attendance — ${esc(monthWord)}</strong>
+          ${a.lessons ? `<span class="cs-num">${a.attended}/${a.lessons} · ${a.percent}%</span>` : ''}</div>
+        ${a.lessons ? `
+          <div class="cs-att-dots">${a.days.map(d => `<span class="cs-dot is-${d.status}" title="${esc(fmt(d.date))}: ${d.status === 'present' ? 'came' : d.status === 'late' ? 'late' : 'missed'}"></span>`).join('')}</div>
+          ${a.missed.length ? `<p class="cs-att-line"><span class="cs-miss">Missed:</span> ${a.missed.map(fmt).map(esc).join(', ')}</p>` : '<p class="cs-att-line muted">No missed lessons this month.</p>'}
+          ${a.lateDays.length ? `<p class="cs-att-line"><span class="cs-late">Late:</span> ${a.lateDays.map(fmt).map(esc).join(', ')}</p>` : ''}`
+        : '<p class="muted" style="font-size:13px">No attendance taken this month yet. Use "Take attendance" above the level table.</p>'}
+      </div>
+      <div class="cs-box">
+        <div class="cs-box-head"><strong>Payment — ${esc(monthWord)}</strong>${csPayBadge(p)}</div>
+        <p class="cs-att-line">${p.paid ? `Paid <strong>${csMoney(p.paid)}</strong>` : 'Nothing paid yet'}${p.fee ? ` of ${csMoney(p.fee)}${p.left ? ` · <span class="cs-miss">${csMoney(p.left)} left</span>` : ''}` : ''}</p>
+        <form class="cs-pay-form" data-cs-pay="${esc(s.id)}">
+          <label>Amount <span class="cs-sum"><input type="number" min="1" step="any" inputmode="numeric" id="cs-pay-amount" value="${esc(state.csPayAmount ?? (p.left || p.fee || ''))}" required><span>so‘m</span></span></label>
+          <label>Paid on <input type="date" id="cs-pay-date" value="${esc(state.csPayDate || csToday())}" max="${csToday()}"></label>
+          <button class="btn btn-sm" type="submit">Save payment</button>
+        </form>
+        ${p.payments.length ? `<ul class="cs-pay-list">${p.payments.map(x => `<li>${csMoney(x.amount)} <span class="muted">· ${esc(new Date(x.paidAt).toLocaleDateString())}</span>
+          <button type="button" class="cs-link" data-cs-unpay="${esc(s.id)}:${esc(x.id)}">delete</button></li>`).join('')}</ul>` : ''}
+        <form class="cs-fee-form" data-cs-fee="${esc(s.id)}">
+          <label>Monthly fee <span class="cs-sum"><input type="number" min="0" step="any" inputmode="numeric" id="cs-fee" value="${esc(state.csFee ?? (s.monthlyFee ?? ''))}" placeholder="e.g. 500000"><span>so‘m</span></span></label>
+          <button class="btn btn-ghost btn-sm" type="submit">Save fee</button>
+        </form>
+        ${s.paymentHistory.length ? `<div class="cs-pay-hist">${s.paymentHistory.map(h => `<span>${esc(csMonthName(h.month).split(' ')[0].slice(0, 3))} ${csPayBadge(h)}</span>`).join('')}</div>` : ''}
+      </div>
     </div>`;
   }
 
@@ -1497,6 +1580,8 @@
         </div>
         <button class="btn" type="submit">Save homework</button>` : ''}
       </form>
+
+      ${moneyAndDays(s)}
 
       <div class="cs-details">
         <label>Level <select data-cs-level="${esc(s.id)}">${levelOptions(s.level)}</select></label>
@@ -1609,7 +1694,7 @@
     root.querySelectorAll('[data-cs-sel]').forEach(el => {
       const open = () => {
         const id = el.dataset.csSel;
-        setState(state.csSel === id ? { csSel: null } : { csSel: id, csTypes: new Set(), csVals: {}, csTitle: '', csDate: '', csName: undefined });
+        setState(state.csSel === id ? { csSel: null } : { csSel: id, csTypes: new Set(), csVals: {}, csTitle: '', csDate: '', csName: undefined, csPayAmount: undefined, csPayDate: '', csFee: undefined });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
@@ -1678,6 +1763,52 @@
       } catch (error) { setState({ error: error.message }); }
     }));
     root.querySelector('.cs-history')?.addEventListener('toggle', e => { state.csHistory = e.target.open; });
+
+    // attendance roll call
+    root.querySelectorAll('[data-cs-roll]').forEach(el => el.addEventListener('click', () =>
+      setState(state.csRoll === el.dataset.csRoll ? { csRoll: null } : { csRoll: el.dataset.csRoll, csRollDate: csToday(), csRollMarks: {} })));
+    $('cs-roll-date')?.addEventListener('change', e => setState({ csRollDate: e.target.value, csRollMarks: {} }));
+    root.querySelectorAll('[data-cs-mark]').forEach(el => el.addEventListener('click', () => {
+      const [sid, mark] = el.dataset.csMark.split(':');
+      setState({ csRollMarks: { ...state.csRollMarks, [sid]: mark } });
+    }));
+    root.querySelectorAll('[data-cs-rollsave]').forEach(el => el.addEventListener('click', () => {
+      const level = el.dataset.csRollsave;
+      const date = state.csRollDate || csToday();
+      const list = state.cs.students.filter(s => s.level === level && s.active);
+      const marks = Object.fromEntries(list.map(s => [s.id, state.csRollMarks[s.id] || s.marks?.[date] || 'present']));
+      const missed = list.filter(s => marks[s.id] === 'absent').length;
+      csCall('/admin/course-students/attendance', { method: 'POST', body: { date, level, marks } },
+        `Attendance saved for ${level}: ${list.length - missed} came, ${missed} missed. Parents can see it now.`, { csRoll: null, csRollMarks: {} });
+    }));
+    root.querySelectorAll('[data-cs-rollclear]').forEach(el => el.addEventListener('click', () => {
+      const date = state.csRollDate || csToday();
+      if (!confirm(`Remove the attendance of ${el.dataset.csRollclear} on ${date}?`)) return;
+      csCall(`/admin/course-students/attendance?date=${encodeURIComponent(date)}&level=${encodeURIComponent(el.dataset.csRollclear)}`, { method: 'DELETE' }, 'That day’s attendance was removed.', { csRollMarks: {} });
+    }));
+
+    // payments and the monthly fee
+    $('cs-pay-amount')?.addEventListener('input', e => { state.csPayAmount = e.target.value; });
+    $('cs-pay-date')?.addEventListener('change', e => { state.csPayDate = e.target.value; });
+    $('cs-fee')?.addEventListener('input', e => { state.csFee = e.target.value; });
+    root.querySelectorAll('[data-cs-pay]').forEach(form => form.addEventListener('submit', e => {
+      e.preventDefault();
+      const amount = Number(form.querySelector('#cs-pay-amount').value);
+      if (!amount) return;
+      csCall(`/admin/course-students/${form.dataset.csPay}/payments`, {
+        method: 'POST', body: { month: state.cs.month, amount, paidAt: state.csPayDate || csToday() }
+      }, `Payment of ${csMoney(amount)} saved — parents see it now.`, { csPayAmount: undefined, csPayDate: '' });
+    }));
+    root.querySelectorAll('[data-cs-unpay]').forEach(el => el.addEventListener('click', () => {
+      const [sid, pid] = el.dataset.csUnpay.split(':');
+      if (!confirm('Delete this payment?')) return;
+      csCall(`/admin/course-students/${sid}/payments/${pid}`, { method: 'DELETE' }, 'Payment deleted.');
+    }));
+    root.querySelectorAll('[data-cs-fee]').forEach(form => form.addEventListener('submit', e => {
+      e.preventDefault();
+      const v = form.querySelector('#cs-fee').value;
+      csCall(`/admin/course-students/${form.dataset.csFee}`, { method: 'PATCH', body: { monthlyFee: v === '' ? null : Number(v) } }, 'Monthly fee saved.', { csFee: undefined });
+    }));
 
     // renaming: the typed name is kept in state, the Save button lights up when it differs
     const nameInput = $('cs-name-input');

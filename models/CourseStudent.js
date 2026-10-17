@@ -20,6 +20,8 @@ import mongoose from 'mongoose';
 
 export const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1'];
 export const SKILLS = ['vocabulary', 'grammar', 'listening', 'reading', 'speaking', 'writing'];
+/** Attendance marks (Jamshid's choice): came, came late, missed. */
+export const ATTENDANCE = ['present', 'late', 'absent'];
 
 const percent = { type: Number, min: 0, max: 100, default: null };
 
@@ -38,6 +40,20 @@ const resultSchema = new mongoose.Schema({
   }
 }, { _id: true, timestamps: true });
 
+/** One lesson day: "2026-10-09" (Tashkent date) and how the child was marked. */
+const attendanceSchema = new mongoose.Schema({
+  date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+  status: { type: String, enum: ATTENDANCE, required: true }
+}, { _id: false });
+
+/** A payment towards one month ("2026-10"). Several can add up (part payments). */
+const paymentSchema = new mongoose.Schema({
+  month: { type: String, required: true, match: /^\d{4}-\d{2}$/ },
+  amount: { type: Number, required: true, min: 1 },
+  paidAt: { type: Date, default: Date.now },
+  note: { type: String, trim: true, maxlength: 80, default: '' }
+}, { _id: true, timestamps: true });
+
 const courseStudentSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, maxlength: 80 },
   level: { type: String, enum: LEVELS, default: 'A1' },
@@ -54,6 +70,10 @@ const courseStudentSchema = new mongoose.Schema({
     updatedAt: Date
   },
   results: [resultSchema],
+  attendance: [attendanceSchema],
+  /** What this child pays a month, in so'm (siblings may have a discount). Empty = not set. */
+  monthlyFee: { type: Number, min: 0, default: null },
+  payments: [paymentSchema],
   lastParentVisit: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });

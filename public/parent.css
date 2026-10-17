@@ -190,3 +190,71 @@ td.is-low { color: var(--low); background: color-mix(in srgb, var(--low-bg) 60%,
 .pp-rank li.is-mine { background: var(--indigo-50); border-color: var(--indigo-200); }
 .pp-rank li.is-unranked { opacity: .75; }
 @media (max-width: 420px) { .pp-rank li { grid-template-columns: 32px 1fr auto auto; gap: 8px; padding: 10px; } }
+
+/* ---- payment: the banner at the top of a child's page, badges, history */
+.pp-pay { display: flex; gap: 14px; align-items: center; padding: 14px 16px; border-radius: 16px; border: 2px solid; }
+.pp-pay > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pp-pay strong { font-size: 16px; line-height: 1.35; }
+.pp-pay small { font-size: 13px; opacity: .85; }
+.pp-pay-icon { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 20px; flex: none; color: #fff; }
+.pp-pay.is-paid { background: #f0fdf4; border-color: #bbf7d0; color: #14532d; }
+.pp-pay.is-paid .pp-pay-icon { background: #16a34a; }
+.pp-pay.is-partial, .pp-pay.is-due { background: #fffbeb; border-color: #fde68a; color: #78350f; }
+.pp-pay.is-partial .pp-pay-icon, .pp-pay.is-due .pp-pay-icon { background: #f59e0b; font-size: 18px; }
+.pp-pay.is-overdue { background: #fef2f2; border-color: #fca5a5; color: #7f1d1d; box-shadow: 0 6px 18px rgba(220, 38, 38, .15); }
+.pp-pay.is-overdue .pp-pay-icon { background: #dc2626; }
+.pp-pay.is-overdue strong { font-size: 17px; }
+@media (prefers-reduced-motion: no-preference) {
+  .pp-pay.is-overdue .pp-pay-icon { animation: pp-pulse 1.8s ease-in-out infinite; }
+}
+@keyframes pp-pulse { 50% { box-shadow: 0 0 0 7px rgba(220, 38, 38, .15); } }
+.pp-paybadge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
+.pp-paybadge.is-paid { background: #dcfce7; color: #15803d; }
+.pp-paybadge.is-partial, .pp-paybadge.is-due { background: #fef3c7; color: #b45309; }
+.pp-paybadge.is-overdue { background: #fee2e2; color: #b91c1c; }
+.pp-payhist { display: flex; flex-direction: column; gap: 8px; }
+.pp-payhist > div { display: flex; align-items: center; gap: 10px; }
+.pp-payhist > div > span:first-child { min-width: 120px; font-weight: 600; }
+.pp-payhist small { color: var(--ink-faint); }
+
+/* ---- attendance: counts, a month calendar, the days missed */
+.pp-att-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.pp-att-stats > div { background: var(--ground); border-radius: 12px; padding: 10px 6px; text-align: center; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); }
+.pp-att-stats strong { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.pp-att-stats span { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+.pp-att-stats .is-present strong { color: #15803d; }
+.pp-att-stats .is-late strong { color: #b45309; }
+.pp-att-stats .is-absent strong { color: #b91c1c; }
+.pp-att-stats .is-absent { background: #fef2f2; border-color: #fecaca; }
+.pp-att-bar { display: flex; height: 10px; border-radius: 99px; overflow: hidden; background: var(--line); margin: 12px 0 14px; }
+.pp-att-bar span { display: block; height: 100%; }
+.pp-att-bar .is-present { background: #22c55e; } .pp-att-bar .is-late { background: #f59e0b; } .pp-att-bar .is-absent { background: #ef4444; }
+.pp-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; max-width: 420px; }
+.pp-cal-head { text-align: center; font-size: 11px; font-weight: 700; color: var(--ink-faint); padding-bottom: 2px; }
+.pp-cal-day {
+  aspect-ratio: 1; display: grid; place-items: center; border-radius: 9px; font-size: 13px; font-weight: 600;
+  color: var(--ink-faint); background: transparent; font-variant-numeric: tabular-nums;
+}
+.pp-cal-day.is-present { background: #dcfce7; color: #15803d; font-weight: 800; }
+.pp-cal-day.is-late { background: #fef3c7; color: #b45309; font-weight: 800; }
+.pp-cal-day.is-absent { background: #ef4444; color: #fff; font-weight: 800; box-shadow: 0 3px 8px rgba(239, 68, 68, .35); }
+.pp-cal-key { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--ink-soft); }
+.pp-cal-key span { display: inline-flex; align-items: center; gap: 5px; }
+.pp-cal-key i { width: 12px; height: 12px; border-radius: 4px; border: 1px solid var(--line); background: #fff; }
+.pp-cal-key i.is-present { background: #dcfce7; border-color: #bbf7d0; }
+.pp-cal-key i.is-late { background: #fef3c7; border-color: #fde68a; }
+.pp-cal-key i.is-absent { background: #ef4444; border-color: #ef4444; }
+.pp-days { margin-top: 14px; }
+.pp-days h3 { font-size: 14px; margin-bottom: 8px; }
+.pp-days > div { display: flex; gap: 6px; flex-wrap: wrap; }
+.pp-days span { font-size: 13px; font-weight: 600; padding: 5px 10px; border-radius: 99px; }
+.pp-days.is-absent h3 { color: #b91c1c; }
+.pp-days.is-absent span { background: #fee2e2; color: #991b1b; }
+.pp-days.is-late h3 { color: #b45309; }
+.pp-days.is-late span { background: #fef3c7; color: #92400e; }
+.pp-att-good { margin-top: 14px; color: #15803d; font-weight: 600; }
+.pp-att-prev { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.pp-att-prev h3 { font-size: 13px; color: var(--ink-soft); }
+.pp-att-prev > div { display: flex; justify-content: space-between; gap: 10px; }
+.pp-red { color: #b91c1c; }
+.pp-kid .pp-paybadge { margin-top: 4px; }
