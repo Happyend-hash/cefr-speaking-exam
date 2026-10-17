@@ -71,6 +71,8 @@
     csPayAmount: undefined,
     csPayDate: '',
     csFee: undefined,
+    refreshing: false,       // the Refresh button is working
+    refreshedAt: '',         // when it last finished, shown next to it
     usage: null,             // the "Website use" numbers, refreshed every 2 min
     usageError: '',
     loading: false,
@@ -116,6 +118,33 @@
     store.remove('adminToken');
     Object.assign(state, { token: null, user: null, tests: [], screen: 'login' });
     render();
+  }
+
+  /**
+   * The Refresh button: everything on the page again — the headline numbers,
+   * the tests, and every card that is open — without closing anything.
+   */
+  async function refreshAll() {
+    if (state.refreshing) return;
+    setState({ refreshing: true, error: '', notice: '' });
+    const keep = { csSel: state.csSel, csRoll: state.csRoll };
+    try {
+      await loadTests();
+      await Promise.all([
+        refreshUsage(),
+        state.csOpen ? loadCourse({}) : null,
+        state.reviewOpen ? loadReview({}) : null,
+        state.studentsOpen ? loadStudents({}) : null,
+        state.voiceOpen ? loadVoice({}) : null,
+        state.chatOpen ? loadChat({}) : null,
+        state.picturesOpen ? loadPictures({}) : null,
+        state.sponsorsOpen ? loadSponsors({}) : null,
+        state.calibrationOpen ? loadCalibration() : null
+      ]);
+    } finally {
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setState({ refreshing: false, refreshedAt: now, ...keep });
+    }
   }
 
   async function loadTests() {
@@ -181,6 +210,11 @@
         <div class="row">
           <span class="muted">${esc(state.user?.email || '')}</span>
           <a class="btn btn-ghost btn-sm" href="/">Exam site</a>
+          ${state.refreshedAt ? `<span class="muted admin-refreshed">Updated ${esc(state.refreshedAt)}</span>` : ''}
+          <button class="btn btn-sm admin-refresh ${state.refreshing ? 'is-busy' : ''}" data-action="refresh" ${state.refreshing ? 'disabled' : ''} title="Load the latest changes">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+            ${state.refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
           <button class="btn btn-ghost btn-sm" data-action="signout">Sign out</button>
         </div>
       </div>
@@ -1344,6 +1378,7 @@
     if (action === 'pictures-reload') return loadPictures({});
     if (action === 'sponsors-open') return loadSponsors({ open: true });
     if (action === 'sponsors-close') return setState({ sponsorsOpen: false });
+    if (action === 'refresh') return refreshAll();
     if (action === 'cs-open') return loadCourse({ open: true });
     if (action === 'cs-close') return setState({ csOpen: false, csSel: null });
     if (action === 'block-all') return changeAccessForAll('block');
