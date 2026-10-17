@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   isWeakCode, newParentCode, signInBlocked, noteWrongCode, noteRightCode, dashboard, readPhoto,
   leaderboard, monthAverage, monthOf, familyOf, MAX_TRIES, GLOBAL_MAX_FAILS, _guard,
-  attendanceSummary, paymentStatus, paymentHistory, dayOf
+  attendanceSummary, paymentStatus, paymentHistory, dayOf, mergeDays
 } from '../services/ParentPortal.js';
 
 /** The parents' page: 6-digit codes, guessing kept out, and the numbers shown. */
@@ -170,4 +170,25 @@ test('payment history: earlier months, from the month the child joined', () => {
   ] };
   const h = paymentHistory(s, 6, at('2026-10-17T06:00:00Z'));
   assert.deepEqual(h.map(x => [x.month, x.status]), [['2026-09', 'partial'], ['2026-08', 'paid']]);
+});
+
+test('one day of homework is one result, however many times it was saved', () => {
+  const sk = o => ({ vocabulary: null, grammar: null, listening: null, reading: null, speaking: null, writing: null, ...o });
+  const results = [
+    { _id: 'a', date: new Date('2026-10-17T00:00:00Z'), level: 'A2', title: '', skills: sk({ writing: 100 }), createdAt: new Date('2026-10-17T06:00:00Z') },
+    { _id: 'b', date: new Date('2026-10-17T00:00:00Z'), level: 'A2', title: 'Unit 3', skills: sk({ vocabulary: 80 }), createdAt: new Date('2026-10-17T07:00:00Z') },
+    { _id: 'c', date: new Date('2026-10-17T00:00:00Z'), level: 'A2', title: '', skills: sk({ speaking: 90, writing: 95 }), createdAt: new Date('2026-10-17T08:00:00Z') },
+    { _id: 'd', date: new Date('2026-10-16T00:00:00Z'), level: 'A2', title: '', skills: sk({ grammar: 70 }) }
+  ];
+  const days = mergeDays(results);
+  assert.equal(days.length, 2);
+  assert.equal(days[0].day, '2026-10-16');
+  assert.deepEqual(days[1].skills, sk({ vocabulary: 80, speaking: 90, writing: 95 }));
+  assert.equal(days[1].title, 'Unit 3');
+  assert.equal(days[1].id, 'a');
+  const d = dashboard({ _id: 'x', name: 'Ali', level: 'A2', results });
+  assert.equal(d.results.length, 2);
+  const m = monthAverage({ results }, '2026-10');
+  assert.equal(m.homeworks, 2);
+  assert.equal(m.percent, Math.round(((70 + 80 + 90 + 95) / 4) * 10) / 10);
 });

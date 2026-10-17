@@ -137,15 +137,32 @@ const avg = values => {
   return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
 };
 
-const sortedResults = student => [...(student.results || [])]
-  .sort((a, b) => new Date(a.date) - new Date(b.date))
-  .map(r => ({
-    id: String(r._id),
-    date: r.date,
-    title: r.title || '',
-    level: r.level,
-    skills: Object.fromEntries(SKILLS.map(k => [k, typeof r.skills?.[k] === 'number' ? r.skills[k] : null]))
-  }));
+/**
+ * A child's homework results, oldest first, with all the results of one day
+ * (Tashkent date) joined into one row. The teacher may save a day's homework
+ * in several goes (vocabulary now, writing later); parents see one day.
+ * A later value for the same type replaces the earlier one.
+ */
+export function mergeDays(list = []) {
+  const byDay = new Map();
+  const ordered = [...list].sort((a, b) => new Date(a.date) - new Date(b.date)
+    || new Date(a.updatedAt || a.createdAt || 0) - new Date(b.updatedAt || b.createdAt || 0));
+  for (const r of ordered) {
+    const day = dayOf(r.date);
+    const skills = Object.fromEntries(SKILLS.map(k => [k, typeof r.skills?.[k] === 'number' ? r.skills[k] : null]));
+    const had = byDay.get(day);
+    if (!had) {
+      byDay.set(day, { id: String(r._id), day, date: r.date, title: r.title || '', level: r.level, skills });
+      continue;
+    }
+    for (const k of SKILLS) if (skills[k] !== null) had.skills[k] = skills[k];
+    if (r.title) had.title = r.title;
+    had.level = r.level || had.level;
+  }
+  return [...byDay.values()];
+}
+
+const sortedResults = student => mergeDays(student.results || []);
 
 /** A child's average of every homework percent in one month (null if none), and how many homeworks. */
 export function monthAverage(student, month = monthOf()) {
@@ -331,6 +348,6 @@ export function readPhoto(dataUrl) {
 
 export default {
   newParentCode, isWeakCode, signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth,
-  familyChildren, familyOf, dashboard, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto,
+  familyChildren, familyOf, dashboard, mergeDays, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto,
   attendanceSummary, attendanceHistory, paymentStatus, paymentHistory, PAYMENT_DUE_DAY
 };

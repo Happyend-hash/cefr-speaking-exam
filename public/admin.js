@@ -1403,6 +1403,16 @@
   const csPhotos = new Map();   // "id:version" -> blob URL
 
   const csInitials = name => String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  /** The homework form filled with what is already saved for that day (one day = one result). */
+  const csFormFor = (s, date) => {
+    const had = s?.results.find(r => r.day === date);
+    return {
+      csDate: date,
+      csTypes: new Set(had ? Object.keys(had.skills).filter(k => had.skills[k] !== null) : []),
+      csVals: had ? Object.fromEntries(Object.entries(had.skills).filter(([, v]) => v !== null).map(([k, v]) => [k, String(v)])) : {},
+      csTitle: had?.title || ''
+    };
+  };
   const csToday = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const csMonthName = ym => { const [y, m] = String(ym || '').split('-'); return `${CS_MONTHS[Number(m) - 1] || ''} ${y || ''}`; };
   const csPct = v => (v === null || v === undefined ? '—' : `${Number.isInteger(v) ? v : v.toFixed(1)}%`);
@@ -1595,6 +1605,8 @@
   function studentPanel(s, { levelOptions, familyOptions }) {
     const types = state.csTypes;
     const vals = state.csVals;
+    const hwDate = state.csDate || csToday();
+    const savedDay = s.results.some(r => r.day === hwDate);
     return `<div class="cs-panel">
       <div class="cs-panel-head">
         <label class="cs-face-edit" title="Change photo">
@@ -1615,17 +1627,19 @@
       <form class="cs-hw" id="cs-hw">
         <div class="cs-hw-top">
           <strong>Homework results</strong>
-          <label>Date <input type="date" id="cs-hw-date" value="${esc(state.csDate || csToday())}"></label>
+          <label>Date <input type="date" id="cs-hw-date" value="${esc(hwDate)}"></label>
           <label>Note <input type="text" id="cs-hw-title" maxlength="80" placeholder="optional, e.g. Unit 5" value="${esc(state.csTitle || '')}"></label>
         </div>
-        <p class="muted" style="font-size:13px">Choose the homework types you gave, then type each result in percent.</p>
+        <p class="muted" style="font-size:13px">${savedDay
+          ? '<span class="cs-saved">Already saved for this day</span> — add or change any type below; it stays one result for the day.'
+          : 'Choose the homework types you gave, then type each result in percent. You can add more types for the same day later.'}</p>
         <div class="cs-types">${CS_SKILLS.map(([k, en, uz]) => `<button type="button" class="cs-type ${types.has(k) ? 'is-on' : ''}" data-cs-type="${k}" aria-pressed="${types.has(k)}">${en}<small>${uz}</small></button>`).join('')}
           <button type="button" class="cs-type cs-type-all" data-cs-type="all">${types.size === CS_SKILLS.length ? 'Clear all' : 'Choose all'}</button>
         </div>
         ${types.size ? `<div class="cs-vals">${CS_SKILLS.filter(([k]) => types.has(k)).map(([k, en]) => `
           <label>${en}<span class="cs-pct"><input type="number" min="0" max="100" step="1" inputmode="numeric" data-cs-val="${k}" value="${esc(vals[k] ?? '')}" required><span>%</span></span></label>`).join('')}
         </div>
-        <button class="btn" type="submit">Save homework</button>` : ''}
+        <button class="btn" type="submit">${savedDay ? 'Update this day' : 'Save homework'}</button>` : ''}
       </form>
 
       ${moneyAndDays(s)}
@@ -1754,7 +1768,8 @@
     root.querySelectorAll('[data-cs-sel]').forEach(el => {
       const open = () => {
         const id = el.dataset.csSel;
-        setState(state.csSel === id ? { csSel: null } : { csSel: id, csTypes: new Set(), csVals: {}, csTitle: '', csDate: '', csName: undefined, csPayAmount: undefined, csPayDate: '', csFee: undefined });
+        const st = state.cs?.students.find(x => x.id === id);
+        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csToday()), csName: undefined, csPayAmount: undefined, csPayDate: '', csFee: undefined });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
@@ -1771,16 +1786,21 @@
       root.querySelector(`[data-cs-val="${k}"]`)?.focus();
     }));
     root.querySelectorAll('[data-cs-val]').forEach(el => el.addEventListener('input', () => { state.csVals[el.dataset.csVal] = el.value; }));
-    $('cs-hw-date')?.addEventListener('change', e => { state.csDate = e.target.value; });
+    $('cs-hw-date')?.addEventListener('change', e => {
+      const st = state.cs?.students.find(x => x.id === id);
+      setState(csFormFor(st, e.target.value || csToday()));
+    });
     $('cs-hw-title')?.addEventListener('input', e => { state.csTitle = e.target.value; });
     $('cs-hw')?.addEventListener('submit', async e => {
       e.preventDefault();
       const skills = {};
       for (const [k] of CS_SKILLS) skills[k] = state.csTypes.has(k) ? Number(state.csVals[k]) : null;
       const s = state.cs.students.find(x => x.id === id);
-      await csCall(`/admin/course-students/${id}/results`, {
-        method: 'POST', body: { date: state.csDate || csToday(), title: state.csTitle, level: s?.level, skills }
-      }, `Saved — ${s?.name || 'the student'}'s parents can see it now.`, { csTypes: new Set(), csVals: {}, csTitle: '' });
+      const date = state.csDate || csToday();
+      const ok = await csCall(`/admin/course-students/${id}/results`, {
+        method: 'POST', body: { date, title: state.csTitle, level: s?.level, skills, replace: true }
+      }, `Saved — ${s?.name || 'the student'}'s parents can see it now.`);
+      if (ok) setState(csFormFor(state.cs.students.find(x => x.id === id), date));
     });
 
     // details

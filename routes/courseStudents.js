@@ -2,7 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import CourseStudent, { LEVELS, SKILLS, ATTENDANCE } from '../models/CourseStudent.js';
 import {
-  newParentCode, readPhoto, dashboard, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
+  newParentCode, readPhoto, dashboard, mergeDays, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
 } from '../services/ParentPortal.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -180,7 +180,12 @@ router.get('/:id/photo', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-/** One homework: a date (today by default), an optional title, and a percent for each type given. */
+/**
+ * The homework of one day: a date (today by default), an optional note, and a
+ * percent for each type given. A day has ONE result: saving the same day again
+ * updates it (types left empty keep their earlier value; with replace: true the
+ * form's values are taken as they are, so a type can also be taken off).
+ */
 router.post('/:id/results', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
@@ -198,18 +203,34 @@ router.post('/:id/results', async (req, res, next) => {
       any = true;
     }
     if (!any) throw new APIError('Choose at least one homework type and enter its percent', 400);
-    s.results.push({ date, title: String(b.title || '').trim().slice(0, 80), level: cleanLevel(b.level) || s.level, skills });
+
+    const day = dayOf(date);
+    const sameDay = s.results.filter(r => dayOf(r.date) === day);
+    const title = String(b.title ?? '').trim().slice(0, 80);
+    const level = cleanLevel(b.level) || s.level;
+    if (!sameDay.length) {
+      s.results.push({ date, title, level, skills });
+    } else {
+      // join what was already saved that day (older saves may be split in several), then apply this save
+      const [before] = mergeDays(sameDay);
+      const keep = s.results.id(before.id) || sameDay[0];
+      const merged = b.replace ? skills : Object.fromEntries(SKILLS.map(k => [k, skills[k] ?? before.skills[k]]));
+      keep.set({ skills: merged, level, title: b.replace || title ? title : before.title });
+      for (const r of sameDay) if (String(r._id) !== String(keep._id)) r.deleteOne();
+    }
     await s.save();
-    res.status(201).json({ success: true, data: await overview() });
+    res.status(sameDay.length ? 200 : 201).json({ success: true, data: await overview() });
   } catch (error) { next(error); }
 });
 
+/** Delete one day's homework (all of it, if it was saved in several goes). */
 router.delete('/:id/results/:rid', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
     const r = s.results.id(req.params.rid);
     if (!r) throw new APIError('Homework not found', 404);
-    r.deleteOne();
+    const day = dayOf(r.date);
+    s.results.filter(x => dayOf(x.date) === day).forEach(x => x.deleteOne());
     await s.save();
     res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }
