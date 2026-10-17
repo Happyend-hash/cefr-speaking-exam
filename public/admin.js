@@ -1467,9 +1467,17 @@
     const vals = state.csVals;
     return `<div class="cs-panel">
       <div class="cs-panel-head">
-        ${csFace(s, 64)}
-        <div>
-          <div class="cs-panel-name">${esc(s.name)}</div>
+        <label class="cs-face-edit" title="Change photo">
+          ${csFace(s, 72)}
+          <span class="cs-face-cam">${s.hasPhoto ? 'Change' : '+ Photo'}</span>
+          <input type="file" accept="image/jpeg,image/png,image/webp" data-cs-photo="${esc(s.id)}" style="display:none">
+        </label>
+        <div class="cs-panel-who">
+          <form class="cs-name-form" data-cs-rename="${esc(s.id)}">
+            <input type="text" id="cs-name-input" maxlength="80" value="${esc(state.csName ?? s.name)}" aria-label="Student's name" required>
+            <button class="btn btn-sm" type="submit" ${state.csName === undefined || state.csName.trim() === s.name ? 'disabled' : ''}>Save name</button>
+          </form>
+          ${s.hasPhoto ? `<button type="button" class="cs-link" data-cs-unphoto="${esc(s.id)}">Remove photo</button>` : ''}
           <div class="muted" style="font-size:13px">${s.results.length} homework${s.results.length === 1 ? '' : 's'} in total · parents ${s.lastParentVisit ? `last opened ${esc(new Date(s.lastParentVisit).toLocaleDateString())}` : 'have not opened it yet'}</div>
         </div>
       </div>
@@ -1497,8 +1505,6 @@
         <div class="row" style="gap:6px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" data-cs-copy="${esc(s.parentCode)}" data-name="${esc(s.name)}">Copy message for parents</button>
           <button class="btn btn-ghost btn-sm" data-cs-newcode="${esc(s.id)}" data-name="${esc(s.name)}">New code</button>
-          <label class="btn btn-ghost btn-sm" style="cursor:pointer">${s.hasPhoto ? 'Change photo' : 'Add photo'}
-            <input type="file" accept="image/jpeg,image/png,image/webp" data-cs-photo="${esc(s.id)}" style="display:none"></label>
           <button class="btn btn-ghost btn-sm" data-cs-active="${esc(s.id)}" data-active="${s.active ? '1' : ''}">${s.active ? 'Pause' : 'Turn back on'}</button>
           <button class="btn btn-ghost btn-sm cs-danger" data-cs-delete="${esc(s.id)}" data-name="${esc(s.name)}">Remove student</button>
         </div>
@@ -1603,7 +1609,7 @@
     root.querySelectorAll('[data-cs-sel]').forEach(el => {
       const open = () => {
         const id = el.dataset.csSel;
-        setState(state.csSel === id ? { csSel: null } : { csSel: id, csTypes: new Set(), csVals: {}, csTitle: '', csDate: '' });
+        setState(state.csSel === id ? { csSel: null } : { csSel: id, csTypes: new Set(), csVals: {}, csTitle: '', csDate: '', csName: undefined });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
@@ -1672,6 +1678,25 @@
       } catch (error) { setState({ error: error.message }); }
     }));
     root.querySelector('.cs-history')?.addEventListener('toggle', e => { state.csHistory = e.target.open; });
+
+    // renaming: the typed name is kept in state, the Save button lights up when it differs
+    const nameInput = $('cs-name-input');
+    nameInput?.addEventListener('input', () => {
+      state.csName = nameInput.value;
+      const btn = nameInput.form.querySelector('button');
+      const s = state.cs.students.find(x => x.id === state.csSel);
+      btn.disabled = !nameInput.value.trim() || nameInput.value.trim() === s?.name;
+    });
+    root.querySelectorAll('[data-cs-rename]').forEach(form => form.addEventListener('submit', e => {
+      e.preventDefault();
+      const name = (state.csName ?? '').trim();
+      if (!name) return;
+      csCall(`/admin/course-students/${form.dataset.csRename}`, { method: 'PATCH', body: { name } }, `Name changed to ${name}.`, { csName: undefined });
+    }));
+    root.querySelectorAll('[data-cs-unphoto]').forEach(el => el.addEventListener('click', () => {
+      if (!confirm('Remove this photo? Parents will see the initials instead.')) return;
+      csCall(`/admin/course-students/${el.dataset.csUnphoto}/photo`, { method: 'DELETE' }, 'Photo removed.');
+    }));
   }
 
   // ----------------------------------------------------------- website use

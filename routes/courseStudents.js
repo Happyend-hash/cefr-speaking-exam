@@ -148,6 +148,15 @@ router.post('/:id/photo', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+router.delete('/:id/photo', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    s.photo = undefined;
+    await s.save();
+    res.json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
 router.get('/:id/photo', async (req, res, next) => {
   try {
     const s = await load(req.params.id);

@@ -179,3 +179,16 @@
 .cs-rank-name { overflow-wrap: anywhere; }
 .cs-rank-pct { text-align: right; font-weight: 800; }
 .cs-rank-pct small { font-weight: 500; color: var(--ink-faint); font-size: 11px; white-space: nowrap; }
+.cs-face-edit { position: relative; cursor: pointer; border-radius: 50%; flex: none; }
+.cs-face-cam {
+  position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
+  font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap;
+  background: #fff; color: var(--indigo-700); border: 1px solid var(--indigo-200); box-shadow: 0 2px 6px rgba(15, 23, 42, .12);
+}
+.cs-face-edit:hover .cs-face { box-shadow: 0 0 0 3px var(--indigo-200); }
+.cs-face-edit:focus-within .cs-face { box-shadow: 0 0 0 3px var(--indigo-500); }
+.cs-panel-who { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cs-name-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.cs-name-form input { flex: 1; min-width: 180px; font-size: 18px; font-weight: 800; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.cs-name-form input:focus { outline: none; border-color: var(--indigo-500); box-shadow: 0 0 0 3px var(--indigo-100); }
+.cs-link { align-self: flex-start; border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: #b91c1c; cursor: pointer; text-decoration: underline; }
