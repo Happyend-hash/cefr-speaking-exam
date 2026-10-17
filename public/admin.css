@@ -241,3 +241,26 @@
 @keyframes admin-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .admin-refresh.is-busy svg { animation: none; } }
 .admin-refreshed { font-size: 12px; }
+
+/* ---- level groups open like a drop-down */
+.cs-level { margin-top: 10px; border: 1px solid var(--line); border-radius: 14px; background: #fff; overflow: hidden; }
+.cs-level + .cs-level { margin-top: 8px; }
+.cs-level.is-open { border-color: var(--indigo-200); }
+.cs-level .cs-level-head { margin: 0; padding: 4px 10px 4px 4px; }
+.cs-level.is-open .cs-level-head { background: var(--indigo-50); border-bottom: 1px solid var(--indigo-100); }
+.cs-group-toggle {
+  flex: 1 1 240px; min-width: 0; display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap;
+  padding: 10px 8px; border: 0; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; border-radius: 10px;
+}
+.cs-group-toggle:hover { background: var(--indigo-50); }
+.cs-group-toggle:focus-visible { outline: 2px solid var(--indigo-500); outline-offset: 2px; }
+.cs-chev { display: inline-block; width: 14px; color: var(--indigo-600); transition: transform .18s ease; }
+.cs-level.is-open .cs-chev { transform: rotate(90deg); }
+.cs-group-count { font-weight: 700; }
+.cs-level.is-open .cs-group-toggle .tag { background: #fff; }
+.cs-group-count { white-space: nowrap; }
+.cs-group-meta span { white-space: nowrap; }
+.cs-level .cs-level-head > .btn { margin-left: auto; }
+.cs-group-meta { display: flex; gap: 10px; font-size: 13px; font-weight: 600; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.cs-group-body { padding: 10px 12px 12px; }
+@media (prefers-reduced-motion: reduce) { .cs-chev { transition: none; } }

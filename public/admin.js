@@ -66,6 +66,7 @@
     csDate: '',
     csHistory: false,
     csRoll: null,            // the level whose attendance roll call is open
+    csGroups: new Set(),     // the levels (groups) whose student list is open
     csRollDate: '',
     csRollMarks: {},         // id -> 'present' | 'late' | 'absent', as tapped
     csPayAmount: undefined,
@@ -127,7 +128,7 @@
   async function refreshAll() {
     if (state.refreshing) return;
     setState({ refreshing: true, error: '', notice: '' });
-    const keep = { csSel: state.csSel, csRoll: state.csRoll };
+    const keep = { csSel: state.csSel, csRoll: state.csRoll, csGroups: state.csGroups };
     try {
       await loadTests();
       await Promise.all([
@@ -1465,11 +1466,21 @@
     const tables = levels.map(level => {
       const list = data.students.filter(s => s.level === level);
       if (!list.length) return '';
-      return `<div class="cs-level">
+      const isOpen = state.csGroups.has(level);
+      const scored = list.map(s => s.month.percent).filter(v => typeof v === 'number');
+      const avg = scored.length ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length) : null;
+      const toPay = list.filter(s => s.active && (s.payment?.status === 'due' || s.payment?.status === 'overdue' || s.payment?.status === 'partial')).length;
+      return `<div class="cs-level ${isOpen ? 'is-open' : ''}">
         <div class="cs-level-head">
-          <h3><span class="tag">${level}</span> ${list.length} student${list.length === 1 ? '' : 's'}</h3>
-          <button class="btn btn-sm ${state.csRoll === level ? 'btn-ghost' : ''}" data-cs-roll="${level}">${state.csRoll === level ? 'Close attendance' : '✓ Take attendance'}</button>
+          <button type="button" class="cs-group-toggle" data-cs-group="${level}" aria-expanded="${isOpen}" aria-controls="cs-group-${level}">
+            <span class="cs-chev" aria-hidden="true">▸</span>
+            <span class="tag">${level}</span>
+            <span class="cs-group-count">${list.length} student${list.length === 1 ? '' : 's'}</span>
+            <span class="cs-group-meta">${avg === null ? '' : `<span class="${csBand(avg)}">avg ${avg}%</span>`}${toPay ? `<span class="cs-miss">${toPay} to pay</span>` : ''}</span>
+          </button>
+          ${isOpen ? `<button class="btn btn-sm ${state.csRoll === level ? 'btn-ghost' : ''}" data-cs-roll="${level}">${state.csRoll === level ? 'Close attendance' : '✓ Take attendance'}</button>` : ''}
         </div>
+        ${isOpen ? `<div id="cs-group-${level}" class="cs-group-body">
         ${state.csRoll === level ? rollCall(level, list) : ''}
         <div class="cs-table-wrap"><table class="cs-table">
           <thead><tr><th></th><th>Name</th><th>${esc(csMonthName(data.month).split(' ')[0])} average</th><th>Homeworks</th><th>Attendance</th><th>Payment</th><th>Parent code</th></tr></thead>
@@ -1487,6 +1498,7 @@
               ${open ? `<tr class="cs-panel-row"><td colspan="7">${studentPanel(s, { levelOptions, familyOptions, byId })}</td></tr>` : ''}`;
           }).join('')}</tbody>
         </table></div>
+        </div>` : ''}
       </div>`;
     }).join('');
 
@@ -1503,7 +1515,7 @@
         <h2 style="font-size:18px">Course students &amp; homework (${data.students.length})</h2>
         <button class="btn btn-ghost btn-sm" data-action="cs-close">Close</button>
       </div>
-      <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type their family's code. Click a student to enter today's homework.</p>
+      <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type their family's code. Click a group to see its students, then click a student to enter today's homework.</p>
       ${addForm}
       ${tables || '<p class="muted" style="margin-top:12px">No students yet. Add the first one above.</p>'}
       ${boards ? `<h3 class="cs-board-title">Ranking — ${esc(csMonthName(data.month))}</h3>
@@ -1722,8 +1734,21 @@
       const ok = await csCall('/admin/course-students', {
         method: 'POST', body: { name: n.name, level: n.level, photo: n.photo || undefined, sameFamilyAs: n.family || undefined }
       }, `${n.name.trim()} added — open them below to copy the parent code.`);
-      if (ok) { state.csNew = { name: '', level: n.level, family: '', photo: '' }; render(); }
+      if (ok) { state.csNew = { name: '', level: n.level, family: '', photo: '' }; state.csGroups = new Set([...state.csGroups, n.level]); render(); }
     });
+
+    // opening and closing a group (level)
+    root.querySelectorAll('[data-cs-group]').forEach(el => el.addEventListener('click', () => {
+      const level = el.dataset.csGroup;
+      const groups = new Set(state.csGroups);
+      const patch = { csGroups: groups };
+      if (groups.has(level)) {
+        groups.delete(level);
+        if (state.csRoll === level) patch.csRoll = null;
+        if (state.cs?.students.find(s => s.id === state.csSel)?.level === level) patch.csSel = null;
+      } else groups.add(level);
+      setState(patch);
+    }));
 
     // opening a student
     root.querySelectorAll('[data-cs-sel]').forEach(el => {
