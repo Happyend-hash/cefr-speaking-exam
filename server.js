@@ -71,6 +71,7 @@ import avatarRoutes from './routes/avatars.js';
 import gameRoutes from './routes/games.js';
 import assistantRoutes from './routes/assistant.js';
 import parentRoutes from './routes/parent.js';
+import CourseStudent from './models/CourseStudent.js';
 import courseStudentRoutes from './routes/courseStudents.js';
 import { noteGuest } from './services/UsageStats.js';
 import { resumeStuckMarking } from './routes/exam.js';
@@ -235,6 +236,12 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log('✓ MongoDB connected successfully');
+
+    // Parent codes used to be unique per child; brothers and sisters now
+    // share one. syncIndexes drops the old unique index and builds the new one.
+    CourseStudent.syncIndexes()
+      .then(dropped => { if (dropped?.length) console.log(`Course students: indexes updated (${dropped.join(', ')})`); })
+      .catch(error => console.error('Course students: index update failed:', error.message));
 
     /*
      * Self-heal any exam result whose marking was cut off by a previous

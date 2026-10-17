@@ -104,35 +104,78 @@
 .u-swatch.is-est { background: #e2e6f3; border: 1px dashed var(--ink-faint); }
 .u-bar.is-est { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 3 2; }
 
-/* ---------------------------------------------- parents' page: course students */
-.cs-add { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 6px; }
-.cs-add input, .cs-add select, .cs-test input, .cs-test select, .cs-meta select {
-  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff;
+/* ---------------------------------------------- course students & homework */
+.cs-add { display: flex; gap: 12px; align-items: center; margin: 14px 0 8px; padding: 12px; border: 1px dashed var(--indigo-200); border-radius: 14px; background: var(--indigo-50); }
+.cs-add-photo {
+  width: 64px; height: 64px; border-radius: 50%; flex: none; cursor: pointer; overflow: hidden;
+  display: grid; place-items: center; background: #fff; border: 2px dashed var(--indigo-200);
+  color: var(--indigo-700); font-size: 12px; font-weight: 700; text-align: center;
 }
-.cs-add input { flex: 1; min-width: 200px; }
-.cs-row { padding: 16px 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
-.cs-row.is-paused { opacity: .7; }
-.cs-main { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-.cs-photo {
-  width: 56px; height: 56px; border-radius: 50%; overflow: hidden; flex: none; display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--indigo-500), var(--indigo-700)); color: #fff; font-weight: 800;
+.cs-add-photo img { width: 100%; height: 100%; object-fit: cover; }
+.cs-add-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.cs-add-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.cs-add input[type=text], .cs-add select, .cs-hw input, .cs-details select {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; min-width: 0;
 }
-.cs-photo img { width: 100%; height: 100%; object-fit: cover; }
-.cs-info { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 4px; }
-.cs-name { font-size: 16px; }
-.cs-meta { display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; font-size: 14px; }
-.cs-meta select { padding: 4px 6px; margin-left: 4px; }
-.cs-code { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.cs-code strong { font-size: 24px; letter-spacing: .12em; font-variant-numeric: tabular-nums; color: var(--indigo-700); }
-.cs-test { background: var(--ground); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-.cs-test label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
-.cs-test-top { display: grid; gap: 10px; grid-template-columns: 1fr; }
-@media (min-width: 640px) { .cs-test-top { grid-template-columns: 160px 1fr 110px; } }
-.cs-test-grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-@media (min-width: 640px) { .cs-test-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.cs-add-row select:nth-child(2) { flex: 1; min-width: 180px; }
+.cs-level { margin-top: 18px; }
+.cs-level h3 { font-size: 15px; display: flex; gap: 8px; align-items: center; margin-bottom: 8px; color: var(--ink-soft); }
+.cs-table-wrap { overflow-x: auto; }
+.cs-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.cs-table th { font-size: 12px; color: var(--ink-soft); text-align: left; font-weight: 700; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.cs-table td { padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.cs-tr { cursor: pointer; }
+.cs-tr:hover td { background: var(--ground); }
+.cs-tr:focus-visible { outline: 2px solid var(--indigo-500); outline-offset: -2px; }
+.cs-tr.is-open td { background: var(--indigo-50); }
+.cs-tr.is-paused td { opacity: .6; }
+.cs-num { text-align: right; font-weight: 700; }
+.cs-num.is-good, .cs-rank-pct.is-good { color: #15803d; }
+.cs-num.is-mid, .cs-rank-pct.is-mid { color: #b45309; }
+.cs-num.is-low, .cs-rank-pct.is-low { color: #b91c1c; }
+.cs-code-cell { font-weight: 800; letter-spacing: .08em; color: var(--indigo-700); }
+.cs-fam { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 99px; background: #fef3c7; color: #92400e; }
+.cs-face {
+  border-radius: 50%; overflow: hidden; display: inline-grid; place-items: center; flex: none;
+  background: linear-gradient(135deg, var(--indigo-500), var(--indigo-700)); color: #fff; font-weight: 800; font-size: 13px;
+}
+.cs-face img { width: 100%; height: 100%; object-fit: cover; }
+.cs-panel-row > td { padding: 0 !important; background: var(--indigo-50); white-space: normal; cursor: default; }
+.cs-panel { padding: 16px; display: flex; flex-direction: column; gap: 16px; border-bottom: 2px solid var(--indigo-200); }
+.cs-panel-head { display: flex; gap: 14px; align-items: center; }
+.cs-panel-name { font-size: 18px; font-weight: 800; }
+.cs-hw { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.cs-hw-top { display: flex; gap: 10px 16px; align-items: center; flex-wrap: wrap; }
+.cs-hw-top label { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-soft); font-weight: 600; }
+.cs-types { display: flex; gap: 8px; flex-wrap: wrap; }
+.cs-type {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 8px 12px; border-radius: 10px;
+  border: 1.5px solid var(--line); background: #fff; font: inherit; font-weight: 700; cursor: pointer; color: var(--ink);
+}
+.cs-type small { font-weight: 500; color: var(--ink-faint); font-size: 11px; }
+.cs-type.is-on { border-color: var(--indigo-600); background: var(--indigo-600); color: #fff; }
+.cs-type.is-on small { color: #c7d2fe; }
+.cs-type-all { justify-content: center; color: var(--indigo-700); border-style: dashed; }
+.cs-vals { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.cs-vals label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 700; color: var(--ink-soft); }
 .cs-pct { display: flex; align-items: center; gap: 6px; }
-.cs-pct input { width: 100%; }
-.cs-results { overflow-x: auto; }
-.cs-results table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
-.cs-results th, .cs-results td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
-.cs-results th { font-size: 12px; color: var(--ink-soft); }
+.cs-pct input { width: 100%; font-size: 18px; font-weight: 700; padding: 8px 10px; }
+.cs-details { display: flex; gap: 10px 16px; flex-wrap: wrap; align-items: center; }
+.cs-details label { display: flex; gap: 6px; align-items: center; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.cs-code-box { display: flex; flex-direction: column; }
+.cs-code-box span { font-size: 11px; }
+.cs-code-box strong { font-size: 20px; letter-spacing: .12em; color: var(--indigo-700); }
+.cs-danger { color: #b91c1c !important; }
+.cs-history summary { cursor: pointer; font-weight: 700; }
+.cs-table-sm td, .cs-table-sm th { padding: 5px 6px; font-size: 13px; }
+.cs-board-title { font-size: 16px; margin-top: 26px; }
+.cs-boards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); margin-top: 10px; }
+.cs-board { border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.cs-board ol { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.cs-board li { display: grid; grid-template-columns: 28px 1fr auto auto; gap: 8px; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; }
+.cs-board li.is-unranked { opacity: .6; }
+.cs-rank { font-weight: 800; text-align: center; color: var(--ink-soft); }
+.cs-board li:nth-child(1) .cs-rank { color: #a16207; }
+.cs-rank-name { overflow-wrap: anywhere; }
+.cs-rank-pct { text-align: right; font-weight: 800; }
+.cs-rank-pct small { font-weight: 500; color: var(--ink-faint); font-size: 11px; white-space: nowrap; }

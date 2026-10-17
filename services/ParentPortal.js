@@ -3,17 +3,20 @@ import jwt from 'jsonwebtoken';
 import CourseStudent, { LEVELS, SKILLS } from '../models/CourseStudent.js';
 
 /**
- * The parents' page: sign in with a child's 6-digit code, see their progress.
+ * The parents' page: sign in with the family's 6-digit code, see the
+ * children, their homework results, and the monthly ranking of their level.
  *
  * A 6-digit code is short, so guessing is what has to be stopped:
  *   - each address gets MAX_TRIES wrong codes per TRY_WINDOW_MS;
  *   - if wrong codes pour in from everywhere at once (someone trying codes in
  *     bulk), parent sign-in pauses for everyone for GLOBAL_PAUSE_MS.
- * With 200 children that keeps the chance of a stranger finding any code
- * below about one in a thousand per day.
  *
  * "Remember on this phone" keeps the parent signed in for 180 days. Changing
- * a child's code in the admin panel signs out every phone that used the old one.
+ * a family's code in the admin panel signs out every phone that used the old one.
+ *
+ * The ranking (Jamshid's choice, 2026-10-17): per level, this month only
+ * (Tashkent time), by the average of every homework percent entered this
+ * month. Parents see the whole ranking of their child's level.
  */
 
 export const MAX_TRIES = 8;
@@ -22,6 +25,13 @@ export const GLOBAL_MAX_FAILS = 60;
 export const GLOBAL_WINDOW_MS = 10 * 60 * 1000;
 export const GLOBAL_PAUSE_MS = 15 * 60 * 1000;
 export const REMEMBER_DAYS = 180;
+
+const TZ_MS = 5 * 60 * 60 * 1000;
+/** "2026-10" for a moment, in Tashkent time. */
+export const monthOf = (when = Date.now()) => new Date(new Date(when).getTime() + TZ_MS).toISOString().slice(0, 7);
+
+/** The family a child belongs to (their own id when added alone). */
+export const familyOf = s => String(s.familyId || s._id);
 
 // ------------------------------------------------------------------ codes
 
@@ -76,24 +86,38 @@ export const _guard = { reset() { tries.clear(); globalFails = []; pausedUntil =
 
 export function parentToken(student, { remember = true } = {}) {
   return jwt.sign(
-    { kind: 'parent', sid: String(student._id), v: student.codeVersion || 1 },
+    { kind: 'parent', fam: familyOf(student), v: student.codeVersion || 1 },
     process.env.JWT_SECRET,
     { expiresIn: remember ? `${REMEMBER_DAYS}d` : '12h' }
   );
 }
 
-/** Express middleware: a signed-in parent, for a child whose code has not changed. */
+/** The active children of a family. */
+export function familyChildren(family) {
+  return CourseStudent.find({ active: true, $or: [{ familyId: family }, { _id: family, familyId: null }] }).sort({ name: 1 });
+}
+
+/**
+ * Express middleware: a signed-in parent whose family code has not changed.
+ * Sets req.children (the family's active children).
+ */
 export async function parentAuth(req, res, next) {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ success: false, message: 'Kod bilan kiring.' });
     const claims = jwt.verify(token, process.env.JWT_SECRET);
     if (claims.kind !== 'parent') throw new Error('not a parent token');
-    const student = await CourseStudent.findById(claims.sid);
-    if (!student || !student.active || (student.codeVersion || 1) !== claims.v) {
+    // Phones signed in before families existed carry one child's id.
+    let family = claims.fam;
+    if (!family && claims.sid) {
+      const one = await CourseStudent.findById(claims.sid).select('familyId');
+      family = one ? familyOf(one) : null;
+    }
+    const children = family ? await familyChildren(family) : [];
+    if (!children.length || children.some(c => (c.codeVersion || 1) !== claims.v)) {
       return res.status(401).json({ success: false, message: 'Kod o‘zgargan yoki o‘chirilgan. Yangi kodni ustozdan so‘rang.' });
     }
-    req.student = student;
+    req.children = children;
     next();
   } catch {
     res.status(401).json({ success: false, message: 'Qaytadan kiring.' });
@@ -107,19 +131,50 @@ const avg = values => {
   return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
 };
 
-/** Everything the parents' page shows, worked out once on the server. */
-export function dashboard(student) {
-  const results = [...(student.results || [])]
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .map(r => ({
-      id: String(r._id),
-      date: r.date,
-      title: r.title || '',
-      level: r.level,
-      skills: Object.fromEntries(SKILLS.map(k => [k, typeof r.skills?.[k] === 'number' ? r.skills[k] : null]))
-    }));
+const sortedResults = student => [...(student.results || [])]
+  .sort((a, b) => new Date(a.date) - new Date(b.date))
+  .map(r => ({
+    id: String(r._id),
+    date: r.date,
+    title: r.title || '',
+    level: r.level,
+    skills: Object.fromEntries(SKILLS.map(k => [k, typeof r.skills?.[k] === 'number' ? r.skills[k] : null]))
+  }));
 
-  // The latest score of each skill, and the one before it (for the arrow).
+/** A child's average of every homework percent in one month (null if none), and how many homeworks. */
+export function monthAverage(student, month = monthOf()) {
+  const inMonth = sortedResults(student).filter(r => monthOf(r.date) === month);
+  const values = inMonth.flatMap(r => SKILLS.map(k => r.skills[k])).filter(v => v !== null);
+  return {
+    percent: values.length ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10 : null,
+    homeworks: inMonth.length
+  };
+}
+
+/**
+ * The ranking of one level for one month: highest average first. Equal
+ * averages share a place (1, 1, 3). Children with no homework this month are
+ * listed after, without a place.
+ */
+export function leaderboard(students, level, month = monthOf()) {
+  const rows = students
+    .filter(s => s.active !== false && s.level === level)
+    .map(s => ({ id: String(s._id), name: s.name, level: s.level, ...monthAverage(s, month) }));
+  const ranked = rows.filter(r => r.percent !== null).sort((a, b) => b.percent - a.percent || a.name.localeCompare(b.name));
+  let place = 0;
+  ranked.forEach((r, i) => {
+    if (i === 0 || r.percent !== ranked[i - 1].percent) place = i + 1;
+    r.rank = place;
+  });
+  const unranked = rows.filter(r => r.percent === null).sort((a, b) => a.name.localeCompare(b.name)).map(r => ({ ...r, rank: null }));
+  return { level, month, rows: [...ranked, ...unranked] };
+}
+
+/** Everything one child's page shows, worked out once on the server. */
+export function dashboard(student) {
+  const results = sortedResults(student);
+
+  // The latest score of each type, and the one before it (for the arrow).
   const latest = {};
   const previous = {};
   for (const k of SKILLS) {
@@ -136,20 +191,31 @@ export function dashboard(student) {
   });
 
   return {
+    id: String(student._id),
     name: student.name,
     level: student.level,
     levels: LEVELS,
-    hasPhoto: Boolean(student.photo?.data?.length),
+    hasPhoto: Boolean(student.photo?.data?.length || student.photo?.updatedAt),
     photoVersion: student.photo?.updatedAt ? new Date(student.photo.updatedAt).getTime() : 0,
     skills: SKILLS,
     latest,
     previous,
     overall: avg(Object.values(latest)),
+    month: monthAverage(student),
     levelsStudied: levels,
     results,
     lastTest: results.length ? results[results.length - 1].date : null
   };
 }
+
+/** The short card of a child in the family list. */
+export const childCard = s => ({
+  id: String(s._id),
+  name: s.name,
+  level: s.level,
+  hasPhoto: Boolean(s.photo?.data?.length || s.photo?.updatedAt),
+  photoVersion: s.photo?.updatedAt ? new Date(s.photo.updatedAt).getTime() : 0
+});
 
 // ------------------------------------------------------------------ photos
 
@@ -166,4 +232,7 @@ export function readPhoto(dataUrl) {
   return { data, contentType: m[1] };
 }
 
-export default { newParentCode, isWeakCode, signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth, dashboard, readPhoto };
+export default {
+  newParentCode, isWeakCode, signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth,
+  familyChildren, familyOf, dashboard, childCard, leaderboard, monthAverage, monthOf, readPhoto
+};

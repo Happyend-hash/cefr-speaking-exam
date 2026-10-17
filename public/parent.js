@@ -1,10 +1,12 @@
 /*
  * Ota-onalar kabineti — the parents' page.
  *
- * A parent types the 6-digit code the teacher gave them and sees their child:
- * photo, name, current CEFR level, and the six skills (vocabulary, grammar,
- * listening, reading, speaking, writing) test by test and level by level.
- * "Remember on this phone" keeps them signed in, so they type the code once.
+ * A parent types the family's 6-digit code and sees their children. With
+ * brothers and sisters, a list of the children comes first; tapping a child
+ * opens their page: a big round photo, name, current CEFR level, the six
+ * homework types (vocabulary, grammar, listening, reading, speaking, writing)
+ * homework by homework and level by level, and this month's ranking of the
+ * child's level. "Remember on this phone" keeps them signed in.
  *
  * Buildless, like the rest of the client. All text is Uzbek.
  */
@@ -26,27 +28,38 @@
     noCode: 'Kodni bilmasangiz, farzandingizning ustoziga murojaat qiling.',
     home: 'Asosiy sahifa',
     signOut: 'Chiqish',
-    level: 'Hozirgi daraja',
+    myChildren: 'Farzandlarim',
+    pickChild: 'Natijalarini ko‘rish uchun farzandingizni tanlang.',
+    back: 'Farzandlarim',
+    level: 'Daraja',
     overall: 'Umumiy natija',
-    overallNote: 'Oltita ko‘nikma bo‘yicha oxirgi natijalar o‘rtachasi',
-    lastTest: 'Oxirgi test',
-    skillsTitle: 'Ko‘nikmalar',
-    skillsNote: 'Oxirgi test natijasi va undan oldingisiga nisbatan o‘zgarish',
+    overallNote: 'Oltita yo‘nalish bo‘yicha oxirgi natijalar o‘rtachasi',
+    lastTest: 'Oxirgi uy vazifasi',
+    monthAvg: m => `${m} oyi o‘rtachasi`,
+    place: (r, n) => `${r}-o‘rin · ${n} nafardan`,
+    noPlace: 'Bu oy hali uy vazifasi yo‘q',
+    skillsTitle: 'Yo‘nalishlar',
+    skillsNote: 'Oxirgi natija va undan oldingisiga nisbatan o‘zgarish',
     byLevelTitle: 'Darajalar bo‘yicha',
     byLevelNote: 'Har bir darajada o‘rtacha natija (%)',
-    historyTitle: 'Testlar tarixi',
-    tests: n => `${n} ta test`,
-    empty: 'Hali test natijalari kiritilmagan. Ustoz birinchi testdan keyin natijalarni kiritadi.',
+    historyTitle: 'Uy vazifalari tarixi',
+    tests: n => `${n} ta uy vazifasi`,
+    rankTitle: (lvl, m) => `${lvl} darajasi reytingi — ${m}`,
+    rankNote: 'Shu oydagi barcha uy vazifalari o‘rtachasi bo‘yicha',
+    rankNo: 'O‘rin', rankName: 'Ism', rankPct: 'Natija',
+    noHomework: 'vazifa yo‘q',
+    you: 'farzandingiz',
+    empty: 'Hali natijalar kiritilmagan. Ustoz birinchi uy vazifasidan keyin natijalarni kiritadi.',
     noScore: '—',
     first: 'birinchi natija',
     same: 'o‘zgarmagan',
-    sincePrev: 'oldingi testga nisbatan',
-    test: 'Test',
+    sincePrev: 'oldingisiga nisbatan',
+    test: 'Uy vazifasi',
     date: 'Sana',
     lvl: 'Daraja',
     good: 'Yaxshi', mid: 'O‘rtacha', low: 'E’tibor kerak',
     loading: 'Yuklanmoqda…',
-    footer: 'Natijalarni ustoz har bir testdan keyin kiritadi.'
+    footer: 'Natijalarni ustoz har bir darsdan keyin kiritadi.'
   };
 
   const SKILL = {
@@ -62,8 +75,13 @@
 
   const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const fmtDate = d => { const x = new Date(d); return `${x.getDate()}-${MONTHS[x.getMonth()]} ${x.getFullYear()}`; };
+  const monthName = ym => { const [y, m] = String(ym).split('-'); return `${MONTHS[Number(m) - 1] || ''} ${y}`; };
+  const monthOnly = ym => MONTHS[Number(String(ym).split('-')[1]) - 1] || '';
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   const band = v => (v === null || v === undefined ? '' : v >= 75 ? 'is-good' : v >= 50 ? 'is-mid' : 'is-low');
   const bandWord = v => (v === null || v === undefined ? '' : v >= 75 ? T.good : v >= 50 ? T.mid : T.low);
+  const initials = name => String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const pct = v => (v === null || v === undefined ? T.noScore : `${Number.isInteger(v) ? v : v.toFixed(1)}%`);
 
   // The token lives in localStorage when "remember" is ticked, otherwise only for this tab.
   const KEY = 'parentToken';
@@ -78,7 +96,11 @@
     clear() { try { localStorage.removeItem(KEY); sessionStorage.removeItem(KEY); } catch { /* nothing */ } }
   };
 
-  const state = { screen: 'login', token: null, data: null, photoUrl: '', error: '', busy: false, remember: true, code: '' };
+  const state = {
+    screen: 'login', token: null, children: [], child: null,
+    error: '', busy: false, remember: true, code: ''
+  };
+  const photos = new Map();   // "id:version" -> blob URL
 
   async function api(path, { method = 'GET', body } = {}) {
     const headers = {};
@@ -106,7 +128,7 @@
           <p class="pp-intro">${T.intro}</p>
           <form id="pp-form" novalidate>
             <label class="pp-code-label" for="pp-code">${T.codeLabel}</label>
-            <div class="pp-code" data-filled="${state.code.length}">
+            <div class="pp-code">
               <input id="pp-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*"
                 maxlength="6" value="${esc(state.code)}" aria-describedby="pp-err" autofocus>
               <div class="pp-code-boxes" aria-hidden="true">${[0, 1, 2, 3, 4, 5].map(i => `<span class="${i < state.code.length ? 'is-on' : ''} ${i === state.code.length ? 'is-next' : ''}">${esc(state.code[i] || '')}</span>`).join('')}</div>
@@ -148,7 +170,7 @@
       state.token = token;
       store.set(token, state.remember);
       state.code = '';
-      await loadDashboard();
+      await loadChildren();
     } catch (error) {
       state.error = error.message;
       state.busy = false;
@@ -160,41 +182,99 @@
 
   function signOut() {
     store.clear();
-    if (state.photoUrl) URL.revokeObjectURL(state.photoUrl);
-    Object.assign(state, { screen: 'login', token: null, data: null, photoUrl: '', error: '', busy: false, code: '' });
+    for (const url of photos.values()) URL.revokeObjectURL(url);
+    photos.clear();
+    Object.assign(state, { screen: 'login', token: null, children: [], child: null, error: '', busy: false, code: '' });
     render();
   }
 
-  // -------------------------------------------------------------- dashboard
+  function lostSignIn(error) {
+    store.clear();
+    Object.assign(state, {
+      screen: 'login', token: null, busy: false,
+      error: error.status === 401 ? error.message : 'Ulanishda xatolik. Internetni tekshirib, qayta urinib ko‘ring.'
+    });
+    render();
+  }
 
-  async function loadDashboard() {
+  // --------------------------------------------------------------- children
+
+  async function loadChildren() {
     state.screen = 'loading'; render();
     try {
-      state.data = await api('/me');
-      state.screen = 'dash';
+      const { children } = await api('/children');
+      state.children = children;
       state.busy = false;
+      if (children.length === 1) return openChild(children[0].id);
+      state.screen = 'children';
       render();
-      if (state.data.hasPhoto) loadPhoto();
-    } catch (error) {
-      store.clear();
-      Object.assign(state, { screen: 'login', token: null, busy: false, error: error.status === 401 ? error.message : 'Ulanishda xatolik. Internetni tekshirib, qayta urinib ko‘ring.' });
-      render();
-    }
+      children.forEach(loadPhoto);
+    } catch (error) { lostSignIn(error); }
   }
 
-  async function loadPhoto() {
+  async function openChild(id) {
+    state.screen = 'loading'; render();
     try {
-      const res = await fetch(`${API}/photo`, { headers: { Authorization: `Bearer ${state.token}` } });
-      if (!res.ok) return;
-      state.photoUrl = URL.createObjectURL(await res.blob());
-      const img = document.getElementById('pp-photo');
-      if (img) { img.src = state.photoUrl; img.closest('.pp-avatar')?.classList.add('has-photo'); }
-    } catch { /* initials stay */ }
+      state.child = await api(`/children/${id}`);
+      state.screen = 'child';
+      render();
+      window.scrollTo(0, 0);
+      loadPhoto(state.child);
+    } catch (error) { lostSignIn(error); }
   }
 
-  const initials = name => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  /** Photos need the sign-in, so they are fetched and shown from memory. */
+  async function loadPhoto(c) {
+    if (!c?.hasPhoto) return;
+    const key = `${c.id}:${c.photoVersion}`;
+    if (!photos.has(key)) {
+      try {
+        const res = await fetch(`${API}/children/${c.id}/photo`, { headers: { Authorization: `Bearer ${state.token}` } });
+        if (!res.ok) return;
+        photos.set(key, URL.createObjectURL(await res.blob()));
+      } catch { return; }
+    }
+    root.querySelectorAll(`[data-photo="${c.id}"]`).forEach(el => {
+      const img = el.querySelector('img');
+      img.src = photos.get(key);
+      el.classList.add('has-photo');
+    });
+  }
 
-  /** A small line of one skill across the tests (oldest to newest). */
+  const avatar = (c, cls = '') => {
+    const url = c.hasPhoto ? photos.get(`${c.id}:${c.photoVersion}`) : '';
+    return `<div class="pp-avatar ${cls} ${url ? 'has-photo' : ''}" data-photo="${esc(c.id)}">
+      <img alt="${esc(c.name)}" src="${esc(url || '')}"><span>${esc(initials(c.name))}</span></div>`;
+  };
+
+  const topBar = () => `
+    <header class="pp-bar-top">
+      <a class="pp-brand" href="/"><img src="/favicon.svg" alt="" width="30" height="30"><span>${T.brand}</span></a>
+      <button class="btn btn-ghost btn-sm" data-action="signout">${T.signOut}</button>
+    </header>`;
+
+  function childrenScreen() {
+    return `${topBar()}
+      <main class="pp-dash">
+        <section class="pp-family">
+          <h1>${T.myChildren}</h1>
+          <p>${T.pickChild}</p>
+          <div class="pp-kids">
+            ${state.children.map(c => `
+              <button class="pp-kid" data-child="${esc(c.id)}">
+                ${avatar(c, 'is-medium')}
+                <strong>${esc(c.name)}</strong>
+                <span class="pp-lvl">${esc(c.level)}</span>
+                <small>${esc(LEVEL_NAME[c.level] || '')}</small>
+              </button>`).join('')}
+          </div>
+        </section>
+      </main>`;
+  }
+
+  // -------------------------------------------------------------- one child
+
+  /** A small line of one type across the homeworks (oldest to newest). */
   function sparkline(values) {
     const pts = values.map((v, i) => [i, v]).filter(([, v]) => v !== null);
     if (pts.length < 2) return '';
@@ -222,9 +302,13 @@
     return `<span class="pp-delta ${d > 0 ? 'is-up' : 'is-down'}">${d > 0 ? '▲ +' : '▼ −'}${Math.abs(d)} <span class="pp-muted">${T.sincePrev}</span></span>`;
   }
 
-  function dashScreen() {
-    const d = state.data;
+  function childScreen() {
+    const d = state.child;
     const idx = d.levels.indexOf(d.level);
+    const board = d.leaderboard;
+    const me = board.rows.find(r => r.self);
+    const rankedCount = board.rows.filter(r => r.rank !== null).length;
+
     const ladder = d.levels.map((l, i) => `
       <li class="${i < idx ? 'is-done' : ''} ${i === idx ? 'is-now' : ''}">
         <span class="pp-step">${l}</span><span class="pp-step-name">${LEVEL_NAME[l] || ''}</span>
@@ -244,6 +328,20 @@
           ${change(v, d.previous[k])}
         </article>`;
     }).join('');
+
+    const ranking = board.rows.length ? `
+      <section class="pp-card" id="pp-rank">
+        <div class="pp-card-head"><h2>${T.rankTitle(esc(board.level), monthName(board.month))}</h2><p>${T.rankNote}</p></div>
+        <ol class="pp-rank">
+          ${board.rows.map(r => `
+            <li class="${r.mine ? 'is-mine' : ''} ${r.rank === null ? 'is-unranked' : ''} ${r.rank && r.rank <= 3 ? `is-top is-top${r.rank}` : ''}">
+              <span class="pp-rank-no">${r.rank ?? '—'}</span>
+              <span class="pp-rank-name">${esc(r.name)}${r.mine ? ` <em>${T.you}</em>` : ''}</span>
+              <span class="pp-lvl">${esc(r.level)}</span>
+              <span class="pp-rank-pct ${band(r.percent)}">${r.percent === null ? `<small>${T.noHomework}</small>` : pct(r.percent)}</span>
+            </li>`).join('')}
+        </ol>
+      </section>` : '';
 
     const byLevel = d.levelsStudied.length ? `
       <section class="pp-card">
@@ -274,40 +372,35 @@
         </div>
       </section>` : '';
 
-    return `
-      <header class="pp-bar-top">
-        <a class="pp-brand" href="/"><img src="/favicon.svg" alt="" width="30" height="30"><span>${T.brand}</span></a>
-        <button class="btn btn-ghost btn-sm" data-action="signout">${T.signOut}</button>
-      </header>
+    return `${topBar()}
       <main class="pp-dash">
+        ${state.children.length > 1 ? `<button class="pp-back" data-action="back">← ${T.back}</button>` : ''}
         <section class="pp-hero">
-          <div class="pp-avatar ${state.photoUrl ? 'has-photo' : ''}">
-            <img id="pp-photo" alt="${esc(d.name)}" src="${esc(state.photoUrl)}">
-            <span>${esc(initials(d.name))}</span>
-          </div>
+          ${avatar(d, 'is-big')}
           <h1>${esc(d.name)}</h1>
           <div class="pp-level-now">${T.level}: <strong>${esc(d.level)}</strong> · ${esc(LEVEL_NAME[d.level] || '')}</div>
           <ol class="pp-ladder">${ladder}</ol>
         </section>
 
-        ${d.results.length ? `
         <section class="pp-overall">
-          <div class="pp-ring ${band(d.overall)}" style="--p:${d.overall ?? 0}">
-            <div><strong>${d.overall ?? T.noScore}</strong>${d.overall !== null ? '<small>%</small>' : ''}</div>
+          <div class="pp-ring ${band(d.month.percent)}" style="--p:${d.month.percent ?? 0}">
+            <div><strong>${d.month.percent === null ? T.noScore : Math.round(d.month.percent)}</strong>${d.month.percent !== null ? '<small>%</small>' : ''}</div>
           </div>
           <div class="pp-overall-text">
-            <h2>${T.overall}</h2>
-            <p>${T.overallNote}</p>
+            <h2>${cap(T.monthAvg(monthOnly(board.month)))}</h2>
+            <p class="pp-place">${me && me.rank ? `<a href="#pp-rank">${T.place(me.rank, rankedCount)}</a>` : T.noPlace}</p>
             ${d.lastTest ? `<p class="pp-muted">${T.lastTest}: <strong>${fmtDate(d.lastTest)}</strong></p>` : ''}
           </div>
         </section>
 
+        ${d.results.length ? `
         <section class="pp-card">
           <div class="pp-card-head"><h2>${T.skillsTitle}</h2><p>${T.skillsNote}</p></div>
           <div class="pp-skills">${skillCards}</div>
-        </section>
+        </section>` : `<section class="pp-card pp-empty"><p>${T.empty}</p></section>`}
+        ${ranking}
         ${byLevel}
-        ${history}` : `<section class="pp-card pp-empty"><p>${T.empty}</p></section>`}
+        ${history}
 
         <p class="pp-foot">${T.footer}</p>
       </main>`;
@@ -316,13 +409,18 @@
   // ----------------------------------------------------------------- render
 
   function render() {
-    root.innerHTML = state.screen === 'dash' ? dashScreen()
+    root.innerHTML = state.screen === 'child' ? childScreen()
+      : state.screen === 'children' ? childrenScreen()
       : state.screen === 'loading' ? `<main class="pp-loading"><span class="spinner"></span><p>${T.loading}</p></main>`
       : loginScreen();
     if (state.screen === 'login') wireLogin();
     root.querySelector('[data-action="signout"]')?.addEventListener('click', signOut);
+    root.querySelector('[data-action="back"]')?.addEventListener('click', () => {
+      state.screen = 'children'; state.child = null; render(); state.children.forEach(loadPhoto);
+    });
+    root.querySelectorAll('[data-child]').forEach(el => el.addEventListener('click', () => openChild(el.dataset.child)));
   }
 
   const saved = store.get();
-  if (saved) { state.token = saved; loadDashboard(); } else render();
+  if (saved) { state.token = saved; loadChildren(); } else render();
 })();

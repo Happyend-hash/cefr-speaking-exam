@@ -56,7 +56,7 @@
 
 .pp-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 8px 0 4px; }
 .pp-avatar {
-  position: relative; width: 132px; height: 132px; border-radius: 50%;
+  position: relative; width: 132px; height: 132px; border-radius: 50%; flex: none;
   background: linear-gradient(135deg, var(--indigo-500), var(--indigo-700));
   box-shadow: 0 0 0 5px #fff, 0 12px 30px rgba(67, 56, 202, .28); overflow: hidden;
   display: grid; place-items: center;
@@ -143,3 +143,50 @@ td.is-low { color: var(--low); background: color-mix(in srgb, var(--low-bg) 60%,
 .pp-lvl { display: inline-block; padding: 2px 8px; border-radius: 8px; background: var(--indigo-50); color: var(--indigo-700); font-weight: 800; font-size: 13px; }
 .pp-nowrap { white-space: nowrap; }
 .pp-foot { text-align: center; color: var(--ink-faint); font-size: 13px; }
+
+/* ---- families: the list of children, and the big round face */
+.pp-avatar.is-big { width: min(62vw, 220px); height: min(62vw, 220px); box-shadow: 0 0 0 6px #fff, 0 18px 40px rgba(67, 56, 202, .30); }
+.pp-avatar.is-big span { font-size: 72px; }
+.pp-avatar.is-medium { width: 128px; height: 128px; }
+.pp-family { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding-top: 8px; }
+.pp-family h1 { font-size: 26px; letter-spacing: -.02em; }
+.pp-family > p { color: var(--ink-soft); }
+.pp-kids { display: grid; gap: 14px; width: 100%; margin-top: 14px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.pp-kid {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 14px 18px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow);
+  font: inherit; color: var(--ink); cursor: pointer; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.pp-kid:hover { transform: translateY(-2px); border-color: var(--indigo-200); box-shadow: var(--shadow-lg); }
+.pp-kid:focus-visible { outline: 3px solid var(--indigo-500); outline-offset: 3px; }
+.pp-kid strong { font-size: 18px; margin-top: 6px; }
+.pp-kid small { color: var(--ink-faint); }
+.pp-back {
+  align-self: flex-start; border: 0; background: none; padding: 4px 0; font: inherit; font-weight: 700;
+  color: var(--indigo-700); cursor: pointer;
+}
+.pp-place { font-size: 16px !important; color: var(--ink) !important; font-weight: 700; }
+.pp-place a { color: var(--indigo-700); text-decoration: none; border-bottom: 2px solid var(--indigo-200); }
+
+/* ---- the monthly ranking of a level */
+.pp-rank { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pp-rank li {
+  display: grid; grid-template-columns: 40px 1fr auto 76px; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 12px; background: var(--ground); border: 1px solid transparent;
+  font-variant-numeric: tabular-nums;
+}
+.pp-rank-no {
+  width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 800; background: var(--surface); color: var(--ink-soft); border: 1px solid var(--line);
+}
+.pp-rank li.is-top1 .pp-rank-no { background: #fef3c7; color: #a16207; border-color: #fde68a; }
+.pp-rank li.is-top2 .pp-rank-no { background: #eef1f5; color: #475569; border-color: #d6dbe3; }
+.pp-rank li.is-top3 .pp-rank-no { background: #fbeee4; color: #9a4a1e; border-color: #f2d3bd; }
+.pp-rank-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.pp-rank-name em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--indigo-700); background: var(--indigo-50); padding: 2px 8px; border-radius: 99px; margin-left: 4px; white-space: nowrap; }
+.pp-rank-pct { text-align: right; font-weight: 800; }
+.pp-rank-pct.is-good { color: var(--good); } .pp-rank-pct.is-mid { color: var(--mid); } .pp-rank-pct.is-low { color: var(--low); }
+.pp-rank-pct small { font-weight: 500; color: var(--ink-faint); font-size: 11px; white-space: nowrap; }
+.pp-rank li.is-mine { background: var(--indigo-50); border-color: var(--indigo-200); }
+.pp-rank li.is-unranked { opacity: .75; }
+@media (max-width: 420px) { .pp-rank li { grid-template-columns: 32px 1fr auto auto; gap: 8px; padding: 10px; } }

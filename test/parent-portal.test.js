@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isWeakCode, newParentCode, signInBlocked, noteWrongCode, noteRightCode, dashboard, readPhoto,
-  MAX_TRIES, GLOBAL_MAX_FAILS, _guard
+  leaderboard, monthAverage, monthOf, familyOf, MAX_TRIES, GLOBAL_MAX_FAILS, _guard
 } from '../services/ParentPortal.js';
 
 /** The parents' page: 6-digit codes, guessing kept out, and the numbers shown. */
@@ -82,4 +82,45 @@ test('photos: only real JPEG, PNG or WebP, and not too big', () => {
   assert.throws(() => readPhoto(`data:image/jpeg;base64,${Buffer.from('hello').toString('base64')}`), /not an image/);
   const big = Buffer.alloc(700 * 1024); big[0] = 0xff; big[1] = 0xd8;
   assert.throws(() => readPhoto(`data:image/jpeg;base64,${big.toString('base64')}`), /too large/);
+});
+
+test('months are Tashkent months', () => {
+  assert.equal(monthOf('2026-10-31T18:59:00Z'), '2026-10');
+  assert.equal(monthOf('2026-10-31T19:00:00Z'), '2026-11', 'midnight in Tashkent');
+});
+
+const hw = (id, date, skills) => ({ _id: id, date: new Date(date), level: 'B1', skills });
+const kid = (id, name, level, results, extra = {}) => ({ _id: id, name, level, active: true, results, ...extra });
+
+test("a month's average counts every homework percent of that month only", () => {
+  const s = kid('a', 'Aziza', 'B1', [
+    hw('1', '2026-09-28T10:00:00Z', { vocabulary: 10 }),
+    hw('2', '2026-10-02T10:00:00Z', { vocabulary: 80, grammar: 70 }),
+    hw('3', '2026-10-09T10:00:00Z', { listening: 90 })
+  ]);
+  assert.deepEqual(monthAverage(s, '2026-10'), { percent: 80, homeworks: 2 });
+  assert.deepEqual(monthAverage(s, '2026-08'), { percent: null, homeworks: 0 });
+});
+
+test('the ranking: one level, this month, highest first, equal averages share a place', () => {
+  const M = '2026-10';
+  const students = [
+    kid('a', 'Aziza', 'B1', [hw('1', '2026-10-02T10:00:00Z', { vocabulary: 90 })]),
+    kid('b', 'Bekzod', 'B1', [hw('2', '2026-10-03T10:00:00Z', { grammar: 75, reading: 85 })]),
+    kid('c', 'Dilnoza', 'B1', [hw('3', '2026-10-04T10:00:00Z', { speaking: 80 })]),
+    kid('d', 'Javlon', 'B1', [hw('4', '2026-09-30T10:00:00Z', { writing: 99 })]),
+    kid('e', 'Malika', 'A2', [hw('5', '2026-10-05T10:00:00Z', { vocabulary: 100 })]),
+    kid('f', 'Sardor', 'B1', [hw('6', '2026-10-06T10:00:00Z', { vocabulary: 95 })], { active: false })
+  ];
+  const b = leaderboard(students, 'B1', M);
+  assert.deepEqual(b.rows.map(r => [r.name, r.rank, r.percent]), [
+    ['Aziza', 1, 90], ['Bekzod', 2, 80], ['Dilnoza', 2, 80], ['Javlon', null, null]
+  ]);
+  assert.ok(!b.rows.some(r => r.name === 'Malika'), 'other levels are not in it');
+  assert.ok(!b.rows.some(r => r.name === 'Sardor'), 'paused children are not in it');
+});
+
+test('a family is its familyId, or the child itself when added alone', () => {
+  assert.equal(familyOf({ _id: 'x1', familyId: 'f9' }), 'f9');
+  assert.equal(familyOf({ _id: 'x1' }), 'x1');
 });

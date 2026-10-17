@@ -56,10 +56,15 @@
     editingSection: null,     // "testId:sectionIndex"
     addingQuestionTo: null,   // "testId:sectionIndex"
     editingQuestion: null,    // "testId:sectionIndex:qIndex"
-    csOpen: false,           // parents' page: course students card
-    cs: null,                // { levels, skills, students }
-    csAddTest: null,         // child id whose "add test" form is open
-    csShow: null,            // child id whose tests are listed
+    csOpen: false,           // course students & homework card
+    cs: null,                // { levels, skills, month, students, leaderboards }
+    csNew: { name: '', level: 'A1', family: '', photo: '' },   // the "add student" form
+    csSel: null,             // the student whose panel is open
+    csTypes: new Set(),      // homework types ticked for today
+    csVals: {},              // their percents, as typed
+    csTitle: '',
+    csDate: '',
+    csHistory: false,
     usage: null,             // the "Website use" numbers, refreshed every 2 min
     usageError: '',
     loading: false,
@@ -1334,7 +1339,7 @@
     if (action === 'sponsors-open') return loadSponsors({ open: true });
     if (action === 'sponsors-close') return setState({ sponsorsOpen: false });
     if (action === 'cs-open') return loadCourse({ open: true });
-    if (action === 'cs-close') return setState({ csOpen: false, csAddTest: null, csShow: null });
+    if (action === 'cs-close') return setState({ csOpen: false, csSel: null });
     if (action === 'block-all') return changeAccessForAll('block');
     if (action === 'unblock-all') return changeAccessForAll('unblock');
   }
@@ -1342,101 +1347,173 @@
   // ----------------------------------------------- parents' page: course students
 
   /**
-   * The children in the course, as their parents see them on /ota-ona:
-   * name, photo, CEFR level, a 6-digit parent code, and the six scores of
-   * every class test (percent). Parents need no account — only the code.
+   * The children in the course, as their parents see them on /ota-ona.
+   * One table per level; click a child to enter today's homework (tick the
+   * types given, type the percent of each, Save), change their details, or
+   * remove them. Brothers and sisters share one family code. The ranking is
+   * per level, this month, by the average of all homework percents.
    */
   const CS_SKILLS = [
-    ['vocabulary', 'Vocabulary (Lug‘at)'], ['grammar', 'Grammar'], ['listening', 'Listening'],
-    ['reading', 'Reading'], ['speaking', 'Speaking'], ['writing', 'Writing']
+    ['vocabulary', 'Vocabulary', 'Lug‘at'], ['grammar', 'Grammar', 'Grammatika'], ['listening', 'Listening', 'Tinglab tushunish'],
+    ['reading', 'Reading', 'O‘qib tushunish'], ['speaking', 'Speaking', 'Gapirish'], ['writing', 'Writing', 'Yozish']
   ];
+  const CS_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const csPhotos = new Map();   // "id:version" -> blob URL
 
   const csInitials = name => String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
-  const csToday = () => new Date().toISOString().slice(0, 10);
+  const csToday = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const csMonthName = ym => { const [y, m] = String(ym || '').split('-'); return `${CS_MONTHS[Number(m) - 1] || ''} ${y || ''}`; };
+  const csPct = v => (v === null || v === undefined ? '—' : `${Number.isInteger(v) ? v : v.toFixed(1)}%`);
+  const csBand = v => (v === null || v === undefined ? '' : v >= 75 ? 'is-good' : v >= 50 ? 'is-mid' : 'is-low');
+  const csFace = (s, size = 40) => {
+    const url = s?.hasPhoto ? csPhotos.get(`${s.id}:${s.photoVersion}`) : '';
+    return `<span class="cs-face" style="width:${size}px;height:${size}px">${url ? `<img src="${esc(url)}" alt="">` : esc(csInitials(s?.name))}</span>`;
+  };
 
   function courseCard() {
     if (!state.csOpen) {
       return `<div class="card" style="margin-top:28px">
-        <h2 style="font-size:18px">Parents' page — course students</h2>
+        <h2 style="font-size:18px">Course students &amp; homework</h2>
         <p class="muted" style="margin-top:6px">
-          Add the children in your course, their photo and level, and their class test scores.
-          Each child gets a 6-digit code; parents type it at <strong>${esc(location.host)}/ota-ona</strong> to see their child's progress.
+          Your course students by level, their daily homework results and the monthly ranking.
+          Parents type their family's 6-digit code at <strong>${esc(location.host)}/ota-ona</strong> to see their children.
         </p>
         <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="cs-open">Open course students</button>
       </div>`;
     }
-    const data = state.cs || { students: [], levels: ['A1', 'A2', 'B1', 'B2', 'C1'] };
+    const data = state.cs || { students: [], levels: ['A1', 'A2', 'B1', 'B2', 'C1'], leaderboards: [], month: '' };
     const levels = data.levels;
+    const byId = new Map(data.students.map(s => [s.id, s]));
+    const familySize = fam => data.students.filter(s => s.family === fam).length;
     const levelOptions = sel => levels.map(l => `<option ${l === sel ? 'selected' : ''}>${l}</option>`).join('');
+    // For a student already in a family, their brother or sister is shown as chosen.
+    const familyOptions = (exceptId, selected = '') => {
+      const me = exceptId ? byId.get(exceptId) : null;
+      const sibling = me ? data.students.find(s => s.id !== me.id && s.family === me.family) : null;
+      const chosen = selected || sibling?.id || '';
+      const first = !me ? 'New family (new code)' : sibling ? 'Leave the family (own new code)' : 'Own family (own code)';
+      return `<option value="">${first}</option>` + data.students
+        .filter(s => s.id !== exceptId)
+        .map(s => `<option value="${esc(s.id)}" ${chosen === s.id ? 'selected' : ''}>Same family as ${esc(s.name)} (code ${esc(s.parentCode)})</option>`).join('');
+    };
 
-    const rows = data.students.map(s => {
-      const photo = csPhotos.get(`${s.id}:${s.photoVersion}`);
-      const adding = state.csAddTest === s.id;
-      const showing = state.csShow === s.id;
-      const scores = CS_SKILLS.map(([k]) => s.latest?.[k]).filter(v => v !== null && v !== undefined);
-      return `<div class="cs-row ${s.active ? '' : 'is-paused'}">
-        <div class="cs-main">
-          <div class="cs-photo">${photo ? `<img src="${esc(photo)}" alt="">` : `<span>${esc(csInitials(s.name))}</span>`}</div>
-          <div class="cs-info">
-            <div class="cs-name"><strong>${esc(s.name)}</strong> ${s.active ? '' : '<span class="tag">paused</span>'}</div>
-            <div class="cs-meta">
-              <label>Level <select data-cs-level="${esc(s.id)}">${levelOptions(s.level)}</select></label>
-              <span>${s.results.length} test${s.results.length === 1 ? '' : 's'}${scores.length ? ` · overall <strong>${s.overall}%</strong>` : ''}</span>
-              <span class="muted">${s.lastParentVisit ? `parents last opened ${esc(new Date(s.lastParentVisit).toLocaleDateString())}` : 'parents have not opened it yet'}</span>
-            </div>
-          </div>
-          <div class="cs-code">
-            <span class="muted" style="font-size:12px">Parent code</span>
-            <strong>${esc(s.parentCode.slice(0, 3))} ${esc(s.parentCode.slice(3))}</strong>
-            <div class="row" style="gap:6px">
-              <button class="btn btn-ghost btn-sm" data-cs-copy="${esc(s.parentCode)}" data-name="${esc(s.name)}">Copy message</button>
-              <button class="btn btn-ghost btn-sm" data-cs-newcode="${esc(s.id)}" data-name="${esc(s.name)}">New code</button>
-            </div>
-          </div>
+    // --- adding a child
+    const add = state.csNew;
+    const addForm = `<form id="cs-add" class="cs-add">
+      <label class="cs-add-photo" title="Add a photo">
+        ${add.photo ? `<img src="${esc(add.photo)}" alt="">` : '<span>+ Photo</span>'}
+        <input type="file" accept="image/jpeg,image/png,image/webp" id="cs-add-photo" style="display:none">
+      </label>
+      <div class="cs-add-fields">
+        <input id="cs-add-name" type="text" maxlength="80" placeholder="Child's full name" value="${esc(add.name)}" required>
+        <div class="cs-add-row">
+          <select id="cs-add-level" aria-label="Level">${levelOptions(add.level)}</select>
+          <select id="cs-add-family" aria-label="Family">${familyOptions('', add.family)}</select>
+          <button class="btn btn-sm" type="submit">Add student</button>
         </div>
-        <div class="row" style="gap:6px;flex-wrap:wrap">
-          <button class="btn btn-sm" data-cs-addtest="${esc(s.id)}">${adding ? 'Cancel' : '+ Add test scores'}</button>
-          <button class="btn btn-ghost btn-sm" data-cs-show="${esc(s.id)}" ${s.results.length ? '' : 'disabled'}>${showing ? 'Hide tests' : 'Show tests'}</button>
-          <label class="btn btn-ghost btn-sm" style="cursor:pointer">${s.hasPhoto ? 'Change photo' : 'Add photo'}
-            <input type="file" accept="image/jpeg,image/png,image/webp" data-cs-photo="${esc(s.id)}" style="display:none"></label>
-          <button class="btn btn-ghost btn-sm" data-cs-active="${esc(s.id)}" data-active="${s.active ? '1' : ''}">${s.active ? 'Pause code' : 'Turn code on'}</button>
-          <button class="btn btn-ghost btn-sm" data-cs-delete="${esc(s.id)}" data-name="${esc(s.name)}">Delete</button>
-        </div>
-        ${adding ? `<form class="cs-test" data-cs-testform="${esc(s.id)}">
-          <div class="cs-test-top">
-            <label>Date <input type="date" name="date" value="${csToday()}" required></label>
-            <label>Test name <input type="text" name="title" maxlength="80" placeholder="e.g. Unit 4 test"></label>
-            <label>Level <select name="level">${levelOptions(s.level)}</select></label>
-          </div>
-          <div class="cs-test-grid">
-            ${CS_SKILLS.map(([k, label]) => `<label>${label}<span class="cs-pct"><input type="number" name="${k}" min="0" max="100" step="1" inputmode="numeric" placeholder="—"><span>%</span></span></label>`).join('')}
-          </div>
-          <p class="muted" style="font-size:13px">Leave a box empty if that skill wasn't tested.</p>
-          <button class="btn btn-sm" type="submit">Save test</button>
-        </form>` : ''}
-        ${showing && s.results.length ? `<div class="cs-results"><table>
-          <thead><tr><th>Date</th><th>Test</th><th>Level</th>${CS_SKILLS.map(([, l]) => `<th>${esc(l.split(' ')[0])}</th>`).join('')}<th></th></tr></thead>
-          <tbody>${[...s.results].reverse().map(r => `<tr>
-            <td>${esc(new Date(r.date).toLocaleDateString())}</td><td>${esc(r.title || '—')}</td><td>${esc(r.level)}</td>
-            ${CS_SKILLS.map(([k]) => `<td>${r.skills[k] ?? '—'}</td>`).join('')}
-            <td><button class="btn btn-ghost btn-sm" data-cs-deltest="${esc(s.id)}:${esc(r.id)}">Delete</button></td></tr>`).join('')}
-          </tbody></table></div>` : ''}
+      </div>
+    </form>`;
+
+    // --- one table per level
+    const tables = levels.map(level => {
+      const list = data.students.filter(s => s.level === level);
+      if (!list.length) return '';
+      return `<div class="cs-level">
+        <h3><span class="tag">${level}</span> ${list.length} student${list.length === 1 ? '' : 's'}</h3>
+        <div class="cs-table-wrap"><table class="cs-table">
+          <thead><tr><th></th><th>Name</th><th>${esc(csMonthName(data.month).split(' ')[0])} average</th><th>Homeworks</th><th>Last homework</th><th>Parent code</th></tr></thead>
+          <tbody>${list.map(s => {
+            const last = s.results.length ? s.results[s.results.length - 1].date : null;
+            const open = state.csSel === s.id;
+            return `<tr class="cs-tr ${open ? 'is-open' : ''} ${s.active ? '' : 'is-paused'}" data-cs-sel="${esc(s.id)}" tabindex="0">
+                <td>${csFace(s, 36)}</td>
+                <td><strong>${esc(s.name)}</strong>${s.active ? '' : ' <span class="tag">paused</span>'}${familySize(s.family) > 1 ? ' <span class="cs-fam" title="Shares the parent code with brothers/sisters">family</span>' : ''}</td>
+                <td class="cs-num ${csBand(s.month.percent)}">${csPct(s.month.percent)}</td>
+                <td class="cs-num">${s.month.homeworks}</td>
+                <td>${last ? esc(new Date(last).toLocaleDateString()) : '<span class="muted">—</span>'}</td>
+                <td class="cs-code-cell">${esc(s.parentCode)}</td>
+              </tr>
+              ${open ? `<tr class="cs-panel-row"><td colspan="6">${studentPanel(s, { levelOptions, familyOptions, byId })}</td></tr>` : ''}`;
+          }).join('')}</tbody>
+        </table></div>
       </div>`;
     }).join('');
 
+    // --- the ranking
+    const boards = (data.leaderboards || []).map(b => `<div class="cs-board">
+        <h4><span class="tag">${esc(b.level)}</span></h4>
+        <ol>${b.rows.map(r => `<li class="${r.rank === null ? 'is-unranked' : ''}">
+          <span class="cs-rank">${r.rank ?? '—'}</span><span class="cs-rank-name">${esc(r.name)}</span>
+          <span class="tag">${esc(r.level)}</span><span class="cs-rank-pct ${csBand(r.percent)}">${r.percent === null ? '<small>no homework</small>' : csPct(r.percent)}</span></li>`).join('')}</ol>
+      </div>`).join('');
+
     return `<div class="card" style="margin-top:28px">
       <div class="row" style="justify-content:space-between">
-        <h2 style="font-size:18px">Parents' page — course students (${data.students.length})</h2>
+        <h2 style="font-size:18px">Course students &amp; homework (${data.students.length})</h2>
         <button class="btn btn-ghost btn-sm" data-action="cs-close">Close</button>
       </div>
-      <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type the child's 6-digit code. "New code" signs out every phone that used the old one.</p>
-      <form id="cs-add" class="cs-add">
-        <input name="name" type="text" maxlength="80" placeholder="Child's full name" required>
-        <select name="level">${levelOptions('A1')}</select>
-        <button class="btn btn-sm" type="submit">Add child</button>
+      <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type their family's code. Click a student to enter today's homework.</p>
+      ${addForm}
+      ${tables || '<p class="muted" style="margin-top:12px">No students yet. Add the first one above.</p>'}
+      ${boards ? `<h3 class="cs-board-title">Ranking — ${esc(csMonthName(data.month))}</h3>
+        <p class="muted" style="font-size:13px">Average of every homework percent this month, per level. Parents see their child's level ranking.</p>
+        <div class="cs-boards">${boards}</div>` : ''}
+    </div>`;
+  }
+
+  /** The panel under a clicked student: today's homework, then details. */
+  function studentPanel(s, { levelOptions, familyOptions }) {
+    const types = state.csTypes;
+    const vals = state.csVals;
+    return `<div class="cs-panel">
+      <div class="cs-panel-head">
+        ${csFace(s, 64)}
+        <div>
+          <div class="cs-panel-name">${esc(s.name)}</div>
+          <div class="muted" style="font-size:13px">${s.results.length} homework${s.results.length === 1 ? '' : 's'} in total · parents ${s.lastParentVisit ? `last opened ${esc(new Date(s.lastParentVisit).toLocaleDateString())}` : 'have not opened it yet'}</div>
+        </div>
+      </div>
+
+      <form class="cs-hw" id="cs-hw">
+        <div class="cs-hw-top">
+          <strong>Homework results</strong>
+          <label>Date <input type="date" id="cs-hw-date" value="${esc(state.csDate || csToday())}"></label>
+          <label>Note <input type="text" id="cs-hw-title" maxlength="80" placeholder="optional, e.g. Unit 5" value="${esc(state.csTitle || '')}"></label>
+        </div>
+        <p class="muted" style="font-size:13px">Choose the homework types you gave, then type each result in percent.</p>
+        <div class="cs-types">${CS_SKILLS.map(([k, en, uz]) => `<button type="button" class="cs-type ${types.has(k) ? 'is-on' : ''}" data-cs-type="${k}" aria-pressed="${types.has(k)}">${en}<small>${uz}</small></button>`).join('')}
+          <button type="button" class="cs-type cs-type-all" data-cs-type="all">${types.size === CS_SKILLS.length ? 'Clear all' : 'Choose all'}</button>
+        </div>
+        ${types.size ? `<div class="cs-vals">${CS_SKILLS.filter(([k]) => types.has(k)).map(([k, en]) => `
+          <label>${en}<span class="cs-pct"><input type="number" min="0" max="100" step="1" inputmode="numeric" data-cs-val="${k}" value="${esc(vals[k] ?? '')}" required><span>%</span></span></label>`).join('')}
+        </div>
+        <button class="btn" type="submit">Save homework</button>` : ''}
       </form>
-      ${rows || '<p class="muted" style="margin-top:12px">No children yet. Add the first one above.</p>'}
+
+      <div class="cs-details">
+        <label>Level <select data-cs-level="${esc(s.id)}">${levelOptions(s.level)}</select></label>
+        <label>Family <select data-cs-family="${esc(s.id)}">${familyOptions(s.id, '')}</select></label>
+        <div class="cs-code-box"><span class="muted">Parent code</span><strong>${esc(s.parentCode.slice(0, 3))} ${esc(s.parentCode.slice(3))}</strong></div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" data-cs-copy="${esc(s.parentCode)}" data-name="${esc(s.name)}">Copy message for parents</button>
+          <button class="btn btn-ghost btn-sm" data-cs-newcode="${esc(s.id)}" data-name="${esc(s.name)}">New code</button>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer">${s.hasPhoto ? 'Change photo' : 'Add photo'}
+            <input type="file" accept="image/jpeg,image/png,image/webp" data-cs-photo="${esc(s.id)}" style="display:none"></label>
+          <button class="btn btn-ghost btn-sm" data-cs-active="${esc(s.id)}" data-active="${s.active ? '1' : ''}">${s.active ? 'Pause' : 'Turn back on'}</button>
+          <button class="btn btn-ghost btn-sm cs-danger" data-cs-delete="${esc(s.id)}" data-name="${esc(s.name)}">Remove student</button>
+        </div>
+      </div>
+
+      ${s.results.length ? `<details class="cs-history" ${state.csHistory ? 'open' : ''}>
+        <summary>Homework history (${s.results.length})</summary>
+        <div class="cs-table-wrap"><table class="cs-table cs-table-sm">
+          <thead><tr><th>Date</th><th>Note</th><th>Level</th>${CS_SKILLS.map(([, en]) => `<th>${en}</th>`).join('')}<th></th></tr></thead>
+          <tbody>${[...s.results].reverse().map(r => `<tr>
+            <td>${esc(new Date(r.date).toLocaleDateString())}</td><td>${esc(r.title || '—')}</td><td>${esc(r.level)}</td>
+            ${CS_SKILLS.map(([k]) => `<td class="cs-num ${csBand(r.skills[k])}">${r.skills[k] ?? '—'}</td>`).join('')}
+            <td><button class="btn btn-ghost btn-sm" data-cs-deltest="${esc(s.id)}:${esc(r.id)}">Delete</button></td></tr>`).join('')}
+          </tbody></table></div>
+      </details>` : ''}
     </div>`;
   }
 
@@ -1463,14 +1540,14 @@
     if (missing.length) render();
   }
 
-  /** Make the photo small and square before upload: 480 px, JPEG. */
+  /** Make the photo small and square before upload: 480 px, JPEG, centred a little above the middle (faces). */
   function shrinkPhoto(file) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
         const side = Math.min(img.naturalWidth, img.naturalHeight);
         const sx = (img.naturalWidth - side) / 2;
-        const sy = Math.max(0, (img.naturalHeight - side) / 2 - side * 0.08);  // a little above centre: faces
+        const sy = Math.max(0, (img.naturalHeight - side) / 2 - side * 0.08);
         const c = document.createElement('canvas');
         c.width = c.height = Math.min(480, side);
         c.getContext('2d').drawImage(img, sx, sy, side, side, 0, 0, c.width, c.height);
@@ -1482,63 +1559,119 @@
     });
   }
 
+  /** Every change returns the whole list again, so the tables and ranking update at once. */
+  async function csCall(path, opts, notice, extra = {}) {
+    try {
+      const data = await api(path, opts);
+      setState({ cs: data, notice: notice || '', error: '', ...extra });
+      loadCoursePhotos();
+      return true;
+    } catch (error) {
+      setState({ error: error.message });
+      return false;
+    }
+  }
+
   function wireCourseAdmin() {
     if (!state.csOpen) return;
-    const reload = () => loadCourse({});
-    const call = async (path, opts, notice) => {
-      try { await api(path, opts); if (notice) state.notice = notice; reload(); }
-      catch (error) { setState({ error: error.message }); }
-    };
-    document.getElementById('cs-add')?.addEventListener('submit', e => {
-      e.preventDefault();
-      const f = new FormData(e.target);
-      call('/admin/course-students', { method: 'POST', body: { name: f.get('name'), level: f.get('level') } }, 'Child added — copy the parent code and send it to the parents.');
+    const $ = id => document.getElementById(id);
+
+    // adding a child (the typed name is kept in state so a re-draw never loses it)
+    $('cs-add-name')?.addEventListener('input', e => { state.csNew.name = e.target.value; });
+    $('cs-add-level')?.addEventListener('change', e => { state.csNew.level = e.target.value; });
+    $('cs-add-family')?.addEventListener('change', e => {
+      state.csNew.family = e.target.value;
+      const sib = state.cs?.students.find(s => s.id === e.target.value);
+      if (sib) { state.csNew.level = state.csNew.level || sib.level; }
     });
+    $('cs-add-photo')?.addEventListener('change', async e => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try { state.csNew.photo = await shrinkPhoto(file); render(); } catch (error) { setState({ error: error.message }); }
+    });
+    $('cs-add')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const n = state.csNew;
+      if (!n.name.trim()) return setState({ error: 'Type the child’s name.' });
+      const ok = await csCall('/admin/course-students', {
+        method: 'POST', body: { name: n.name, level: n.level, photo: n.photo || undefined, sameFamilyAs: n.family || undefined }
+      }, `${n.name.trim()} added — open them below to copy the parent code.`);
+      if (ok) { state.csNew = { name: '', level: n.level, family: '', photo: '' }; render(); }
+    });
+
+    // opening a student
+    root.querySelectorAll('[data-cs-sel]').forEach(el => {
+      const open = () => {
+        const id = el.dataset.csSel;
+        setState(state.csSel === id ? { csSel: null } : { csSel: id, csTypes: new Set(), csVals: {}, csTitle: '', csDate: '' });
+      };
+      el.addEventListener('click', open);
+      el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
+    });
+
+    // today's homework
+    const id = state.csSel;
+    root.querySelectorAll('[data-cs-type]').forEach(el => el.addEventListener('click', () => {
+      const k = el.dataset.csType;
+      const types = new Set(state.csTypes);
+      if (k === 'all') { if (types.size === CS_SKILLS.length) types.clear(); else CS_SKILLS.forEach(([s]) => types.add(s)); }
+      else if (types.has(k)) types.delete(k); else types.add(k);
+      setState({ csTypes: types });
+      root.querySelector(`[data-cs-val="${k}"]`)?.focus();
+    }));
+    root.querySelectorAll('[data-cs-val]').forEach(el => el.addEventListener('input', () => { state.csVals[el.dataset.csVal] = el.value; }));
+    $('cs-hw-date')?.addEventListener('change', e => { state.csDate = e.target.value; });
+    $('cs-hw-title')?.addEventListener('input', e => { state.csTitle = e.target.value; });
+    $('cs-hw')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const skills = {};
+      for (const [k] of CS_SKILLS) skills[k] = state.csTypes.has(k) ? Number(state.csVals[k]) : null;
+      const s = state.cs.students.find(x => x.id === id);
+      await csCall(`/admin/course-students/${id}/results`, {
+        method: 'POST', body: { date: state.csDate || csToday(), title: state.csTitle, level: s?.level, skills }
+      }, `Saved — ${s?.name || 'the student'}'s parents can see it now.`, { csTypes: new Set(), csVals: {}, csTitle: '' });
+    });
+
+    // details
     root.querySelectorAll('[data-cs-level]').forEach(el => el.addEventListener('change', () =>
-      call(`/admin/course-students/${el.dataset.csLevel}`, { method: 'PATCH', body: { level: el.value } }, 'Level updated.')));
+      csCall(`/admin/course-students/${el.dataset.csLevel}`, { method: 'PATCH', body: { level: el.value } }, 'Level changed.')));
+    root.querySelectorAll('[data-cs-family]').forEach(el => el.addEventListener('change', () => {
+      const sib = el.value ? state.cs.students.find(s => s.id === el.value) : null;
+      const me = state.cs.students.find(s => s.id === el.dataset.csFamily);
+      if (sib && me && sib.family === me.family) return render();   // already together
+      const msg = sib ? `Join ${sib.name}'s family? They will share the code ${sib.parentCode}.` : 'Give this student a family of their own, with a new code?';
+      if (!confirm(msg)) return render();
+      csCall(`/admin/course-students/${el.dataset.csFamily}/family`, { method: 'POST', body: { sameFamilyAs: el.value || null } }, 'Family changed — send the parents the new code if it changed.');
+    }));
     root.querySelectorAll('[data-cs-active]').forEach(el => el.addEventListener('click', () =>
-      call(`/admin/course-students/${el.dataset.csActive}`, { method: 'PATCH', body: { active: !el.dataset.active } })));
+      csCall(`/admin/course-students/${el.dataset.csActive}`, { method: 'PATCH', body: { active: !el.dataset.active } })));
     root.querySelectorAll('[data-cs-newcode]').forEach(el => el.addEventListener('click', () => {
-      if (!confirm(`Give ${el.dataset.name} a new parent code? Phones that remember the old code will be signed out.`)) return;
-      call(`/admin/course-students/${el.dataset.csNewcode}/code`, { method: 'POST' }, 'New code made — send it to the parents.');
+      if (!confirm(`Give ${el.dataset.name}'s family a new parent code? Phones that remember the old code will be signed out.`)) return;
+      csCall(`/admin/course-students/${el.dataset.csNewcode}/code`, { method: 'POST' }, 'New code made — send it to the parents.');
     }));
     root.querySelectorAll('[data-cs-delete]').forEach(el => el.addEventListener('click', () => {
-      if (!confirm(`Delete ${el.dataset.name}, their photo and all their test scores? This cannot be undone.`)) return;
-      call(`/admin/course-students/${el.dataset.csDelete}`, { method: 'DELETE' }, 'Child removed.');
+      if (!confirm(`Remove ${el.dataset.name}, their photo and all their homework results? This cannot be undone.`)) return;
+      csCall(`/admin/course-students/${el.dataset.csDelete}`, { method: 'DELETE' }, `${el.dataset.name} removed.`, { csSel: null });
     }));
     root.querySelectorAll('[data-cs-copy]').forEach(el => el.addEventListener('click', async () => {
-      const text = `Assalomu alaykum! ${el.dataset.name}ning ingliz tilidagi natijalarini shu yerda kuzatishingiz mumkin: ${location.origin}/ota-ona\nKod: ${el.dataset.csCopy}`;
+      const text = `Assalomu alaykum! Farzandingizning ingliz tilidagi natijalarini shu yerda kuzatishingiz mumkin: ${location.origin}/ota-ona\nKod: ${el.dataset.csCopy}`;
       try { await navigator.clipboard.writeText(text); setState({ notice: 'Message with the link and code copied — paste it to the parents (Telegram, SMS).' }); }
       catch { prompt('Copy this message for the parents:', text); }
     }));
-    root.querySelectorAll('[data-cs-addtest]').forEach(el => el.addEventListener('click', () =>
-      setState({ csAddTest: state.csAddTest === el.dataset.csAddtest ? null : el.dataset.csAddtest })));
-    root.querySelectorAll('[data-cs-show]').forEach(el => el.addEventListener('click', () =>
-      setState({ csShow: state.csShow === el.dataset.csShow ? null : el.dataset.csShow })));
     root.querySelectorAll('[data-cs-deltest]').forEach(el => el.addEventListener('click', () => {
-      const [id, rid] = el.dataset.csDeltest.split(':');
-      if (!confirm('Delete this test and its scores?')) return;
-      call(`/admin/course-students/${id}/results/${rid}`, { method: 'DELETE' }, 'Test deleted.');
-    }));
-    root.querySelectorAll('[data-cs-testform]').forEach(form => form.addEventListener('submit', e => {
-      e.preventDefault();
-      const f = new FormData(form);
-      const skills = Object.fromEntries(CS_SKILLS.map(([k]) => [k, f.get(k) === '' ? null : Number(f.get(k))]));
-      state.csAddTest = null;
-      call(`/admin/course-students/${form.dataset.csTestform}/results`, {
-        method: 'POST', body: { date: f.get('date'), title: f.get('title'), level: f.get('level'), skills }
-      }, 'Test saved — parents see it now.');
+      const [sid, rid] = el.dataset.csDeltest.split(':');
+      if (!confirm('Delete this homework result?')) return;
+      csCall(`/admin/course-students/${sid}/results/${rid}`, { method: 'DELETE' }, 'Homework deleted.', { csHistory: true });
     }));
     root.querySelectorAll('[data-cs-photo]').forEach(el => el.addEventListener('change', async () => {
       const file = el.files?.[0];
       if (!file) return;
       try {
         const photo = await shrinkPhoto(file);
-        await api(`/admin/course-students/${el.dataset.csPhoto}/photo`, { method: 'POST', body: { photo } });
-        state.notice = 'Photo saved.';
-        reload();
+        await csCall(`/admin/course-students/${el.dataset.csPhoto}/photo`, { method: 'POST', body: { photo } }, 'Photo saved.');
       } catch (error) { setState({ error: error.message }); }
     }));
+    root.querySelector('.cs-history')?.addEventListener('toggle', e => { state.csHistory = e.target.open; });
   }
 
   // ----------------------------------------------------------- website use
