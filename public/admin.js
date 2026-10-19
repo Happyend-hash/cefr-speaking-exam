@@ -124,30 +124,53 @@
   }
 
   /**
-   * The Refresh button: everything on the page again — the headline numbers,
-   * the tests, and every card that is open — without closing anything.
+   * The Refresh button: reloads the whole page (so a new version of the site
+   * is picked up too), then opens again the cards, groups and student that
+   * were open and goes back to the same place on the page.
    */
-  async function refreshAll() {
+  const OPEN_CARDS = ['csOpen', 'reviewOpen', 'studentsOpen', 'voiceOpen', 'chatOpen', 'picturesOpen', 'sponsorsOpen', 'calibrationOpen'];
+  function refreshAll() {
     if (state.refreshing) return;
-    setState({ refreshing: true, error: '', notice: '' });
-    const keep = { csSel: state.csSel, csRoll: state.csRoll, csGroups: state.csGroups };
+    setState({ refreshing: true });
     try {
-      await loadTests();
-      await Promise.all([
-        refreshUsage(),
-        state.csOpen ? loadCourse({}) : null,
-        state.reviewOpen ? loadReview({}) : null,
-        state.studentsOpen ? loadStudents({}) : null,
-        state.voiceOpen ? loadVoice({}) : null,
-        state.chatOpen ? loadChat({}) : null,
-        state.picturesOpen ? loadPictures({}) : null,
-        state.sponsorsOpen ? loadSponsors({}) : null,
-        state.calibrationOpen ? loadCalibration() : null
-      ]);
-    } finally {
-      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setState({ refreshing: false, refreshedAt: now, ...keep });
-    }
+      sessionStorage.setItem('adminRestore', JSON.stringify({
+        at: Date.now(),
+        open: OPEN_CARDS.filter(k => state[k]),
+        csGroups: [...state.csGroups],
+        csSel: state.csSel,
+        scrollY: window.scrollY
+      }));
+    } catch { /* private mode: reload without restoring */ }
+    location.reload();
+  }
+
+  /** After a Refresh: the same cards open, the same place on the page. */
+  async function restoreAfterRefresh() {
+    let saved = null;
+    try {
+      saved = JSON.parse(sessionStorage.getItem('adminRestore') || 'null');
+      sessionStorage.removeItem('adminRestore');
+    } catch { saved = null; }
+    if (!saved || Date.now() - saved.at > 60000) return;
+    const open = new Set(saved.open || []);
+    OPEN_CARDS.forEach(k => { if (open.has(k)) state[k] = true; });
+    state.csGroups = new Set(saved.csGroups || []);
+    state.csSel = saved.csSel || null;
+    await Promise.all([
+      open.has('csOpen') ? loadCourse({}) : null,
+      open.has('reviewOpen') ? loadReview({}) : null,
+      open.has('studentsOpen') ? loadStudents({}) : null,
+      open.has('voiceOpen') ? loadVoice({}) : null,
+      open.has('chatOpen') ? loadChat({}) : null,
+      open.has('picturesOpen') ? loadPictures({}) : null,
+      open.has('sponsorsOpen') ? loadSponsors({}) : null,
+      open.has('calibrationOpen') ? loadCalibration() : null
+    ].map(p => p && p.catch(() => null)));
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setState({ refreshedAt: now });
+    // photos and cards finish drawing a moment later; go back to the same place once they have
+    const y = saved.scrollY || 0;
+    [0, 150, 400].forEach(ms => setTimeout(() => { if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y); }, ms));
   }
 
   async function loadTests() {
@@ -3073,7 +3096,7 @@
     const token = store.get('adminToken');
     if (token) {
       state.token = token;
-      loadTests().catch(() => signOut());
+      loadTests().then(() => restoreAfterRefresh().catch(() => {}), () => signOut());
       return;
     }
     render();
