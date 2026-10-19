@@ -133,7 +133,17 @@
 .cs-num.is-good, .cs-rank-pct.is-good { color: #15803d; }
 .cs-num.is-mid, .cs-rank-pct.is-mid { color: #b45309; }
 .cs-num.is-low, .cs-rank-pct.is-low { color: #b91c1c; }
-.cs-code-cell { font-weight: 800; letter-spacing: .08em; color: var(--indigo-700); }
+.cs-code-cell { white-space: nowrap; }
+.cs-code-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px dashed var(--indigo-200); border-radius: 8px;
+  background: #fff; font: inherit; font-weight: 800; letter-spacing: .08em; color: var(--ink-soft); cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.cs-code-btn.is-shown { color: var(--indigo-700); border-style: solid; background: var(--indigo-50); }
+.cs-code-btn:hover { border-color: var(--indigo-500); }
+.cs-code-btn:focus-visible { outline: 2px solid var(--indigo-500); outline-offset: 2px; }
+.cs-code-btn.is-big { font-size: 20px; letter-spacing: .12em; padding: 4px 10px; }
+.cs-code-eye { font-size: 13px; letter-spacing: 0; }
+.cs-codes-toggle.is-on { background: var(--indigo-50); border-color: var(--indigo-200); }
 .cs-fam { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 99px; background: #fef3c7; color: #92400e; }
 .cs-face {
   border-radius: 50%; overflow: hidden; display: inline-grid; place-items: center; flex: none;
@@ -164,7 +174,7 @@
 .cs-details label { display: flex; gap: 6px; align-items: center; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
 .cs-code-box { display: flex; flex-direction: column; }
 .cs-code-box span { font-size: 11px; }
-.cs-code-box strong { font-size: 20px; letter-spacing: .12em; color: var(--indigo-700); }
+.cs-code-box { align-items: flex-start; gap: 2px; }
 .cs-danger { color: #b91c1c !important; }
 .cs-history summary { cursor: pointer; font-weight: 700; }
 .cs-table-sm td, .cs-table-sm th { padding: 5px 6px; font-size: 13px; }

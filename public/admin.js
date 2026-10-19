@@ -67,6 +67,8 @@
     csHistory: false,
     csRoll: null,            // the level whose attendance roll call is open
     csGroups: new Set(),     // the levels (groups) whose student list is open
+    csShowCodes: false,      // parent codes are hidden (students may be looking at the screen)
+    csReveal: null,          // one student's code shown for a moment
     csRollDate: '',
     csRollMarks: {},         // id -> 'present' | 'late' | 'absent', as tapped
     csPayAmount: undefined,
@@ -1428,6 +1430,18 @@
     return `<span class="cs-face" style="width:${size}px;height:${size}px">${url ? `<img src="${esc(url)}" alt="">` : esc(csInitials(s?.name))}</span>`;
   };
 
+  /**
+   * A parent code, hidden as dots unless the teacher shows it: students often
+   * see the teacher's screen. Tapping one shows just that code for 15 seconds.
+   */
+  function csCode(s, big = false) {
+    const shown = state.csShowCodes || state.csReveal === s.id;
+    const text = shown ? `${s.parentCode.slice(0, 3)} ${s.parentCode.slice(3)}` : '••• •••';
+    return `<button type="button" class="cs-code-btn ${big ? 'is-big' : ''} ${shown ? 'is-shown' : ''}" data-cs-reveal="${esc(s.id)}"
+      title="${shown ? 'Hide the code' : 'Show this code'}" aria-label="${shown ? 'Hide parent code' : 'Show parent code'}">
+      <span class="cs-code-text">${esc(text)}</span><span class="cs-code-eye" aria-hidden="true">${shown ? '🙈' : '👁'}</span></button>`;
+  }
+
   function courseCard() {
     if (!state.csOpen) {
       return `<div class="card" style="margin-top:28px">
@@ -1452,7 +1466,7 @@
       const first = !me ? 'New family (new code)' : sibling ? 'Leave the family (own new code)' : 'Own family (own code)';
       return `<option value="">${first}</option>` + data.students
         .filter(s => s.id !== exceptId)
-        .map(s => `<option value="${esc(s.id)}" ${chosen === s.id ? 'selected' : ''}>Same family as ${esc(s.name)} (code ${esc(s.parentCode)})</option>`).join('');
+        .map(s => `<option value="${esc(s.id)}" ${chosen === s.id ? 'selected' : ''}>Same family as ${esc(s.name)}${state.csShowCodes ? ` (code ${esc(s.parentCode)})` : ''}</option>`).join('');
     };
 
     // --- adding a child
@@ -1503,7 +1517,7 @@
                 <td class="cs-num">${s.month.homeworks}</td>
                 <td class="cs-num">${s.attendance.lessons ? `${s.attendance.attended}/${s.attendance.lessons}${s.attendance.absent ? ` <span class="cs-miss">${s.attendance.absent} missed</span>` : ''}` : '<span class="muted">—</span>'}</td>
                 <td>${csPayBadge(s.payment)}</td>
-                <td class="cs-code-cell">${esc(s.parentCode)}</td>
+                <td class="cs-code-cell">${csCode(s)}</td>
               </tr>
               ${open ? `<tr class="cs-panel-row"><td colspan="7">${studentPanel(s, { levelOptions, familyOptions, byId })}</td></tr>` : ''}`;
           }).join('')}</tbody>
@@ -1523,7 +1537,10 @@
     return `<div class="card" style="margin-top:28px">
       <div class="row" style="justify-content:space-between">
         <h2 style="font-size:18px">Course students &amp; homework (${data.students.length})</h2>
-        <button class="btn btn-ghost btn-sm" data-action="cs-close">Close</button>
+        <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm cs-codes-toggle ${state.csShowCodes ? 'is-on' : ''}" data-cs-codes aria-pressed="${state.csShowCodes}">${state.csShowCodes ? '🙈 Hide codes' : '👁 Show codes'}</button>
+          <button class="btn btn-ghost btn-sm" data-action="cs-close">Close</button>
+        </div>
       </div>
       <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type their family's code. Click a group to see its students, then click a student to enter today's homework.</p>
       ${addForm}
@@ -1647,7 +1664,7 @@
       <div class="cs-details">
         <label>Level <select data-cs-level="${esc(s.id)}">${levelOptions(s.level)}</select></label>
         <label>Family <select data-cs-family="${esc(s.id)}">${familyOptions(s.id, '')}</select></label>
-        <div class="cs-code-box"><span class="muted">Parent code</span><strong>${esc(s.parentCode.slice(0, 3))} ${esc(s.parentCode.slice(3))}</strong></div>
+        <div class="cs-code-box"><span class="muted">Parent code</span>${csCode(s, true)}</div>
         <div class="row" style="gap:6px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" data-cs-copy="${esc(s.parentCode)}" data-name="${esc(s.name)}">Copy message for parents</button>
           <button class="btn btn-ghost btn-sm" data-cs-newcode="${esc(s.id)}" data-name="${esc(s.name)}">New code</button>
@@ -1724,6 +1741,7 @@
     }
   }
 
+  let csRevealTimer = null;
   function wireCourseAdmin() {
     if (!state.csOpen) return;
     const $ = id => document.getElementById(id);
@@ -1750,6 +1768,19 @@
       }, `${n.name.trim()} added — open them below to copy the parent code.`);
       if (ok) { state.csNew = { name: '', level: n.level, family: '', photo: '' }; state.csGroups = new Set([...state.csGroups, n.level]); render(); }
     });
+
+    // parent codes: all at once, or one for 15 seconds
+    root.querySelector('[data-cs-codes]')?.addEventListener('click', () => setState({ csShowCodes: !state.csShowCodes, csReveal: null }));
+    root.querySelectorAll('[data-cs-reveal]').forEach(el => el.addEventListener('click', ev => {
+      ev.stopPropagation();   // inside a student's row: don't open/close the student
+      const sid = el.dataset.csReveal;
+      if (state.csShowCodes) return setState({ csShowCodes: false, csReveal: null });
+      if (state.csReveal === sid) return setState({ csReveal: null });
+      setState({ csReveal: sid });
+      clearTimeout(csRevealTimer);
+      csRevealTimer = setTimeout(() => { if (state.csReveal === sid) setState({ csReveal: null }); }, 15000);
+    }));
+    root.querySelectorAll('[data-cs-reveal]').forEach(el => el.addEventListener('keydown', ev => ev.stopPropagation()));
 
     // opening and closing a group (level)
     root.querySelectorAll('[data-cs-group]').forEach(el => el.addEventListener('click', () => {
@@ -1810,7 +1841,7 @@
       const sib = el.value ? state.cs.students.find(s => s.id === el.value) : null;
       const me = state.cs.students.find(s => s.id === el.dataset.csFamily);
       if (sib && me && sib.family === me.family) return render();   // already together
-      const msg = sib ? `Join ${sib.name}'s family? They will share the code ${sib.parentCode}.` : 'Give this student a family of their own, with a new code?';
+      const msg = sib ? `Join ${sib.name}'s family? They will share one parent code.` : 'Give this student a family of their own, with a new code?';
       if (!confirm(msg)) return render();
       csCall(`/admin/course-students/${el.dataset.csFamily}/family`, { method: 'POST', body: { sameFamilyAs: el.value || null } }, 'Family changed — send the parents the new code if it changed.');
     }));
