@@ -54,6 +54,29 @@ const paymentSchema = new mongoose.Schema({
   note: { type: String, trim: true, maxlength: 80, default: '' }
 }, { _id: true, timestamps: true });
 
+/**
+ * Vocabulary units (Jamshid, 2026-10-21): each level has a number of units
+ * (20 by default, set in the admin panel) and a general test at the end.
+ * Every unit result is kept; the newest one for a unit is its current result.
+ * A general test adds a result to every unit it covers, so it replaces the
+ * current results, while the earlier unit results stay in the history.
+ */
+const vocabResultSchema = new mongoose.Schema({
+  level: { type: String, enum: LEVELS, required: true },
+  unit: { type: Number, required: true, min: 1, max: 60 },
+  percent: { type: Number, required: true, min: 0, max: 100 },
+  date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+  source: { type: String, enum: ['unit', 'general'], default: 'unit' },
+  test: { type: mongoose.Schema.Types.ObjectId }     // the general test it came from
+}, { _id: true, timestamps: true });
+
+const vocabTestSchema = new mongoose.Schema({
+  level: { type: String, enum: LEVELS, required: true },
+  date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+  percent: { type: Number, required: true, min: 0, max: 100 },
+  perUnit: { type: Boolean, default: false }          // a result per unit, or one overall result for all
+}, { _id: true, timestamps: true });
+
 const courseStudentSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, maxlength: 80 },
   level: { type: String, enum: LEVELS, default: 'A1' },
@@ -74,6 +97,8 @@ const courseStudentSchema = new mongoose.Schema({
   /** What this child pays a month, in so'm (siblings may have a discount). Empty = not set. */
   monthlyFee: { type: Number, min: 0, default: null },
   payments: [paymentSchema],
+  vocab: [vocabResultSchema],
+  vocabTests: [vocabTestSchema],
   lastParentVisit: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });

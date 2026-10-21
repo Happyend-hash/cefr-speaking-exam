@@ -2,7 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import CourseStudent, { LEVELS, SKILLS, ATTENDANCE } from '../models/CourseStudent.js';
 import {
-  newParentCode, readPhoto, dashboard, mergeDays, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
+  newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
 } from '../services/ParentPortal.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -24,7 +24,7 @@ async function load(id) {
 }
 
 /** What the admin list shows for one child (no photo bytes). */
-const row = s => {
+const row = (s, units = {}) => {
   const d = dashboard(s);
   return {
     id: String(s._id),
@@ -44,6 +44,7 @@ const row = s => {
     monthlyFee: typeof s.monthlyFee === 'number' ? s.monthlyFee : null,
     payment: paymentStatus(s),
     paymentHistory: paymentHistory(s),
+    vocab: vocabSummary(s, units[s.level]),
     lastParentVisit: s.lastParentVisit || null
   };
 };
@@ -54,11 +55,13 @@ const cleanLevel = v => (LEVELS.includes(v) ? v : null);
 async function overview() {
   const list = await CourseStudent.find().select('-photo.data').sort({ name: 1 });
   const month = monthOf();
+  const units = await unitsPerLevel();
   return {
     levels: LEVELS,
     skills: SKILLS,
     month,
-    students: list.map(row),
+    unitsPerLevel: units,
+    students: list.map(s => row(s, units)),
     leaderboards: LEVELS.map(level => leaderboard(list, level, month)).filter(b => b.rows.length)
   };
 }
@@ -267,6 +270,109 @@ router.delete('/attendance', async (req, res, next) => {
     const level = cleanLevel(req.query?.level);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !level) throw new APIError('Choose the date and level', 400);
     await CourseStudent.updateMany({ level }, { $pull: { attendance: { date } } });
+    res.json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+/** How many vocabulary units each level has: { A1: 20, A2: 24, … }. */
+router.put('/settings/units', async (req, res, next) => {
+  try {
+    try { await saveUnitsPerLevel(req.body || {}); } catch (e) { throw new APIError(e.message, 400); }
+    res.json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+const cleanDay = v => {
+  const d = String(v || dayOf());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(Date.parse(d))) throw new APIError('Choose the date', 400);
+  if (d > dayOf(Date.now() + 864e5)) throw new APIError('That date is in the future', 400);
+  return d;
+};
+const cleanPercent = (v, what = 'Result') => {
+  const n = Number(v);
+  if (v === '' || v === null || v === undefined || !Number.isFinite(n) || n < 0 || n > 100) throw new APIError(`${what}: enter a percent from 0 to 100`, 400);
+  return Math.round(n);
+};
+
+/** One unit's vocabulary test: { unit, percent, date }. The same unit on the same day again replaces it. */
+router.post('/:id/vocab', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    const units = (await unitsPerLevel())[s.level];
+    const unit = Number(req.body?.unit);
+    if (!Number.isInteger(unit) || unit < 1 || unit > units) throw new APIError(`Choose a unit from 1 to ${units}`, 400);
+    const percent = cleanPercent(req.body?.percent);
+    const date = cleanDay(req.body?.date);
+    s.vocab = (s.vocab || []).filter(r => !(r.level === s.level && r.unit === unit && r.date === date && r.source === 'unit'));
+    s.vocab.push({ level: s.level, unit, percent, date, source: 'unit' });
+    await s.save();
+    res.status(201).json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+/**
+ * The general test at the end of the units: { date, units: { 1: 80, 2: 65, … } }
+ * and/or { percent }. With a result per unit, each of those units gets it as
+ * its new current result; with only an overall percent, every unit gets that.
+ * Earlier unit results are kept as history. A second general test on the same
+ * day replaces the first.
+ */
+router.post('/:id/vocab/general', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    const units = (await unitsPerLevel())[s.level];
+    const date = cleanDay(req.body?.date);
+    const perUnit = {};
+    for (const [k, v] of Object.entries(req.body?.units || {})) {
+      if (v === '' || v === null || v === undefined) continue;
+      const unit = Number(k);
+      if (!Number.isInteger(unit) || unit < 1 || unit > units) throw new APIError(`Unit ${k} is not in this level (1–${units})`, 400);
+      perUnit[unit] = cleanPercent(v, `Unit ${unit}`);
+    }
+    const given = Object.values(perUnit);
+    const hasOverall = !(req.body?.percent === '' || req.body?.percent === null || req.body?.percent === undefined);
+    if (!given.length && !hasOverall) throw new APIError('Enter the general test result: one overall percent, or a percent for each unit', 400);
+    const percent = hasOverall ? cleanPercent(req.body.percent, 'Overall result')
+      : Math.round(given.reduce((a, b) => a + b, 0) / given.length);
+
+    // the same day again: replace that general test
+    const old = (s.vocabTests || []).filter(t => t.level === s.level && t.date === date).map(t => String(t._id));
+    s.vocabTests = (s.vocabTests || []).filter(t => !old.includes(String(t._id)));
+    s.vocab = (s.vocab || []).filter(r => !(r.test && old.includes(String(r.test))));
+
+    const testId = new mongoose.Types.ObjectId();
+    s.vocabTests.push({ _id: testId, level: s.level, date, percent, perUnit: given.length > 0 });
+    for (let unit = 1; unit <= units; unit += 1) {
+      const p = given.length ? perUnit[unit] : percent;
+      if (p === undefined) continue;
+      s.vocab.push({ level: s.level, unit, percent: p, date, source: 'general', test: testId });
+    }
+    await s.save();
+    res.status(201).json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+/** Delete one unit result. */
+router.delete('/:id/vocab/:vid', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    const r = s.vocab.id(req.params.vid);
+    if (!r) throw new APIError('Result not found', 404);
+    r.deleteOne();
+    await s.save();
+    res.json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
+});
+
+/** Delete a general test, and the unit results it gave. */
+router.delete('/:id/vocab-tests/:tid', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    const t = s.vocabTests.id(req.params.tid);
+    if (!t) throw new APIError('General test not found', 404);
+    s.vocab = s.vocab.filter(r => String(r.test || '') !== String(t._id));
+    t.deleteOne();
+    await s.save();
     res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }
 });

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import CourseStudent, { LEVELS, SKILLS } from '../models/CourseStudent.js';
+import CourseSetting from '../models/CourseSetting.js';
 
 /**
  * The parents' page: sign in with the family's 6-digit code, see the
@@ -235,6 +236,84 @@ export function dashboard(student) {
   };
 }
 
+// --------------------------------------------------------- vocabulary units
+
+export const DEFAULT_UNITS = 20;
+export const MAX_UNITS = 60;
+/** A unit result below this is shown as "needs work". */
+export const WEAK_UNIT = 60;
+
+let unitsCache = null;
+let unitsCachedAt = 0;
+/** How many vocabulary units each level has, e.g. { A1: 20, A2: 24, … }. */
+export async function unitsPerLevel({ fresh = false } = {}) {
+  if (!fresh && unitsCache && Date.now() - unitsCachedAt < 30_000) return unitsCache;
+  const doc = await CourseSetting.findOne({ key: 'course' }).lean().catch(() => null);
+  const saved = doc?.unitsPerLevel || {};
+  unitsCache = Object.fromEntries(LEVELS.map(l => {
+    const n = Number(saved instanceof Map ? saved.get(l) : saved[l]);
+    return [l, Number.isInteger(n) && n >= 1 && n <= MAX_UNITS ? n : DEFAULT_UNITS];
+  }));
+  unitsCachedAt = Date.now();
+  return unitsCache;
+}
+
+export async function saveUnitsPerLevel(values) {
+  const clean = {};
+  for (const l of LEVELS) {
+    if (values?.[l] === undefined) continue;
+    const n = Number(values[l]);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_UNITS) throw new Error(`${l}: enter a number of units from 1 to ${MAX_UNITS}`);
+    clean[`unitsPerLevel.${l}`] = n;
+  }
+  await CourseSetting.updateOne({ key: 'course' }, { $set: clean }, { upsert: true });
+  return unitsPerLevel({ fresh: true });
+}
+
+const byWhen = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+const avg1 = values => (values.length ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10 : null);
+
+/**
+ * One child's vocabulary units at a level: each unit's current result (the
+ * newest — a general test replaces the unit results before it) with its
+ * earlier results, the average of the current results, the average of the
+ * unit tests alone (before any general test), the general tests and the
+ * units that need work.
+ */
+export function vocabSummary(student, units = DEFAULT_UNITS, level = student.level) {
+  const results = (student.vocab || []).filter(r => r.level === level).sort(byWhen);
+  const list = [];
+  for (let unit = 1; unit <= units; unit += 1) {
+    const all = results.filter(r => r.unit === unit);
+    const now = all[all.length - 1] || null;
+    const lastUnitTest = [...all].reverse().find(r => r.source === 'unit') || null;
+    list.push({
+      unit,
+      percent: now ? now.percent : null,
+      date: now ? now.date : null,
+      source: now ? now.source : null,
+      // what the unit test said before a general test replaced it
+      before: now && now.source === 'general' && lastUnitTest ? lastUnitTest.percent : null,
+      history: [...all].reverse().map(r => ({ id: String(r._id), date: r.date, percent: r.percent, source: r.source }))
+    });
+  }
+  const tests = (student.vocabTests || []).filter(t => t.level === level).sort(byWhen).reverse()
+    .map(t => ({ id: String(t._id), date: t.date, percent: t.percent, perUnit: Boolean(t.perUnit) }));
+  const done = list.filter(u => u.percent !== null);
+  const unitOnly = list.map(u => [...u.history].find(h => h.source === 'unit')).filter(Boolean).map(h => h.percent);
+  return {
+    level,
+    units,
+    list,
+    done: done.length,
+    average: avg1(done.map(u => u.percent)),
+    unitAverage: avg1(unitOnly),
+    tests,
+    latestTest: tests[0] || null,
+    weak: done.filter(u => u.percent < WEAK_UNIT).map(u => ({ unit: u.unit, percent: u.percent }))
+  };
+}
+
 // --------------------------------------------------------- attendance
 
 /** One month of attendance: the counts, each lesson day, and the days missed or late. */
@@ -348,6 +427,6 @@ export function readPhoto(dataUrl) {
 
 export default {
   newParentCode, isWeakCode, signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth,
-  familyChildren, familyOf, dashboard, mergeDays, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto,
+  familyChildren, familyOf, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto,
   attendanceSummary, attendanceHistory, paymentStatus, paymentHistory, PAYMENT_DUE_DAY
 };

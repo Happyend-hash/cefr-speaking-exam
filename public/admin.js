@@ -69,6 +69,10 @@
     csGroups: new Set(),     // the levels (groups) whose student list is open
     csShowCodes: false,      // parent codes are hidden (students may be looking at the screen)
     csReveal: null,          // one student's code shown for a moment
+    csUnit: null,            // vocabulary: the unit being entered (a number) or 'general'
+    csUnitVal: '', csUnitDate: '',
+    csGenVals: {}, csGenOverall: '', csGenDate: '',
+    csUnitsOpen: false,      // the "units per level" setting
     csRollDate: '',
     csRollMarks: {},         // id -> 'present' | 'late' | 'absent', as tapped
     csPayAmount: undefined,
@@ -1561,11 +1565,18 @@
       <div class="row" style="justify-content:space-between">
         <h2 style="font-size:18px">Course students &amp; homework (${data.students.length})</h2>
         <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm ${state.csUnitsOpen ? 'is-on' : ''}" data-cs-unitsopen aria-expanded="${state.csUnitsOpen}">Units per level</button>
           <button class="btn btn-ghost btn-sm cs-codes-toggle ${state.csShowCodes ? 'is-on' : ''}" data-cs-codes aria-pressed="${state.csShowCodes}">${state.csShowCodes ? '🙈 Hide codes' : '👁 Show codes'}</button>
           <button class="btn btn-ghost btn-sm" data-action="cs-close">Close</button>
         </div>
       </div>
       <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type their family's code. Click a group to see its students, then click a student to enter today's homework.</p>
+      ${state.csUnitsOpen ? `<form class="cs-units-set" id="cs-units-set">
+        <strong>Vocabulary units per level</strong>
+        <span class="muted">Each level ends with a general test after its last unit.</span>
+        <div class="cs-units-set-row">${levels.map(l => `<label><span class="tag">${l}</span><input type="number" min="1" max="60" step="1" data-cs-unitsn="${l}" value="${esc(data.unitsPerLevel?.[l] ?? 20)}" required></label>`).join('')}
+          <button class="btn btn-sm" type="submit">Save</button></div>
+      </form>` : ''}
       ${addForm}
       ${tables || '<p class="muted" style="margin-top:12px">No students yet. Add the first one above.</p>'}
       ${boards ? `<h3 class="cs-board-title">Ranking — ${esc(csMonthName(data.month))}</h3>
@@ -1603,6 +1614,76 @@
           <button class="btn btn-sm" data-cs-rollsave="${level}">Save attendance</button>
         </div>
       </div>
+    </div>`;
+  }
+
+  /**
+   * Vocabulary units: one chip per unit with its current result, then the
+   * general test. Tap a unit to enter its result; tap "General test" to enter
+   * the end-of-units test, which replaces the units' current results.
+   */
+  function vocabUnits(s) {
+    const v = s.vocab;
+    if (!v) return '';
+    const sel = state.csUnit;
+    const today = csToday();
+    const fmt = d => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    const chips = v.list.map(u => `<button type="button" class="cs-unit ${csBand(u.percent)} ${u.percent === null ? 'is-empty' : ''} ${sel === u.unit ? 'is-sel' : ''} ${u.percent !== null && u.percent < 60 ? 'is-weak' : ''}"
+        data-cs-unit="${u.unit}" aria-pressed="${sel === u.unit}">
+        <span class="cs-unit-no">Unit ${u.unit}</span>
+        <strong>${u.percent === null ? '—' : `${u.percent}%`}</strong>
+        ${u.before !== null ? `<small>was ${u.before}%</small>` : u.source === 'general' ? '<small>general test</small>' : ''}
+      </button>`).join('');
+    const gen = v.latestTest;
+    const genChip = `<button type="button" class="cs-unit cs-unit-gen ${csBand(gen?.percent)} ${sel === 'general' ? 'is-sel' : ''}" data-cs-unit="general" aria-pressed="${sel === 'general'}">
+        <span class="cs-unit-no">General test</span><strong>${gen ? `${gen.percent}%` : 'All units'}</strong>${gen ? `<small>${esc(fmt(gen.date))}</small>` : ''}</button>`;
+
+    let form = '';
+    if (typeof sel === 'number') {
+      const u = v.list.find(x => x.unit === sel);
+      form = `<form class="cs-unit-form" id="cs-unit-form">
+        <div class="cs-unit-form-top">
+          <strong>Unit ${sel}</strong>
+          <label>Date <input type="date" id="cs-unit-date" value="${esc(state.csUnitDate || today)}" max="${today}"></label>
+          <label>Result <span class="cs-pct"><input type="number" id="cs-unit-pct" min="0" max="100" step="1" inputmode="numeric" value="${esc(state.csUnitVal)}" required><span>%</span></span></label>
+          <button class="btn btn-sm" type="submit">Save Unit ${sel}</button>
+        </div>
+        ${u?.history.length ? `<ul class="cs-unit-hist">${u.history.map((h, i) => `<li class="${i === 0 ? 'is-now' : ''}">
+            <span>${esc(fmt(h.date))}</span><strong class="${csBand(h.percent)}">${h.percent}%</strong>
+            <span class="muted">${h.source === 'general' ? 'general test' : 'unit test'}${i === 0 ? ' · current' : ''}</span>
+            ${h.source === 'unit' ? `<button type="button" class="cs-link" data-cs-unitdel="${esc(h.id)}">delete</button>` : ''}</li>`).join('')}</ul>`
+          : '<p class="muted" style="font-size:13px">No result for this unit yet.</p>'}
+      </form>`;
+    } else if (sel === 'general') {
+      form = `<form class="cs-unit-form" id="cs-gen-form">
+        <div class="cs-unit-form-top">
+          <strong>General test — all ${v.units} units</strong>
+          <label>Date <input type="date" id="cs-gen-date" value="${esc(state.csGenDate || today)}" max="${today}"></label>
+          <label>Overall <span class="cs-pct"><input type="number" id="cs-gen-overall" min="0" max="100" step="1" inputmode="numeric" value="${esc(state.csGenOverall)}" placeholder="auto"><span>%</span></span></label>
+        </div>
+        <p class="muted" style="font-size:13px">Type each unit's result from the test — or only the overall result, to give every unit that score. It replaces the units' current results; their earlier results stay in each unit's history.</p>
+        <div class="cs-gen-grid">${v.list.map(u => `<label><span>Unit ${u.unit}</span><span class="cs-pct"><input type="number" min="0" max="100" step="1" inputmode="numeric" data-cs-gen="${u.unit}" value="${esc(state.csGenVals[u.unit] ?? '')}"><span>%</span></span></label>`).join('')}</div>
+        <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn btn-sm" type="submit">Save general test</button></div>
+        ${v.tests.length ? `<ul class="cs-unit-hist">${v.tests.map((t, i) => `<li class="${i === 0 ? 'is-now' : ''}">
+            <span>${esc(fmt(t.date))}</span><strong class="${csBand(t.percent)}">${t.percent}%</strong>
+            <span class="muted">${t.perUnit ? 'result per unit' : 'one result for all units'}${i === 0 ? ' · latest' : ''}</span>
+            <button type="button" class="cs-link" data-cs-gendel="${esc(t.id)}">delete</button></li>`).join('')}</ul>` : ''}
+      </form>`;
+    }
+
+    return `<div class="cs-vocab">
+      <div class="cs-vocab-head">
+        <strong>Vocabulary units — ${esc(v.level)}</strong>
+        <span class="cs-vocab-stats">
+          <span>${v.done}/${v.units} units</span>
+          ${v.unitAverage !== null ? `<span>Units average <b class="${csBand(v.unitAverage)}">${v.unitAverage}%</b></span>` : ''}
+          ${gen ? `<span>General test <b class="${csBand(gen.percent)}">${gen.percent}%</b></span>` : ''}
+          ${v.average !== null && gen ? `<span>Now <b class="${csBand(v.average)}">${v.average}%</b></span>` : ''}
+        </span>
+      </div>
+      ${v.weak.length ? `<p class="cs-vocab-weak"><span class="cs-miss">Not learnt yet (below 60%):</span> ${v.weak.map(w => `Unit ${w.unit} (${w.percent}%)`).join(', ')}</p>` : ''}
+      <div class="cs-units">${chips}${genChip}</div>
+      ${form}
     </div>`;
   }
 
@@ -1681,6 +1762,8 @@
         </div>
         <button class="btn" type="submit">${savedDay ? 'Update this day' : 'Save homework'}</button>` : ''}
       </form>
+
+      ${vocabUnits(s)}
 
       ${moneyAndDays(s)}
 
@@ -1792,6 +1875,52 @@
       if (ok) { state.csNew = { name: '', level: n.level, family: '', photo: '' }; state.csGroups = new Set([...state.csGroups, n.level]); render(); }
     });
 
+    // vocabulary units
+    root.querySelector('[data-cs-unitsopen]')?.addEventListener('click', () => setState({ csUnitsOpen: !state.csUnitsOpen }));
+    $('cs-units-set')?.addEventListener('submit', e => {
+      e.preventDefault();
+      const body = {};
+      root.querySelectorAll('[data-cs-unitsn]').forEach(el => { body[el.dataset.csUnitsn] = Number(el.value); });
+      csCall('/admin/course-students/settings/units', { method: 'PUT', body }, 'Units per level saved.', { csUnitsOpen: false });
+    });
+    root.querySelectorAll('[data-cs-unit]').forEach(el => el.addEventListener('click', () => {
+      const raw = el.dataset.csUnit;
+      const unit = raw === 'general' ? 'general' : Number(raw);
+      setState(state.csUnit === unit ? { csUnit: null } : { csUnit: unit, csUnitVal: '', csUnitDate: '', csGenVals: {}, csGenOverall: '', csGenDate: '' });
+      if (unit !== 'general') document.getElementById('cs-unit-pct')?.focus();
+    }));
+    $('cs-unit-pct')?.addEventListener('input', e => { state.csUnitVal = e.target.value; });
+    $('cs-unit-date')?.addEventListener('change', e => { state.csUnitDate = e.target.value; });
+    $('cs-unit-form')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const unit = state.csUnit;
+      const st = state.cs.students.find(x => x.id === state.csSel);
+      await csCall(`/admin/course-students/${state.csSel}/vocab`, {
+        method: 'POST', body: { unit, percent: state.csUnitVal, date: state.csUnitDate || csToday() }
+      }, `Unit ${unit} saved for ${st?.name || 'the student'}.`, { csUnitVal: '' });
+    });
+    root.querySelectorAll('[data-cs-unitdel]').forEach(el => el.addEventListener('click', () => {
+      if (!confirm('Delete this unit result?')) return;
+      csCall(`/admin/course-students/${state.csSel}/vocab/${el.dataset.csUnitdel}`, { method: 'DELETE' }, 'Result deleted.');
+    }));
+    root.querySelectorAll('[data-cs-gen]').forEach(el => el.addEventListener('input', () => { state.csGenVals[el.dataset.csGen] = el.value; }));
+    $('cs-gen-overall')?.addEventListener('input', e => { state.csGenOverall = e.target.value; });
+    $('cs-gen-date')?.addEventListener('change', e => { state.csGenDate = e.target.value; });
+    $('cs-gen-form')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const units = Object.fromEntries(Object.entries(state.csGenVals).filter(([, v]) => String(v).trim() !== ''));
+      if (!Object.keys(units).length && String(state.csGenOverall).trim() === '') return setState({ error: 'Type the overall result, or a result for each unit.' });
+      const st = state.cs.students.find(x => x.id === state.csSel);
+      const ok = await csCall(`/admin/course-students/${state.csSel}/vocab/general`, {
+        method: 'POST', body: { date: state.csGenDate || csToday(), units, percent: state.csGenOverall === '' ? undefined : state.csGenOverall }
+      }, `General test saved for ${st?.name || 'the student'} — the units now show its results.`);
+      if (ok) setState({ csGenVals: {}, csGenOverall: '' });
+    });
+    root.querySelectorAll('[data-cs-gendel]').forEach(el => el.addEventListener('click', () => {
+      if (!confirm('Delete this general test? The units go back to their earlier results.')) return;
+      csCall(`/admin/course-students/${state.csSel}/vocab-tests/${el.dataset.csGendel}`, { method: 'DELETE' }, 'General test deleted.');
+    }));
+
     // parent codes: all at once, or one for 15 seconds
     root.querySelector('[data-cs-codes]')?.addEventListener('click', () => setState({ csShowCodes: !state.csShowCodes, csReveal: null }));
     root.querySelectorAll('[data-cs-reveal]').forEach(el => el.addEventListener('click', ev => {
@@ -1823,7 +1952,7 @@
       const open = () => {
         const id = el.dataset.csSel;
         const st = state.cs?.students.find(x => x.id === id);
-        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csToday()), csName: undefined, csPayAmount: undefined, csPayDate: '', csFee: undefined });
+        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csToday()), csUnit: null, csName: undefined, csPayAmount: undefined, csPayDate: '', csFee: undefined });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });

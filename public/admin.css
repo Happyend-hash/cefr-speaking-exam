@@ -274,3 +274,46 @@
 .cs-group-meta { display: flex; gap: 10px; font-size: 13px; font-weight: 600; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .cs-group-body { padding: 10px 12px 12px; }
 @media (prefers-reduced-motion: reduce) { .cs-chev { transition: none; } }
+
+/* ---- vocabulary units */
+.cs-vocab { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.cs-vocab-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; }
+.cs-vocab-stats { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.cs-vocab-weak { font-size: 13px; margin: 0; }
+.cs-units { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; }
+.cs-unit {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 7px 9px; min-height: 58px;
+  border: 1px solid var(--line); border-radius: 10px; background: #fff; font: inherit; text-align: left; cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.cs-unit:hover { border-color: var(--indigo-500); }
+.cs-unit:focus-visible { outline: 2px solid var(--indigo-500); outline-offset: 2px; }
+.cs-unit-no { font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; }
+.cs-unit strong { font-size: 16px; }
+.cs-unit small { font-size: 11px; color: var(--ink-faint); }
+.cs-unit.is-empty strong { color: var(--ink-faint); }
+.cs-unit.is-good { background: #f0fdf4; border-color: #bbf7d0; }
+.cs-unit.is-mid { background: #fffbeb; border-color: #fde68a; }
+.cs-unit.is-low, .cs-unit.is-weak { background: #fef2f2; border-color: #fecaca; }
+.cs-unit.is-sel { border-color: var(--indigo-600); box-shadow: 0 0 0 2px var(--indigo-200); }
+.cs-unit-gen { grid-column: span 2; border-style: dashed; border-color: var(--indigo-200); background: var(--indigo-50); }
+.cs-unit-gen .cs-unit-no { color: var(--indigo-700); }
+.cs-unit-form { border: 1px solid var(--indigo-200); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: #fbfbff; }
+.cs-unit-form-top { display: flex; gap: 8px 14px; align-items: center; flex-wrap: wrap; }
+.cs-unit-form-top label { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-soft); font-weight: 600; }
+.cs-unit-form input[type=date], .cs-unit-form input[type=number] { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; width: 84px; }
+.cs-unit-form input[type=date] { width: auto; }
+.cs-gen-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px 10px; }
+.cs-gen-grid label { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.cs-gen-grid input[type=number] { width: 58px; }
+.cs-unit-hist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cs-unit-hist li { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.cs-unit-hist li.is-now { font-weight: 600; }
+.cs-units-set { margin: 12px 0 4px; padding: 12px; border: 1px solid var(--indigo-200); border-radius: 12px; background: var(--indigo-50); display: flex; flex-direction: column; gap: 6px; }
+.cs-units-set-row { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; }
+.cs-units-set label { display: flex; gap: 6px; align-items: center; }
+.cs-units-set input { width: 64px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.cs-vocab-stats b.is-good, .cs-unit-hist strong.is-good { color: #15803d; }
+.cs-vocab-stats b.is-mid, .cs-unit-hist strong.is-mid { color: #b45309; }
+.cs-vocab-stats b.is-low, .cs-unit-hist strong.is-low { color: #b91c1c; }
+.cs-unit-form .cs-pct input { font-size: 15px; padding: 6px 8px; }

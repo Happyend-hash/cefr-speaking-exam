@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   isWeakCode, newParentCode, signInBlocked, noteWrongCode, noteRightCode, dashboard, readPhoto,
   leaderboard, monthAverage, monthOf, familyOf, MAX_TRIES, GLOBAL_MAX_FAILS, _guard,
-  attendanceSummary, paymentStatus, paymentHistory, dayOf, mergeDays
+  attendanceSummary, paymentStatus, paymentHistory, dayOf, mergeDays, vocabSummary
 } from '../services/ParentPortal.js';
 
 /** The parents' page: 6-digit codes, guessing kept out, and the numbers shown. */
@@ -191,4 +191,35 @@ test('one day of homework is one result, however many times it was saved', () =>
   const m = monthAverage({ results }, '2026-10');
   assert.equal(m.homeworks, 2);
   assert.equal(m.percent, Math.round(((70 + 80 + 90 + 95) / 4) * 10) / 10);
+});
+
+test('vocabulary units: the newest result counts, a general test replaces the units but keeps their history', () => {
+  const at = (h) => new Date(`2026-10-01T0${h}:00:00Z`);
+  const student = {
+    level: 'A2',
+    vocab: [
+      { _id: 'a', level: 'A2', unit: 1, percent: 50, date: '2026-10-03', source: 'unit', createdAt: at(1) },
+      { _id: 'b', level: 'A2', unit: 1, percent: 70, date: '2026-10-05', source: 'unit', createdAt: at(2) },
+      { _id: 'c', level: 'A2', unit: 2, percent: 40, date: '2026-10-06', source: 'unit', createdAt: at(3) },
+      { _id: 'd', level: 'A2', unit: 1, percent: 90, date: '2026-10-28', source: 'general', test: 't1', createdAt: at(4) },
+      { _id: 'e', level: 'A2', unit: 2, percent: 80, date: '2026-10-28', source: 'general', test: 't1', createdAt: at(5) },
+      { _id: 'f', level: 'B1', unit: 1, percent: 10, date: '2026-10-28', source: 'unit', createdAt: at(6) }   // another level
+    ],
+    vocabTests: [{ _id: 't1', level: 'A2', date: '2026-10-28', percent: 85, perUnit: true }]
+  };
+  const v = vocabSummary(student, 3);
+  assert.equal(v.list.length, 3);
+  assert.deepEqual(v.list.map(u => u.percent), [90, 80, null]);
+  assert.equal(v.list[0].before, 70);                 // the unit test it replaced
+  assert.equal(v.list[0].history.length, 3);
+  assert.equal(v.done, 2);
+  assert.equal(v.average, 85);                        // the general test now sets the average
+  assert.equal(v.unitAverage, 55);                    // units alone: (70 + 40) / 2
+  assert.equal(v.latestTest.percent, 85);
+  assert.deepEqual(v.weak, []);
+
+  const before = vocabSummary({ level: 'A2', vocab: student.vocab.filter(r => r.source === 'unit') }, 3);
+  assert.deepEqual(before.weak, [{ unit: 2, percent: 40 }]);
+  assert.equal(before.average, 55);
+  assert.equal(before.latestTest, null);
 });

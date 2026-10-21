@@ -258,3 +258,22 @@ td.is-low { color: var(--low); background: color-mix(in srgb, var(--low-bg) 60%,
 .pp-att-prev > div { display: flex; justify-content: space-between; gap: 10px; }
 .pp-red { color: #b91c1c; }
 .pp-kid .pp-paybadge { margin-top: 4px; }
+
+/* ---- vocabulary units */
+.pp-vocab-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; }
+.pp-vocab-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 10px; border-radius: 14px; background: var(--ground, #f5f6fb); }
+.pp-vocab-stats span { font-size: 12px; color: var(--ink-faint); font-weight: 600; }
+.pp-vocab-stats strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.pp-vocab-stats strong small { font-size: 13px; font-weight: 600; color: var(--ink-faint); }
+.pp-vocab-stats > div > small { font-size: 12px; color: var(--ink-faint); }
+.pp-vocab-stats .is-good { color: var(--good); } .pp-vocab-stats .is-mid { color: var(--mid); } .pp-vocab-stats .is-low { color: var(--low); }
+.pp-vocab-note { font-size: 13px; margin-top: 10px; }
+.pp-units { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 6px; }
+.pp-unit { display: flex; flex-direction: column; gap: 1px; padding: 8px 9px; border-radius: 12px; border: 1px solid transparent; background: var(--ground, #f5f6fb); font-variant-numeric: tabular-nums; }
+.pp-unit span { font-size: 11px; font-weight: 700; color: var(--ink-faint); }
+.pp-unit strong { font-size: 17px; }
+.pp-unit small { font-size: 11px; color: var(--ink-faint); }
+.pp-unit.is-good { background: var(--good-bg); } .pp-unit.is-good strong { color: var(--good); }
+.pp-unit.is-mid { background: var(--mid-bg); } .pp-unit.is-mid strong { color: var(--mid); }
+.pp-unit.is-low { background: var(--low-bg); } .pp-unit.is-low strong { color: var(--low); }
+.pp-unit.is-empty strong { color: var(--ink-faint); }

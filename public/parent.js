@@ -80,6 +80,18 @@
     attPrev: 'Oldingi oylar',
     attPrevRow: (a, l) => `${a}/${l} dars`,
     noLesson: 'dars yo‘q',
+    // vocabulary units
+    vocabTitle: l => `Lug‘at bo‘limlari (Unit) — ${l}`,
+    vocabDone: (d, n) => `${n} ta unitdan ${d} tasi topshirildi`,
+    vocabUnitAvg: 'Unitlar o‘rtachasi',
+    vocabGeneral: 'Umumiy test',
+    vocabNow: 'Hozirgi natija',
+    vocabNote: 'Umumiy test natijasi har bir unit natijasini yangilaydi. Oldingi natijalar ham ko‘rsatiladi.',
+    vocabWeak: 'Qayta takrorlash kerak (60% dan past)',
+    vocabUnit: n => `${n}-unit`,
+    vocabWas: p => `avval ${p}%`,
+    vocabAll: 'Barcha unitlar',
+    vocabNotYet: 'hali yo‘q',
     footer: 'Natijalarni ustoz har bir darsdan keyin kiritadi.'
   };
 
@@ -353,6 +365,29 @@
     </section>`;
   }
 
+  /** Vocabulary units: the current result of each unit, the general test, and the units to revise. */
+  function vocabCard(v) {
+    if (!v || (!v.done && !v.tests.length)) return '';
+    const gen = v.latestTest;
+    const chips = v.list.map(u => `
+      <div class="pp-unit ${u.percent !== null && u.percent < 60 ? 'is-low' : band(u.percent)} ${u.percent === null ? 'is-empty' : ''}">
+        <span>${T.vocabUnit(u.unit)}</span>
+        <strong>${u.percent === null ? T.noScore : `${u.percent}%`}</strong>
+        ${u.before !== null ? `<small>${T.vocabWas(u.before)}</small>` : ''}
+      </div>`).join('');
+    return `<section class="pp-card pp-vocab">
+      <div class="pp-card-head"><h2>${T.vocabTitle(esc(v.level))}</h2><p>${T.vocabDone(v.done, v.units)}</p></div>
+      <div class="pp-vocab-stats">
+        ${v.unitAverage !== null ? `<div><span>${T.vocabUnitAvg}</span><strong class="${band(v.unitAverage)}">${pct(v.unitAverage)}</strong></div>` : ''}
+        <div><span>${T.vocabGeneral}</span><strong class="${band(gen?.percent)}">${gen ? pct(gen.percent) : `<small>${T.vocabNotYet}</small>`}</strong>${gen ? `<small>${fmtDate(`${gen.date}T12:00:00`)}</small>` : ''}</div>
+        ${gen && v.average !== null ? `<div><span>${T.vocabNow}</span><strong class="${band(v.average)}">${pct(v.average)}</strong></div>` : ''}
+      </div>
+      ${gen ? `<p class="pp-muted pp-vocab-note">${T.vocabNote}</p>` : ''}
+      ${v.weak.length ? `<div class="pp-days is-absent"><h3>${T.vocabWeak}</h3><div>${v.weak.map(w => `<span>${T.vocabUnit(w.unit)} · ${w.percent}%</span>`).join('')}</div></div>` : ''}
+      <div class="pp-units">${chips}</div>
+    </section>`;
+  }
+
   function childrenScreen() {
     return `${topBar()}
       <main class="pp-dash">
@@ -502,6 +537,7 @@
           <div class="pp-card-head"><h2>${T.skillsTitle}</h2><p>${T.skillsNote}</p></div>
           <div class="pp-skills">${skillCards}</div>
         </section>` : `<section class="pp-card pp-empty"><p>${T.empty}</p></section>`}
+        ${vocabCard(d.vocab)}
         ${ranking}
         ${byLevel}
         ${history}
