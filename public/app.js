@@ -305,6 +305,7 @@
     // otherwise leave the microphone open and the recording light on.
     stopMicCheck();
     setState({ screen: 'dashboard', loading: true, error: '' });
+    loadUnread();
     try {
       const [exams, history, profile] = await Promise.all([
         api('/exam'),
@@ -1671,6 +1672,7 @@
         <div class="muted">${esc(r.title)}</div>
         ${hero}
         ${r.emailed ? `<p class="muted" style="margin-top:10px;font-size:13px">${esc(WR_UZ.emailed)}</p>` : ''}
+        ${r.expertReviewed ? `<p class="expert-badge">✓ Reviewed by an expert examiner</p>` : ''}
       </div>
 
       ${r.overallFeedback ? `<div class="card">
@@ -1682,6 +1684,9 @@
       </div>` : ''}
 
       ${r.parts.map(p => writingPartCard(p, r.mode)).join('')}
+
+      ${expertForm('writing', EXPERT_PARTS.writing.filter(([k]) => r.parts.some(p => p.key === k && p.submitted)),
+        Object.fromEntries(r.parts.filter(p => p.band !== null).map(p => [p.key, p.band])), r.expertReviewedAt)}
 
       <div class="row"><button class="btn" data-go="writing">${esc(WR_UZ.back)}</button></div>`;
   }
@@ -1785,6 +1790,269 @@
     wireWritingExam();
     wireWritingCheck();
     wireWritingResult();
+  }
+
+  // =========================================================== MESSAGE BOX
+  //
+  // The teacher's messages (services/Messages.js): updates, news, gifts of
+  // mocks the student unwraps and activates, and score updates written by
+  // the site when an expert review changes an attempt's score.
+
+  const INBOX_UZ = {
+    title: 'Xabarlar',
+    empty: "Hozircha xabar yo'q. Ustozingiz yozganda shu yerda ko'rasiz.",
+    back: 'Xabarlar',
+    del: "O'chirish",
+    delConfirm: "Bu xabar o'chirilsinmi?",
+    gift: "Sizga sovg'a! 🎁",
+    giftHint: "Ustozingiz sizga sovg'a yubordi. Ochib ko'ring!",
+    giftOpen: "Sovg'ani ochish",
+    giftInside: "Ichida:",
+    mocks: (s, w) => [s ? `${s} ta Speaking mock` : '', w ? `${w} ta Writing mock` : ''].filter(Boolean).join(' + '),
+    activate: 'Faollashtirish',
+    activating: 'Faollashtirilmoqda…',
+    activated: "✓ Faollashtirildi! Mocklar hisobingizga qo'shildi.",
+    balance: (s, w) => `Hisobingizda: ${s} ta speaking, ${w} ta writing mock`,
+    goMock: 'Mock topshirish',
+    claimedAt: d => `✓ ${d} kuni faollashtirilgan`,
+    banner: n => `📬 Sizda ${n} ta yangi xabar bor`,
+    bannerOpen: "Ko'rish",
+    giftWaiting: "🎁 sovg'a kutmoqda",
+    newTag: 'yangi',
+    // Score updates are in English, as the teacher wrote them.
+    part: 'Part', before: 'Before', now: 'Now',
+    mark: 'Expert mark', score: 'Converted score', level: 'Level',
+    openAttempt: 'Open the attempt'
+  };
+
+  const LEVEL_EN = l => (l === 'B1dan quyi' ? 'Below B1' : l || '—');
+
+  async function loadUnread() {
+    if (!state.user || !isStudentShell()) return;
+    try {
+      const d = await api('/messages/unread');
+      if (d.unread !== state.unread) setState({ unread: d.unread });
+    } catch { /* the badge simply stays as it was */ }
+  }
+
+  async function openInbox(id = null) {
+    go('inbox', { inboxSel: id, loading: !state.inbox });
+    try {
+      const data = await api('/messages');
+      setState({ inbox: data, unread: data.unread, loading: false });
+      if (id) openMessage(id);
+    } catch (error) { setState({ loading: false, error: error.message }); }
+  }
+
+  function patchMessage(m) {
+    if (!state.inbox || !m) return;
+    state.inbox.messages = state.inbox.messages.map(x => (x.id === m.id ? { ...x, ...m } : x));
+  }
+
+  async function openMessage(id) {
+    state.inboxSel = id;
+    window.scrollTo({ top: 0 });
+    render();
+    const m = state.inbox?.messages.find(x => x.id === id);
+    if (m && !m.read) {
+      try {
+        const out = await api(`/messages/${id}/read`, { method: 'POST' });
+        patchMessage(out.message);
+        setState({ unread: out.unread });
+      } catch { /* stays unread; harmless */ }
+    }
+  }
+
+  async function giftOpen(id) {
+    state.giftAnim = id;
+    render();
+    try {
+      const out = await api(`/messages/${id}/open`, { method: 'POST' });
+      setTimeout(() => { patchMessage(out.message); state.giftAnim = null; render(); loadUnread(); }, 900);
+    } catch (error) { state.giftAnim = null; setState({ error: error.message }); }
+  }
+
+  async function giftClaim(id) {
+    if (state.giftBusy) return;
+    setState({ giftBusy: true, error: '' });
+    try {
+      const out = await api(`/messages/${id}/claim`, { method: 'POST' });
+      patchMessage(out.message);
+      state.giftBalance = { ...(state.giftBalance || {}), [id]: out.balance };
+      setState({ giftBusy: false, unread: out.unread });
+    } catch (error) { setState({ giftBusy: false, error: error.message }); }
+  }
+
+  async function deleteMessage(id) {
+    if (!window.confirm(INBOX_UZ.delConfirm)) return;
+    try {
+      const out = await api(`/messages/${id}`, { method: 'DELETE' });
+      state.inbox.messages = state.inbox.messages.filter(m => m.id !== id);
+      setState({ inboxSel: null, unread: out.unread });
+    } catch (error) { setState({ error: error.message }); }
+  }
+
+  const UZ_MONTHS_LOWER = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+  const inboxDate = (at, short = false) => {
+    const d = new Date(at);
+    const day = `${d.getDate()}-${UZ_MONTHS_LOWER[d.getMonth()]}`;
+    return short || d.getFullYear() === new Date().getFullYear() ? day : `${day} ${d.getFullYear()}`;
+  };
+
+  function giftBox(m) {
+    const g = m.gift;
+    if (g.claimed) {
+      const b = state.giftBalance?.[m.id];
+      return `<div class="gift is-claimed">
+        <div class="gift-art is-open" aria-hidden="true"><span class="gift-lid"></span><span class="gift-box"></span><span class="gift-ribbon"></span></div>
+        <p class="gift-what">${esc(INBOX_UZ.mocks(g.speaking, g.writing))}</p>
+        <p class="gift-done">${esc(b ? INBOX_UZ.activated : INBOX_UZ.claimedAt(inboxDate(g.claimedAt)))}</p>
+        ${b ? `<p class="muted">${esc(INBOX_UZ.balance(b.speaking, b.writing))}</p>
+          <button class="btn btn-lg" data-folder="speaking">${icon('mic')} ${INBOX_UZ.goMock}</button>` : ''}
+      </div>`;
+    }
+    if (!g.opened) {
+      const shaking = state.giftAnim === m.id;
+      return `<div class="gift">
+        <div class="gift-art ${shaking ? 'is-opening' : 'is-waiting'}" aria-hidden="true"><span class="gift-lid"></span><span class="gift-box"></span><span class="gift-ribbon"></span></div>
+        <p class="gift-hint">${esc(INBOX_UZ.giftHint)}</p>
+        <button class="btn btn-lg gift-btn" data-gift-open="${esc(m.id)}" ${shaking ? 'disabled' : ''}>🎁 ${INBOX_UZ.giftOpen}</button>
+      </div>`;
+    }
+    return `<div class="gift is-revealed">
+      <div class="confetti" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<i style="--i:${i}"></i>`).join('')}</div>
+      <div class="gift-art is-open" aria-hidden="true"><span class="gift-lid"></span><span class="gift-box"></span><span class="gift-ribbon"></span></div>
+      <p class="muted">${esc(INBOX_UZ.giftInside)}</p>
+      <p class="gift-what">${esc(INBOX_UZ.mocks(g.speaking, g.writing))}</p>
+      <button class="btn btn-lg gift-btn" data-gift-claim="${esc(m.id)}" ${state.giftBusy ? 'disabled' : ''}>${state.giftBusy ? INBOX_UZ.activating : `✨ ${INBOX_UZ.activate}`}</button>
+    </div>`;
+  }
+
+  function scoreTable(s) {
+    const n = v => (v === null || v === undefined ? '—' : String(v));
+    const cls = (a, b) => (b > a ? 'is-up' : b < a ? 'is-down' : '');
+    return `<div class="score-change">
+      <table>
+        <thead><tr><th>${INBOX_UZ.part}</th><th>${INBOX_UZ.before}</th><th>${INBOX_UZ.now}</th></tr></thead>
+        <tbody>
+          ${(s.parts || []).map(p => `<tr><td>${esc(p.name)} <span class="muted">/ ${p.max}</span></td><td>${n(p.before)}</td><td class="${cls(p.before, p.after)}">${n(p.after)}</td></tr>`).join('')}
+          <tr class="is-total"><td>${INBOX_UZ.mark}</td><td>${n(s.before?.mark)}</td><td class="${cls(s.before?.mark, s.after?.mark)}">${n(s.after?.mark)}</td></tr>
+          <tr class="is-total"><td>${INBOX_UZ.score}</td><td>${s.before?.score != null ? `${s.before.score}/75` : '—'}</td><td class="${cls(s.before?.score, s.after?.score)}"><strong>${s.after?.score != null ? `${s.after.score}/75` : '—'}</strong></td></tr>
+          <tr class="is-total"><td>${INBOX_UZ.level}</td><td>${esc(LEVEL_EN(s.before?.level))}</td><td><strong>${esc(LEVEL_EN(s.after?.level))}</strong></td></tr>
+        </tbody>
+      </table>
+      <button class="btn" data-msg-attempt="${esc(s.module)}:${esc(s.attemptId)}">${INBOX_UZ.openAttempt}</button>
+    </div>`;
+  }
+
+  function inboxScreen() {
+    const data = state.inbox;
+    if (!data) return `<div class="center-note"><span class="spinner"></span></div>`;
+    const sel = state.inboxSel && data.messages.find(m => m.id === state.inboxSel);
+    if (sel) {
+      const canDelete = !(sel.kind === 'gift' && !sel.gift?.claimed);
+      return `<button class="crumb" data-inbox-back>${icon('left')} ${INBOX_UZ.back}</button>
+        <article class="card inbox-msg">
+          <header class="inbox-msg-head">
+            <span class="inbox-ic is-${sel.kind}" aria-hidden="true">${sel.kind === 'gift' ? '🎁' : sel.kind === 'score' ? '📈' : icon('mail')}</span>
+            <div><h1>${esc(sel.title)}</h1><span class="muted">${esc(inboxDate(sel.at))}</span></div>
+          </header>
+          ${sel.html ? `<div class="msg-body">${sel.html}</div>` : ''}
+          ${sel.kind === 'score' && sel.score ? scoreTable(sel.score) : ''}
+          ${sel.kind === 'gift' && sel.gift ? giftBox(sel) : ''}
+          ${canDelete ? `<div class="inbox-msg-foot"><button class="link-more" data-msg-del="${esc(sel.id)}">${INBOX_UZ.del}</button></div>` : ''}
+        </article>`;
+    }
+    const strip = html => {
+      const d = document.createElement('div');
+      d.innerHTML = String(html || '').replace(/<\/(p|div|li|h2|h3|blockquote)>|<br\s*\/?>/gi, ' $&');
+      return (d.textContent || '').replace(/\s+/g, ' ').trim();
+    };
+    const rows = data.messages.map(m => {
+      const waiting = m.kind === 'gift' && !m.gift?.claimed;
+      return `<button class="inbox-row ${m.read && !waiting ? '' : 'is-unread'}" data-inbox-open="${esc(m.id)}">
+        <span class="inbox-ic is-${m.kind}" aria-hidden="true">${m.kind === 'gift' ? '🎁' : m.kind === 'score' ? '📈' : icon('mail')}</span>
+        <span class="inbox-row-main">
+          <span class="inbox-row-title">${esc(m.title)}</span>
+          <span class="inbox-row-text">${waiting ? `<b class="inbox-gift-tag">${INBOX_UZ.giftWaiting}</b> ` : ''}${esc(strip(m.html).slice(0, 110))}</span>
+        </span>
+        <span class="inbox-row-side"><span class="muted">${esc(inboxDate(m.at, true))}</span>${!m.read ? `<span class="inbox-dot" aria-label="${INBOX_UZ.newTag}"></span>` : ''}</span>
+      </button>`;
+    }).join('');
+    return `<div class="page-head"><h1>${INBOX_UZ.title}</h1></div>
+      ${rows ? `<div class="card inbox-list">${rows}</div>` : `<div class="card"><p class="muted">${INBOX_UZ.empty}</p></div>`}`;
+  }
+
+  function inboxBanner() {
+    if (!state.unread) return '';
+    return `<button class="inbox-banner" data-go="inbox"><span>${esc(INBOX_UZ.banner(state.unread))}</span><span class="inbox-banner-go">${INBOX_UZ.bannerOpen} ${icon('right')}</span></button>`;
+  }
+
+  function wireInbox() {
+    if (state.screen !== 'inbox') return;
+    root.querySelectorAll('[data-inbox-open]').forEach(el => el.addEventListener('click', () => openMessage(el.dataset.inboxOpen)));
+    root.querySelector('[data-inbox-back]')?.addEventListener('click', () => { state.inboxSel = null; render(); });
+    root.querySelectorAll('[data-gift-open]').forEach(el => el.addEventListener('click', () => giftOpen(el.dataset.giftOpen)));
+    root.querySelectorAll('[data-gift-claim]').forEach(el => el.addEventListener('click', () => giftClaim(el.dataset.giftClaim)));
+    root.querySelectorAll('[data-msg-del]').forEach(el => el.addEventListener('click', () => deleteMessage(el.dataset.msgDel)));
+    root.querySelectorAll('[data-msg-attempt]').forEach(el => el.addEventListener('click', () => {
+      const [module, id] = el.dataset.msgAttempt.split(':');
+      if (module === 'writing') openWritingResult(id); else openResult(id);
+    }));
+  }
+
+  setInterval(() => { if (document.visibilityState === 'visible') loadUnread(); }, 90 * 1000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadUnread(); });
+  setTimeout(loadUnread, 1500);
+
+  // =========================================================== EXPERT SCORE
+  //
+  // Admin only, on the result itself: the bands of a real expert examiner
+  // replace the marker's, the score is recalculated, and the student gets a
+  // message with the old and new scores (services/ExpertReview.js).
+
+  const EXPERT_PARTS = {
+    speaking: [['part11', 'Part 1.1', 5], ['part12', 'Part 1.2', 5], ['part2', 'Part 2', 5], ['part3', 'Part 3', 6]],
+    writing: [['part11', 'Part 1.1', 5], ['part12', 'Part 1.2', 5], ['part2', 'Part 2', 6]]
+  };
+
+  function expertForm(module, parts, current, reviewedAt) {
+    if (state.user?.role !== 'admin') return '';
+    const fields = parts.map(([key, name, max]) => `
+      <label class="expert-field"><span class="muted">${name} <small>/ ${max}</small></span>
+        <input type="number" min="0" max="${max}" step="0.5" data-expert="${key}" value="${current[key] ?? ''}" inputmode="decimal"></label>`).join('');
+    return `<div class="card expert-card">
+      <strong>Expert score — changes the student's result</strong>
+      <p class="muted" style="margin-top:4px;font-size:13px">Type the bands a real expert examiner gives (halves allowed). The score and level are recalculated with the official table,
+        the student's result changes, and they get a message showing every part, the mark, the converted score and the level — old and new.
+        ${module === 'speaking' ? 'The same bands also teach the marker.' : ''} A re-mark will not run over an expert score.</p>
+      <div class="row" style="gap:12px;flex-wrap:wrap;margin-top:12px;align-items:flex-end">${fields}</div>
+      <div class="row" style="gap:12px;margin-top:12px;flex-wrap:wrap;align-items:center">
+        <label style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:220px">
+          <span class="muted" style="font-size:12px">Note for your records (optional, not shown to the student)</span>
+          <input type="text" id="expert-note" maxlength="600"></label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="expert-notify" checked> Send the student a message</label>
+        <button class="btn btn-sm" data-expert-save="${module}" ${state.loading ? 'disabled' : ''}>Update the score</button>
+      </div>
+      ${reviewedAt ? `<p class="muted" style="margin-top:10px;font-size:13px">Expert score set ${esc(fmtDate(reviewedAt))}. Saving again replaces it.</p>` : ''}
+    </div>`;
+  }
+
+  async function saveExpertScore(module) {
+    const body = {};
+    root.querySelectorAll('[data-expert]').forEach(input => { if (input.value.trim() !== '') body[input.dataset.expert] = Number(input.value); });
+    body.note = document.getElementById('expert-note')?.value?.trim() || '';
+    body.notify = document.getElementById('expert-notify')?.checked !== false;
+    const id = module === 'writing' ? state.writingResult?.id : state.result?.id;
+    if (!window.confirm(`Change this student's ${module} score${body.notify ? ' and send them a message' : ''}?`)) return;
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const out = await api(`/admin/${module === 'writing' ? 'writing' : 'results'}/${id}/expert-score`, { method: 'POST', body });
+      const sc = v => (v === null || v === undefined ? '—' : `${v}/75`);
+      const notice = `Score updated: ${sc(out.before.score)} (${LEVEL_EN(out.before.level)}) → ${sc(out.after.score)} (${LEVEL_EN(out.after.level)}).${out.message ? ' The student has been sent a message.' : ''}`;
+      if (module === 'writing') { setState({ loading: false }); await refreshWritingResult(id); setState({ notice }); }
+      else { const result = await api(`/exam/results/${id}`); setState({ result, loading: false, notice }); }
+    } catch (error) { setState({ loading: false, error: error.message }); }
   }
 
   // =========================================================== LEADERBOARD
@@ -5782,7 +6050,7 @@
     { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'writing', 'writing-check', 'briefing'] },
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
-    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install'] }
+    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install', 'inbox'] }
   ];
   const currentTab = () => TABS.find(t => t.screens.includes(state.screen))?.id || '';
   const isStudentShell = () => Boolean(state.user) && state.user.role !== 'admin';
@@ -5864,6 +6132,9 @@
       <div class="nav-links nav-desktop">${links}</div>
       <div class="nav-right">
         ${canLeave()
+          ? `<button class="nav-inbox ${state.screen === 'inbox' ? 'is-current' : ''}" data-go="inbox" aria-label="Xabarlar${state.unread ? ` — ${state.unread} ta yangi` : ''}">${icon('mail')}${state.unread ? `<span class="nav-badge">${state.unread > 9 ? '9+' : state.unread}</span>` : ''}</button>`
+          : ''}
+        ${canLeave()
           ? `<button class="nav-me${premiumClass(me)}" data-go="profile" aria-label="Profil">${safePic(me.avatar) ? picInner(me) : `<span>${esc(initials)}</span>`}</button>`
           : ''}
       </div>
@@ -5923,6 +6194,7 @@
       eh: ehScreen,
       duel: duelScreen,
       vr: vrScreen,
+      inbox: inboxScreen,
       install: installScreen
     }[state.screen] || landingScreen;
 
@@ -6006,6 +6278,7 @@
    * of whatever contains it, so tiles and buttons need no icon-specific colours.
    */
   const ICONS = {
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
     mic: '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
     pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     trophy: '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
@@ -6759,6 +7032,7 @@
 
     return `
       ${accessNotice()}
+      ${inboxBanner()}
       <div class="home-hello">
         <h1>${esc(HOME_UZ.hello(name))}</h1>
         <p class="muted">${HOME_UZ.sub}</p>
@@ -7848,6 +8122,7 @@
         <div class="muted">${esc(r.exam?.title || 'Exam')}</div>
         <div class="score-value">${r.overallScore ?? '—'}</div>
         <div class="score-level">${esc(r.overallLevel || '')}</div>
+        ${r.expertReviewed ? '<p class="expert-badge">✓ Reviewed by an expert examiner</p>' : ''}
         <div style="margin-top:12px">
           <span class="badge ${r.isPassed ? 'badge-pass' : 'badge-fail'}">${r.isPassed ? 'Passed' : 'Not yet passed'}</span>
         </div>
@@ -7860,6 +8135,9 @@
       </div>
 
       ${criteriaCard()}
+      ${r.status === 'completed' ? expertForm('speaking',
+        r.mode === 'practice' && (r.criteria || []).length ? EXPERT_PARTS.speaking.filter(([k]) => r.criteria.some(c => c.key === k)) : EXPERT_PARTS.speaking,
+        Object.fromEntries((r.criteria || []).map(c => [c.key, c.band])), r.expertReviewedAt) : ''}
 
       ${r.overallFeedback ? `<div class="card">
         <div class="section-head"><h2>Umumiy baho</h2>
@@ -8019,6 +8297,8 @@
 
   function wire() {
     resolveAuthedMedia();
+    wireInbox();
+    root.querySelectorAll('[data-expert-save]').forEach(el => el.addEventListener('click', () => saveExpertScore(el.dataset.expertSave)));
 
     root.querySelectorAll('[data-open-attempt]').forEach(el =>
       el.addEventListener('click', () => {
@@ -8049,6 +8329,7 @@
         else if (target === 'rank') openRank();
         else if (target === 'profile') openProfile();
         else if (target === 'topup') openTopup();
+        else if (target === 'inbox') openInbox();
         else go(target);
       });
     });

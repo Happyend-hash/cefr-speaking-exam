@@ -178,14 +178,15 @@ export function presentWritingAttempt(attempt) {
       minWords: brief.minWords,
       words: slot.words || countWords(slot.text),
       band: marked ? slot.band : null,
-      label: marked ? slot.label || writingLabel(meta.key, slot.band) : '',
-      descriptor: marked ? writingDescriptor(meta.key, slot.band) : [],
-      next: marked ? writingNextBand(meta.key, slot.band) : null,
+      label: marked ? slot.label || writingLabel(meta.key, Math.floor(slot.band)) : '',
+      descriptor: marked ? writingDescriptor(meta.key, Math.floor(slot.band)) : [],
+      next: marked ? writingNextBand(meta.key, Math.floor(slot.band)) : null,
       reasoning: slot.reasoning || '',
       feedback: slot.feedback || '',
       corrections: fixes,
       segments: marked ? correctionSegments(slot.text, fixes) : [],
-      underLength: slot.underLength?.applied
+      // An expert's band replaces the length cap, so the cap note no longer applies.
+      underLength: slot.underLength?.applied && !a.expertReview?.at
         ? { threshold: slot.underLength.threshold, cap: slot.underLength.cap, markerBand: slot.underLength.markerBand }
         : null
     };
@@ -211,6 +212,9 @@ export function presentWritingAttempt(attempt) {
     failureReason: a.status === 'failed' ? a.failureReason || '' : '',
     creditCost: a.creditCost || 0,
     emailed: Boolean(a.emailedAt),
+    // Reviewed by an expert who changed the score (services/ExpertReview.js).
+    expertReviewed: Boolean(a.expertReview?.at),
+    expertReviewedAt: a.expertReview?.at || null,
     parts
   };
 }

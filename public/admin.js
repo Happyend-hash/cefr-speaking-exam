@@ -81,6 +81,12 @@
     csPayAmount: undefined,
     csPayDate: '',
     csFee: undefined,
+    msgOpen: false,          // the Messages card
+    msg: null,               // { sent, maxGift } once loaded
+    msgDraft: { to: 'all', picked: [], title: '', html: '', giftOn: false, gs: 1, gw: 0 },
+    msgFind: '',
+    msgFound: [],
+    reviewModule: 'speaking', // the review queue: speaking or writing attempts
     refreshing: false,       // the Refresh button is working
     refreshedAt: '',         // when it last finished, shown next to it
     usage: null,             // the "Website use" numbers, refreshed every 2 min
@@ -135,7 +141,7 @@
    * is picked up too), then opens again the cards, groups and student that
    * were open and goes back to the same place on the page.
    */
-  const OPEN_CARDS = ['csOpen', 'reviewOpen', 'studentsOpen', 'voiceOpen', 'chatOpen', 'picturesOpen', 'sponsorsOpen', 'calibrationOpen'];
+  const OPEN_CARDS = ['msgOpen', 'csOpen', 'reviewOpen', 'studentsOpen', 'voiceOpen', 'chatOpen', 'picturesOpen', 'sponsorsOpen', 'calibrationOpen'];
   function refreshAll() {
     if (state.refreshing) return;
     setState({ refreshing: true });
@@ -165,6 +171,7 @@
     state.csSel = saved.csSel || null;
     await Promise.all([
       open.has('csOpen') ? loadCourse({}) : null,
+      open.has('msgOpen') ? loadMessages({}) : null,
       open.has('reviewOpen') ? loadReview({}) : null,
       open.has('studentsOpen') ? loadStudents({}) : null,
       open.has('voiceOpen') ? loadVoice({}) : null,
@@ -262,6 +269,7 @@
         ${usageCard()}
         ${unmarkedCard()}
         ${courseCard()}
+        ${messagesCard()}
         ${reviewCard()}
         ${studentsCard()}
         ${voiceCard()}
@@ -324,7 +332,24 @@
       <button class="btn btn-sm ${state.reviewOnly === value ? '' : 'btn-ghost'}"
               data-review-filter="${value}">${label}</button>`).join('');
 
-    const rows = (data?.results || []).map(r => `
+    const writing = state.reviewModule === 'writing';
+    const modules = [['speaking', 'Speaking'], ['writing', 'Writing']].map(([value, label]) => `
+      <button class="btn btn-sm ${state.reviewModule === value ? '' : 'btn-ghost'}" data-review-module="${value}">${label}</button>`).join('');
+    const writingRows = (data?.results || []).map(r => `
+      <div class="row" style="justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">
+        <div style="min-width:220px">
+          <strong>${esc(r.studentName || r.student)}</strong>
+          ${r.reviewed ? '<span class="tag tag-live">expert reviewed</span>' : ''}
+          <div class="muted" style="font-size:13px">${esc(r.title)} · ${r.parts} part${r.parts === 1 ? '' : 's'}</div>
+        </div>
+        <div class="muted" style="font-size:13px">${r.at ? new Date(r.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : ''}</div>
+        <div class="row" style="gap:10px;align-items:center">
+          <span><strong>${r.score ?? '—'}</strong><span class="muted"> / 75</span></span>
+          <span class="tag">${esc(r.level || '')}</span>
+          <a class="btn btn-sm" href="/?writing=${encodeURIComponent(r.id)}" target="_blank" rel="noopener">Review</a>
+        </div>
+      </div>`).join('');
+    const rows = writing ? writingRows : (data?.results || []).map(r => `
       <div class="row" style="justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">
         <div style="min-width:220px">
           <strong>${esc(r.studentName || r.student)}</strong>
@@ -352,10 +377,13 @@
         <button class="btn btn-ghost btn-sm" data-action="review-close">Close</button>
       </div>
       <p class="muted" style="margin-top:6px">
-        ${data ? `${data.uncorrected} attempt${data.uncorrected === 1 ? '' : 's'} not yet reviewed.` : ''}
-        Opening one shows the recordings and the marker's bands, with your own marking underneath.
+        ${writing
+          ? `${data?.unreviewed ?? 0} writing attempt${data?.unreviewed === 1 ? '' : 's'} not yet reviewed by you. Opening one shows the texts and bands; under them you can set the expert score, and the student gets a message with the old and new scores.`
+          : `${data ? `${data.uncorrected} attempt${data.uncorrected === 1 ? '' : 's'} not yet reviewed.` : ''}
+        Opening one shows the recordings and the marker's bands, with your own marking underneath — and the expert score, which changes the student's result and sends them a message.`}
       </p>
       <div class="row" style="gap:10px;margin-top:14px;flex-wrap:wrap">
+        ${modules}<span class="msg-sep"></span>
         ${filters}
         <button class="btn btn-ghost btn-sm" data-action="review-reload" ${state.loading ? 'disabled' : ''}>
           ${state.loading ? 'Loading…' : 'Refresh'}
@@ -512,6 +540,7 @@
                   title="Adds ${packageLabel()} on top of what is left">Add package (${packageLabel()})</button>
           <button class="btn btn-ghost btn-sm" data-access="${s.blocked ? 'unblock' : 'block'}"
                   data-id="${esc(s.id)}">${s.blocked ? 'Unblock' : 'Block'}</button>
+          <button class="btn btn-ghost btn-sm" data-msg-write="${esc(s.id)}" data-name="${esc(s.name)}" data-email="${esc(s.email)}" title="Write to this student, or send a gift">✉ Message</button>
           ${s.waitingForEmail
             ? `<button class="btn btn-ghost btn-sm" data-access="confirm-email" data-id="${esc(s.id)}"
                        title="Let this student in without the emailed code">Confirm email</button>`
@@ -1263,6 +1292,7 @@
   function wire() {
     wireUsage();
     wireCourseAdmin();
+    wireMessagesAdmin();
     wireVoiceAdmin();
     wireChatAdmin();
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
@@ -1355,6 +1385,8 @@
 
     root.querySelectorAll('[data-review-filter]').forEach(el =>
       el.addEventListener('click', () => loadReview({ only: el.dataset.reviewFilter })));
+    root.querySelectorAll('[data-review-module]').forEach(el =>
+      el.addEventListener('click', () => { state.reviewModule = el.dataset.reviewModule; state.review = null; loadReview({}); }));
 
     root.querySelectorAll('[data-student-filter]').forEach(el =>
       el.addEventListener('click', () => loadStudents({ only: el.dataset.studentFilter })));
@@ -1391,6 +1423,8 @@
     if (action === 'calibration-check') return runCalibrationCheck();
     if (action === 'sample-add') return setState({ addingSample: true, error: '' });
     if (action === 'sample-cancel') return setState({ addingSample: false });
+    if (action === 'msg-open') return loadMessages({ open: true });
+    if (action === 'msg-close') return setState({ msgOpen: false });
     if (action === 'review-open') return loadReview({ open: true });
     if (action === 'review-close') return setState({ reviewOpen: false });
     if (action === 'review-reload') return loadReview({});
@@ -2875,11 +2909,213 @@
     try {
       const query = new URLSearchParams();
       if (nextOnly) query.set('only', nextOnly);
-      const data = await api(`/admin/results?${query}`);
+      const data = await api(`/admin/${state.reviewModule === 'writing' ? 'writing-results' : 'results'}?${query}`);
       setState({ review: data, loading: false });
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
+  }
+
+
+  // ------------------------------------------------------------- messages
+
+  const MSG_COLORS = [['#0f172a', 'Black'], ['#dc2626', 'Red'], ['#ea580c', 'Orange'], ['#ca8a04', 'Gold'], ['#16a34a', 'Green'], ['#2563eb', 'Blue'], ['#7c3aed', 'Purple'], ['#db2777', 'Pink']];
+  const MSG_MARKS = [['#fef08a', 'Yellow'], ['#bbf7d0', 'Green'], ['#bfdbfe', 'Blue'], ['#fbcfe8', 'Pink']];
+  const MSG_SIZES = [['2', 'Small'], ['3', 'Normal'], ['5', 'Large'], ['6', 'Huge']];
+  const MSG_EMOJI = ['🎉', '🎁', '🔥', '⭐', '✅', '📢', '🏆', '💪', '📚', '❤️'];
+
+  /**
+   * Messages to students (Jamshid, 2026-10-23): one, several, his course
+   * students or everyone, with bold, colours and sizes, and an optional gift
+   * of mocks the student unwraps and activates. Below it, what was sent and
+   * how many have read it.
+   */
+  function messagesCard() {
+    if (!state.msgOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Messages</h2>
+        <p class="muted" style="margin-top:6px">Write to one student, a few, your course students or everyone — website updates, news, anything —
+          with colours and bold text. Add a 🎁 gift of mocks to motivate someone: they unwrap it and press <em>Activate</em>.</p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="msg-open">Open messages</button>
+      </div>`;
+    }
+    const d = state.msgDraft;
+    const toBtn = (v, label) => `<button type="button" class="btn btn-sm ${d.to === v ? '' : 'btn-ghost'}" data-msg-to="${v}" aria-pressed="${d.to === v}">${label}</button>`;
+    const picker = d.to === 'pick' ? `<div class="msg-pick">
+        <div class="msg-chips">${d.picked.map(p => `<span class="msg-chip">${esc(p.name || p.email)}<button type="button" data-msg-unpick="${esc(p.id)}" aria-label="Remove ${esc(p.name || p.email)}">×</button></span>`).join('') || '<span class="muted" style="font-size:13px">No one chosen yet — search below.</span>'}</div>
+        <input id="msg-find" type="search" placeholder="Search a student by name or email" value="${esc(state.msgFind)}" autocomplete="off">
+        ${state.msgFound.length ? `<div class="msg-found">${state.msgFound.map(s => `<button type="button" data-msg-pick="${esc(s.id)}" data-name="${esc(s.name)}" data-email="${esc(s.email)}" ${d.picked.some(p => p.id === s.id) ? 'disabled' : ''}>
+            <strong>${esc(s.name || s.email)}</strong><span class="muted">${esc(s.email)}</span></button>`).join('')}</div>` : ''}
+      </div>` : '';
+    const tool = (cmd, label, title, arg = '') => `<button type="button" class="msg-tool" data-msg-cmd="${cmd}" data-arg="${esc(arg)}" title="${esc(title)}" aria-label="${esc(title)}">${label}</button>`;
+    const toolbar = `<div class="msg-toolbar" role="toolbar" aria-label="Text style">
+        ${tool('bold', '<b>B</b>', 'Bold')}${tool('italic', '<i>I</i>', 'Italic')}${tool('underline', '<u>U</u>', 'Underline')}${tool('strikeThrough', '<s>S</s>', 'Strike through')}
+        <span class="msg-sep"></span>
+        ${MSG_SIZES.map(([v, l]) => tool('fontSize', l, `${l} text`, v)).join('')}
+        ${tool('formatBlock', 'Heading', 'Heading', 'h3')}${tool('formatBlock', '¶', 'Normal paragraph', 'p')}
+        <span class="msg-sep"></span>
+        ${MSG_COLORS.map(([c, l]) => `<button type="button" class="msg-swatch" style="background:${c}" data-msg-cmd="foreColor" data-arg="${c}" title="${l} text" aria-label="${l} text"></button>`).join('')}
+        <span class="msg-sep"></span>
+        ${MSG_MARKS.map(([c, l]) => `<button type="button" class="msg-swatch is-mark" style="background:${c}" data-msg-cmd="hiliteColor" data-arg="${c}" title="${l} highlight" aria-label="${l} highlight">A</button>`).join('')}
+        <span class="msg-sep"></span>
+        ${tool('insertUnorderedList', '• List', 'Bullet list')}${tool('insertOrderedList', '1. List', 'Numbered list')}
+        ${tool('justifyLeft', '⇤', 'Align left')}${tool('justifyCenter', '↔', 'Centre')}
+        ${tool('createLink', '🔗', 'Add a link')}${tool('removeFormat', '✕ Style', 'Clear style')}
+        <span class="msg-sep"></span>
+        ${MSG_EMOJI.map(e => tool('insertText', e, `Insert ${e}`, e)).join('')}
+      </div>`;
+    const sent = state.msg?.sent || [];
+    const fmt = at => new Date(at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const rows = sent.map(m => `<div class="msg-sent-row">
+        <div class="msg-sent-main">
+          <strong>${m.kind === 'gift' ? '🎁 ' : m.kind === 'score' ? '📈 ' : ''}${esc(m.title)}</strong>
+          <span class="muted">${esc(m.preview)}</span>
+          <span class="muted msg-sent-meta">${esc(fmt(m.at))} · to ${m.to ? esc(m.to.join(', ')) : `${m.recipients} students`}${m.gift ? ` · gift: ${[m.gift.speaking ? `${m.gift.speaking} speaking` : '', m.gift.writing ? `${m.gift.writing} writing` : ''].filter(Boolean).join(' + ')}` : ''}</span>
+        </div>
+        <div class="msg-sent-stats">
+          <span><b>${m.read}</b>/${m.recipients} read</span>
+          ${m.gift ? `<span><b>${m.claimed}</b>/${m.recipients} activated</span>` : ''}
+          <button type="button" class="btn btn-ghost btn-sm" data-msg-withdraw="${esc(m.batch)}" data-title="${esc(m.title)}">Withdraw</button>
+        </div>
+      </div>`).join('');
+
+    return `<div class="card msg-card" id="msg-card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Messages</h2>
+        <button class="btn btn-ghost btn-sm" data-action="msg-close">Close</button>
+      </div>
+      <form class="msg-compose" id="msg-compose">
+        <div class="msg-field"><span class="msg-label">To</span>
+          <div class="row" style="gap:6px;flex-wrap:wrap">${toBtn('all', 'Every student')}${toBtn('course', 'My course students')}${toBtn('pick', 'Chosen students')}</div>
+          ${d.to === 'course' ? '<span class="muted" style="font-size:12px">The students whose Gmail you linked in Course students.</span>' : ''}
+          ${picker}
+        </div>
+        <label class="msg-field"><span class="msg-label">Title</span>
+          <input id="msg-title" type="text" maxlength="140" placeholder="e.g. New: vocabulary homework on the website" value="${esc(d.title)}"></label>
+        <div class="msg-field"><span class="msg-label">Message</span>
+          ${toolbar}
+          <div id="msg-editor" class="msg-editor msg-body" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message text" data-placeholder="Write your message…"></div>
+        </div>
+        <div class="msg-gift ${d.giftOn ? 'is-on' : ''}">
+          <label class="msg-gift-toggle"><input type="checkbox" id="msg-gift-on" ${d.giftOn ? 'checked' : ''}> 🎁 Add a gift of mocks</label>
+          ${d.giftOn ? `<div class="row" style="gap:12px;flex-wrap:wrap;align-items:center">
+            <label>Speaking <input type="number" id="msg-gs" min="0" max="${state.msg?.maxGift || 10}" value="${esc(d.gs)}"></label>
+            <label>Writing <input type="number" id="msg-gw" min="0" max="${state.msg?.maxGift || 10}" value="${esc(d.gw)}"></label>
+            <span class="muted" style="font-size:12px">Each student gets their own gift. The mocks go on their account when they press Activate — not before.</span>
+          </div>` : ''}
+        </div>
+        <div class="row" style="gap:8px;justify-content:flex-end;flex-wrap:wrap">
+          <button type="button" class="btn btn-ghost btn-sm" data-msg-clear>Clear</button>
+          <button type="submit" class="btn" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Sending…' : 'Send message'}</button>
+        </div>
+      </form>
+      <h3 class="msg-sent-title">Sent</h3>
+      ${rows || '<p class="muted" style="font-size:13px">Nothing sent yet.</p>'}
+      <p class="muted" style="font-size:12px;margin-top:8px">Score updates from an expert review (📈) are written to the student by the site itself and appear here too.</p>
+    </div>`;
+  }
+
+  async function loadMessages({ open } = {}) {
+    setState({ msgOpen: open || state.msgOpen, loading: true, error: '' });
+    try { setState({ msg: await api('/admin/messages'), loading: false }); }
+    catch (error) { setState({ loading: false, error: error.message }); }
+  }
+
+  let msgFindTimer = null;
+  function wireMessagesAdmin() {
+    root.querySelectorAll('[data-msg-write]').forEach(el => el.addEventListener('click', () => {
+      state.msgDraft.to = 'pick';
+      if (!state.msgDraft.picked.some(p => p.id === el.dataset.msgWrite)) state.msgDraft.picked.push({ id: el.dataset.msgWrite, name: el.dataset.name, email: el.dataset.email });
+      loadMessages({ open: true }).then(() => document.getElementById('msg-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }));
+    if (!state.msgOpen) return;
+    const d = state.msgDraft;
+    const editor = document.getElementById('msg-editor');
+    if (editor) {
+      editor.innerHTML = d.html;
+      editor.addEventListener('input', () => { d.html = editor.innerHTML; });
+      editor.addEventListener('paste', e => {
+        // Pasted text comes in plain, so another site's fonts and layout never arrive with it.
+        e.preventDefault();
+        document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
+      });
+    }
+    root.querySelectorAll('[data-msg-cmd]').forEach(el => {
+      el.addEventListener('mousedown', e => e.preventDefault());   // keep the selection in the editor
+      el.addEventListener('click', () => {
+        if (!editor) return;
+        editor.focus();
+        const cmd = el.dataset.msgCmd;
+        let arg = el.dataset.arg || null;
+        if (cmd === 'createLink') {
+          arg = window.prompt('Link address (https://…)', 'https://');
+          if (!arg || !/^https?:\/\/\S+$/i.test(arg)) return;
+        }
+        try { document.execCommand('styleWithCSS', false, true); } catch { /* old browsers */ }
+        document.execCommand(cmd, false, cmd === 'formatBlock' ? `<${arg}>` : arg);
+        d.html = editor.innerHTML;
+      });
+    });
+    root.querySelectorAll('[data-msg-to]').forEach(el => el.addEventListener('click', () => { d.to = el.dataset.msgTo; render(); }));
+    document.getElementById('msg-title')?.addEventListener('input', e => { d.title = e.target.value; });
+    document.getElementById('msg-gift-on')?.addEventListener('change', e => { d.giftOn = e.target.checked; render(); });
+    document.getElementById('msg-gs')?.addEventListener('input', e => { d.gs = e.target.value; });
+    document.getElementById('msg-gw')?.addEventListener('input', e => { d.gw = e.target.value; });
+    const find = document.getElementById('msg-find');
+    find?.addEventListener('input', () => {
+      state.msgFind = find.value;
+      clearTimeout(msgFindTimer);
+      msgFindTimer = setTimeout(async () => {
+        const q = state.msgFind.trim();
+        if (q.length < 2) { state.msgFound = []; return render(); }
+        try {
+          const data = await api(`/admin/students?${new URLSearchParams({ search: q })}`);
+          state.msgFound = (data.students || []).filter(s => s.role === 'student').slice(0, 8);
+        } catch { state.msgFound = []; }
+        render();
+        const again = document.getElementById('msg-find');
+        if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+      }, 300);
+    });
+    root.querySelectorAll('[data-msg-pick]').forEach(el => el.addEventListener('click', () => {
+      d.picked.push({ id: el.dataset.msgPick, name: el.dataset.name, email: el.dataset.email });
+      state.msgFind = ''; state.msgFound = [];
+      render();
+      document.getElementById('msg-find')?.focus();
+    }));
+    root.querySelectorAll('[data-msg-unpick]').forEach(el => el.addEventListener('click', () => {
+      d.picked = d.picked.filter(p => p.id !== el.dataset.msgUnpick);
+      render();
+    }));
+    root.querySelector('[data-msg-clear]')?.addEventListener('click', () => {
+      state.msgDraft = { to: d.to, picked: d.picked, title: '', html: '', giftOn: false, gs: 1, gw: 0 };
+      render();
+    });
+    document.getElementById('msg-compose')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      if (editor) d.html = editor.innerHTML;
+      if (d.to === 'pick' && !d.picked.length) return setState({ error: 'Choose at least one student.' });
+      const who = d.to === 'all' ? 'EVERY student' : d.to === 'course' ? 'all your course students' : `${d.picked.length} student${d.picked.length === 1 ? '' : 's'}`;
+      const gift = d.giftOn ? { speaking: Number(d.gs) || 0, writing: Number(d.gw) || 0 } : null;
+      if (d.giftOn && !gift.speaking && !gift.writing) return setState({ error: 'Put at least one mock in the gift, or untick it.' });
+      if (!window.confirm(`Send "${d.title || '(no title)'}" to ${who}?${gift ? `\nEach gets a gift: ${gift.speaking} speaking + ${gift.writing} writing.` : ''}`)) return;
+      setState({ loading: true, error: '', notice: '' });
+      try {
+        const out = await api('/admin/messages', {
+          method: 'POST',
+          body: { to: d.to === 'pick' ? d.picked.map(p => p.id) : d.to, title: d.title, html: d.html, gift }
+        });
+        state.msgDraft = { to: d.to, picked: d.to === 'pick' ? [] : d.picked, title: '', html: '', giftOn: false, gs: 1, gw: 0 };
+        setState({ loading: false, msg: { ...(state.msg || {}), sent: out.list }, notice: `Message sent to ${out.sent} student${out.sent === 1 ? '' : 's'}.` });
+      } catch (error) { setState({ loading: false, error: error.message }); }
+    });
+    root.querySelectorAll('[data-msg-withdraw]').forEach(el => el.addEventListener('click', async () => {
+      if (!window.confirm(`Withdraw "${el.dataset.title}" from every student who got it?\nGifts already activated keep their mocks.`)) return;
+      try {
+        const out = await api(`/admin/messages/${el.dataset.msgWithdraw}`, { method: 'DELETE' });
+        setState({ msg: { ...(state.msg || {}), sent: out.list }, notice: `Withdrawn from ${out.removed} student${out.removed === 1 ? '' : 's'}.` });
+      } catch (error) { setState({ error: error.message }); }
+    }));
   }
 
   // ------------------------------------------------------------- students

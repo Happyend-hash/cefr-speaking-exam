@@ -486,6 +486,9 @@ router.post('/attempts/:id/remark', async (req, res, next) => {
     if (attempt.status === 'completed' && !isStaff(req.user)) {
       throw new APIError('Only a teacher can re-mark a finished result', 403);
     }
+    if (attempt.status === 'completed' && attempt.expertReview?.at) {
+      throw new APIError('This score was set by an expert review. Re-marking would replace it, so it is not re-marked.', 409);
+    }
 
     await WritingAttempt.updateOne(
       { _id: attempt._id },

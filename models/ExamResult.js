@@ -267,6 +267,24 @@ const examResultSchema = new mongoose.Schema(
      * and a certificate disagree you need to know which anchors came from the
      * agency and which from a teacher's ear.
      */
+    /**
+     * An expert's review that CHANGED the reported score (Jamshid,
+     * 2026-10-23) — unlike teacherBands above, which only teach the marker.
+     * `before` is what the student had, so the change can be shown and undone
+     * by hand; a re-mark refuses to run over it.
+     */
+    expertReview: {
+      at: Date,
+      by: String,
+      note: String,
+      before: {
+        bands: { part11: Number, part12: Number, part2: Number, part3: Number },
+        mark: Number,
+        score: Number,
+        level: String
+      }
+    },
+
     teacherBands: {
       part11: Number,
       part12: Number,

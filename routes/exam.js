@@ -342,6 +342,8 @@ router.get('/results/:resultId', async (req, res, next) => {
         overallScore: result.overallScore ?? null,
         overallLevel: result.overallLevel,
         isPassed: result.isPassed,
+        mode: result.mode || 'mock',
+        part: result.part || null,
         // 'average-fallback' means the score is an estimate from averaging
         // the answers; the student is told it may change on re-marking.
         markingMethod: result.markingMethod || null,
@@ -365,6 +367,9 @@ router.get('/results/:resultId', async (req, res, next) => {
         // only rendered for admins — it is not secret, it is simply not a
         // student's business which way their teacher disagreed with a marker.
         teacherBands: result.teacherBands?.correctedAt ? result.teacherBands : null,
+        // An expert review that changed the score (services/ExpertReview.js).
+        expertReviewed: Boolean(result.expertReview?.at),
+        expertReviewedAt: result.expertReview?.at || null,
         // Always sent, even unassessed: the client has to be able to say
         // "not assessed" rather than quietly leaving the criterion out, which
         // would read as though pronunciation had simply been forgotten.

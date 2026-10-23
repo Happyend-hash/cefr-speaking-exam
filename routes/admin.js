@@ -31,6 +31,8 @@ import { listUnmarked, retryOne, retryAll } from '../services/MarkingRetry.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { usageReport } from '../services/UsageStats.js';
+import WritingAttempt from '../models/WritingAttempt.js';
+import { reviewSpeaking, reviewWriting } from '../services/ExpertReview.js';
 
 const router = express.Router();
 
@@ -889,7 +891,8 @@ router.get('/results/remark', async (req, res, next) => {
     const student = await resolveStudent(req.query.email, req.user.id);
     const attempts = await ExamResult.countDocuments({
       student,
-      status: { $in: REMARKABLE }
+      status: { $in: REMARKABLE },
+      'expertReview.at': { $exists: false }
     });
 
     res.json({
@@ -914,7 +917,8 @@ router.get('/results/remark', async (req, res, next) => {
 router.post('/results/remark', async (req, res, next) => {
   try {
     const student = await resolveStudent(req.body?.email, req.user.id);
-    const attempts = await ExamResult.find({ student, status: { $in: REMARKABLE } })
+    // An expert's score is never run over by the AI again.
+    const attempts = await ExamResult.find({ student, status: { $in: REMARKABLE }, 'expertReview.at': { $exists: false } })
       .select('_id')
       .lean();
 
@@ -972,8 +976,11 @@ router.post('/results/remark', async (req, res, next) => {
  */
 router.post('/results/:id/remark', async (req, res, next) => {
   try {
-    const result = await ExamResult.findById(req.params.id).select('status');
+    const result = await ExamResult.findById(req.params.id).select('status expertReview');
     if (!result) throw new APIError('Attempt not found', 404);
+    if (result.expertReview?.at) {
+      throw new APIError('This score was set by an expert review. Re-marking would replace it, so it is not re-marked.', 409);
+    }
     if (!REMARKABLE.includes(result.status)) {
       throw new APIError(
         `Only a completed or submitted attempt can be re-marked (this one is "${result.status}").`,
@@ -1791,6 +1798,72 @@ router.post('/results/:id/bands', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+/**
+ * @route   POST /api/admin/results/:id/expert-score
+ * @desc    An expert review that CHANGES the student's score (Jamshid,
+ *          2026-10-23): the bands replace the marker's, the score and level
+ *          are recalculated by the official table, and the student gets a
+ *          message with the old and new scores. { part11, part12, part2, part3, note, notify }
+ */
+router.post('/results/:id/expert-score', async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid result id', 400);
+    const result = await ExamResult.findById(req.params.id).populate('exam', 'title');
+    if (!result) throw new APIError('Attempt not found', 404);
+    const out = await reviewSpeaking(result, req.body || {}, {
+      by: req.user.email || String(req.user.id), note: req.body?.note, notify: req.body?.notify !== false
+    });
+    res.json({ success: true, message: 'Score updated.', data: out });
+  } catch (error) { next(error); }
+});
+
+/** @route GET /api/admin/writing-results — finished writing attempts, newest first, for review. */
+router.get('/writing-results', async (req, res, next) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 40, 200);
+    const filter = { status: 'completed' };
+    if (req.query.only === 'uncorrected') filter['expertReview.at'] = { $exists: false };
+    if (req.query.only === 'corrected') filter['expertReview.at'] = { $exists: true };
+    const list = await WritingAttempt.find(filter)
+      .sort({ markedAt: -1, createdAt: -1 })
+      .limit(limit)
+      .populate('student', 'email firstName lastName')
+      .select('student mode testTitle score level complete expertMark expertReview markedAt createdAt submittedParts')
+      .lean();
+    res.json({
+      success: true,
+      data: {
+        results: list.map(a => ({
+          id: String(a._id),
+          student: a.student?.email || '—',
+          studentName: [a.student?.firstName, a.student?.lastName].filter(Boolean).join(' '),
+          title: a.testTitle || (a.mode === 'check' ? 'Writing check' : 'Writing mock'),
+          mode: a.mode,
+          parts: (a.submittedParts || []).length,
+          score: a.score ?? null,
+          level: a.level || '',
+          reviewed: Boolean(a.expertReview?.at),
+          at: a.markedAt || a.createdAt
+        })),
+        unreviewed: await WritingAttempt.countDocuments({ status: 'completed', 'expertReview.at': { $exists: false } })
+      }
+    });
+  } catch (error) { next(error); }
+});
+
+/** @route POST /api/admin/writing/:id/expert-score — { part11, part12, part2, note, notify } */
+router.post('/writing/:id/expert-score', async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid attempt id', 400);
+    const attempt = await WritingAttempt.findById(req.params.id);
+    if (!attempt) throw new APIError('Attempt not found', 404);
+    const out = await reviewWriting(attempt, req.body || {}, {
+      by: req.user.email || String(req.user.id), note: req.body?.note, notify: req.body?.notify !== false
+    });
+    res.json({ success: true, message: 'Score updated.', data: out });
+  } catch (error) { next(error); }
 });
 
 export default router;

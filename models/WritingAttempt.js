@@ -103,6 +103,19 @@ const writingAttemptSchema = new mongoose.Schema(
       type: String,
       enum: [BELOW_B1, 'B1', 'B2', 'C1', null]
     },
+    // An expert's review that changed the reported score (see ExamResult.expertReview).
+    expertReview: {
+      at: Date,
+      by: String,
+      note: String,
+      before: {
+        bands: { part11: Number, part12: Number, part2: Number },
+        mark: Number,
+        score: Number,
+        level: String,
+        complete: Boolean
+      }
+    },
     overallFeedback: String,
     strengths: [String],
     areasForImprovement: [String],
