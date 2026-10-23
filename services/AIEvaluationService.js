@@ -286,7 +286,7 @@ ${blocks.join('\n\n')}
 Statement: ${d.topic || '(see question)'}
 Points given FOR it: ${d.forSide.join('; ') || '—'}
 Points given AGAINST it: ${d.againstSide.join('; ') || '—'}
-(These are the input prompts the candidate saw. Reading them out is reliance on the input; developing them in their own words, or adding their own points, is not.)` : '';
+(These are the input prompts the candidate saw. Reliance on the input means reading or listing these points with little added — sentences that repeat their wording and stop there. Naming a prompt's idea and then explaining it with the candidate's own reasons, examples or consequences is the candidate's own development, NOT reliance, even when a few of the prompt's words are reused. Only call the response "dependent on the prompts" when the copied wording is most of what was said. Covering both sides is judged separately, as the descriptors say: a response that argues only one side has not built a balanced argument, whatever its language.)` : '';
         return `
 === PART ${part} ===${sides}
 ${group.map(a => `Q: ${a.question}\nA: "${a.transcription}"${

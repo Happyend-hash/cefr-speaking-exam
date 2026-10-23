@@ -41,5 +41,7 @@ test('the prompt carries the official top-band meaning and the cut-off rule', as
     assert.match(sent.user, /spoke until the 30s time limit ran out/);
     assert.doesNotMatch(sent.user, /spoke until the 120s/);
     assert.match(sent.user, /Points given AGAINST it: high cost/);
+    assert.match(sent.user, /is the candidate's own development, NOT reliance/);
+    assert.match(sent.user, /argues only one side has not built a balanced argument/);
   } finally { AIEvaluationService.callClaudeAPI = orig; }
 });
