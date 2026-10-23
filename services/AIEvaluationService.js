@@ -237,11 +237,18 @@ class AIEvaluationService {
         .map(key => `${key} ${anchor.teacherBands?.[key] ?? '—'}`)
         .join(', ');
 
-      const extract = (anchor.taskResults || [])
-        .map(t => String(t.transcription || '').trim())
-        .filter(Boolean)
-        .join(' … ')
-        .slice(0, 700);
+      // Part by part (2026-10-24), so each band can be read against the words
+      // that earned it rather than one 700-character run across all four parts.
+      const byPart = {};
+      for (const t of anchor.taskResults || []) {
+        const text = String(t.transcription || '').trim();
+        if (!text) continue;
+        const part = String(t.type || '').match(/part_(\d(?:\.\d)?)/)?.[1] || '?';
+        (byPart[part] ||= []).push(text);
+      }
+      const extract = Object.keys(byPart).length && !byPart['?']
+        ? Object.entries(byPart).map(([part, texts]) => `\n  Part ${part}: "${texts.join(' … ').slice(0, part === '1.1' || part === '1.2' ? 260 : 420)}"`).join('')
+        : (anchor.taskResults || []).map(t => String(t.transcription || '').trim()).filter(Boolean).join(' … ').slice(0, 700);
 
       const provenance = anchor.teacherBands?.source === 'real-exam'
         ? 'bands confirmed against an official certificate'
@@ -249,7 +256,7 @@ class AIEvaluationService {
 
       return `EXAMPLE ${index + 1} (${provenance})
 Bands awarded: ${bands}
-${anchor.teacherBands?.note ? `Examiner's note: ${anchor.teacherBands.note}\n` : ''}What the candidate said (extract): "${extract}"`;
+${anchor.teacherBands?.note ? `Examiner's note: ${anchor.teacherBands.note}\n` : ''}What the candidate said (extract): ${extract.startsWith('\n') ? extract : `"${extract}"`}`;
     });
 
     return `
@@ -271,12 +278,21 @@ ${blocks.join('\n\n')}
       return groups;
     }, {});
 
+    const debateOf = group => group.find(a => a.debate)?.debate;
     const transcript = Object.entries(byPart)
-      .map(([part, group]) => `
-=== PART ${part} ===
+      .map(([part, group]) => {
+        const d = debateOf(group);
+        const sides = d ? `
+Statement: ${d.topic || '(see question)'}
+Points given FOR it: ${d.forSide.join('; ') || '—'}
+Points given AGAINST it: ${d.againstSide.join('; ') || '—'}
+(These are the input prompts the candidate saw. Reading them out is reliance on the input; developing them in their own words, or adding their own points, is not.)` : '';
+        return `
+=== PART ${part} ===${sides}
 ${group.map(a => `Q: ${a.question}\nA: "${a.transcription}"${
       a.fluency ? `\n[recording: ${describeForMarker(a.fluency)}]` : ''
-    }`).join('\n\n')}`)
+    }${a.usedFullTime ? `\n[spoke until the ${a.answerTime}s time limit ran out — the recording was cut off by the timer]` : ''}`).join('\n\n')}`;
+      })
       .join('\n');
 
     const cached = `You are an expert examiner for the O'zbekiston Multilevel English speaking exam.
@@ -318,6 +334,25 @@ HOW TO AWARD A BAND:
   first B2-level band (Part 2 or Part 3's "Lower B2"). Do not require
   near-flawless grammar to keep such a candidate out of B2 once the
   structures and the fluency are genuinely there.
+- THE TOP BAND OF EACH PART, as the official sheet defines it (Jamshid,
+  2026-10-24): Part 1.1 band 5 = "performance is likely to be above the A2
+  level"; Part 1.2 band 5 = "likely to be above the B1 level"; Part 2 band 5 =
+  "likely to be above the B2 level"; Part 3 band 6 = "likely to be above the C1
+  level". The longer descriptors below describe what such a performance
+  usually looks like — they are not a checklist that must be ticked in full.
+  Ask one question: does the language in THIS part clearly show the features
+  of the level above the part's target (e.g. Part 1.1 answered with B1-or-
+  higher sentence structure, linking and vocabulary, fluently; Part 1.2 with
+  B2 features — some complex structures, a good range of vocabulary, fluent
+  delivery)? If yes, it is the top band; isolated slips (a "more better", a
+  wrong preposition) and the short length the task allows do not prevent it.
+  If the language is only at the part's own target level, it is not.
+- ANSWERS CUT OFF BY THE TIMER: an answer marked "[spoke until the … time
+  limit ran out]" that stops mid-sentence was cut off because the candidate
+  was still talking. That is not an unfinished or undeveloped answer — never
+  lower a band because an answer "is not completed" or "ends abruptly" when
+  the timer ended it. Judge the language and development it shows up to that
+  point. (An answer that stops early, well before the limit, is different.)
 - Use the whole scale. A performance that matches the top descriptor gets the
   top band; hedging toward the middle for safety is a marking error.
 - A performance that is memorised, largely off-topic, or mostly in another

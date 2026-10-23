@@ -87,6 +87,9 @@
     msgFind: '',
     msgFound: [],
     reviewModule: 'speaking', // the review queue: speaking or writing attempts
+    accOpen: false,          // the Marking accuracy card
+    acc: null,
+    accTrial: {},            // attempt id -> 'busy' | { bands, score, level } | { error }
     spOpen: false,           // the Support chat card
     sp: null,                // { conversations, totals, unread }
     spOnly: 'waiting',
@@ -150,7 +153,7 @@
    * is picked up too), then opens again the cards, groups and student that
    * were open and goes back to the same place on the page.
    */
-  const OPEN_CARDS = ['spOpen', 'msgOpen', 'csOpen', 'reviewOpen', 'studentsOpen', 'voiceOpen', 'chatOpen', 'picturesOpen', 'sponsorsOpen', 'calibrationOpen'];
+  const OPEN_CARDS = ['accOpen', 'spOpen', 'msgOpen', 'csOpen', 'reviewOpen', 'studentsOpen', 'voiceOpen', 'chatOpen', 'picturesOpen', 'sponsorsOpen', 'calibrationOpen'];
   function refreshAll() {
     if (state.refreshing) return;
     setState({ refreshing: true });
@@ -182,6 +185,7 @@
       open.has('csOpen') ? loadCourse({}) : null,
       open.has('msgOpen') ? loadMessages({}) : null,
       open.has('spOpen') ? loadSupportAdmin({}) : null,
+      open.has('accOpen') ? loadAccuracy({}) : null,
       open.has('reviewOpen') ? loadReview({}) : null,
       open.has('studentsOpen') ? loadStudents({}) : null,
       open.has('voiceOpen') ? loadVoice({}) : null,
@@ -282,6 +286,7 @@
         ${supportCard()}
         ${messagesCard()}
         ${reviewCard()}
+        ${accuracyCard()}
         ${studentsCard()}
         ${voiceCard()}
         ${chatCard()}
@@ -1314,6 +1319,7 @@
     wireCourseAdmin();
     wireMessagesAdmin();
     wireSupportAdmin();
+    wireAccuracy();
     wireVoiceAdmin();
     wireChatAdmin();
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
@@ -1444,6 +1450,9 @@
     if (action === 'calibration-check') return runCalibrationCheck();
     if (action === 'sample-add') return setState({ addingSample: true, error: '' });
     if (action === 'sample-cancel') return setState({ addingSample: false });
+    if (action === 'acc-open') return loadAccuracy({ open: true });
+    if (action === 'acc-reload') return loadAccuracy({});
+    if (action === 'acc-close') return setState({ accOpen: false });
     if (action === 'sp-open') return loadSupportAdmin({ open: true });
     if (action === 'sp-close') return setState({ spOpen: false });
     if (action === 'msg-open') return loadMessages({ open: true });
@@ -2981,6 +2990,86 @@
     }
   }
 
+
+  // ------------------------------------------------------------- marking accuracy
+
+  const ACC_PARTS = [['part11', '1.1'], ['part12', '1.2'], ['part2', '2'], ['part3', '3']];
+
+  /**
+   * How the AI marker compares with the expert reviews (2026-10-24): each
+   * reviewed attempt, the AI's original bands next to the expert's, the
+   * average gap per part, and a "Try the current marker" check that marks the
+   * attempt again WITHOUT saving — so a marking change can be tested against
+   * the teacher's own judgement before anyone relies on it.
+   */
+  function accuracyCard() {
+    if (!state.accOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Marking accuracy</h2>
+        <p class="muted" style="margin-top:6px">Compares the AI's speaking bands with your expert reviews, part by part, so you can see where it marks too low or too high — and test the current marker on those attempts without changing anything.</p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="acc-open">Open marking accuracy</button>
+      </div>`;
+    }
+    const d = state.acc;
+    const sign = v => (v === null || v === undefined ? '—' : `${v > 0 ? '+' : ''}${v}`);
+    const tone = v => (v === null || v === undefined || Math.abs(v) < 0.25 ? '' : v > 0 ? 'is-low' : 'is-high');
+    const cell = (ai, ex) => {
+      if (ai === null && ex === null) return '<td>—</td>';
+      const diff = ai !== null && ex !== null ? ex - ai : null;
+      return `<td class="acc-cell ${diff > 0 ? 'is-under' : diff < 0 ? 'is-over' : ''}"><span class="muted">${ai ?? '—'}</span> → <b>${ex ?? '—'}</b></td>`;
+    };
+    const trialCell = r => {
+      const t = state.accTrial[r.id];
+      if (!t) return `<button class="btn btn-ghost btn-sm" data-acc-trial="${esc(r.id)}" title="Marks it again with today's marker — nothing is saved. Costs AI calls like one marking.">Try current marker</button>`;
+      if (t === 'busy') return '<span class="spinner"></span>';
+      if (t.error) return `<span class="acc-err">${esc(t.error)}</span>`;
+      return `<span class="acc-trial">${ACC_PARTS.map(([k]) => t.bands?.[k] ?? '—').join(' / ')} = <b>${t.score ?? '—'}</b> ${esc(t.level || '')}</span>`;
+    };
+    const rows = (d?.rows || []).map(r => `<tr>
+        <td><strong>${esc(r.studentName || r.student)}</strong><div class="muted acc-sub">${esc(r.student)} · ${esc(r.exam)}</div></td>
+        ${ACC_PARTS.map(([k]) => cell(r.ai[k], r.expert[k])).join('')}
+        <td class="acc-cell ${r.expertScore > r.aiScore ? 'is-under' : r.expertScore < r.aiScore ? 'is-over' : ''}"><span class="muted">${r.aiScore ?? '—'}</span> → <b>${r.expertScore ?? '—'}</b></td>
+        <td>${trialCell(r)}</td>
+      </tr>`).join('');
+    return `<div class="card" id="acc-card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Marking accuracy</h2>
+        <div class="row" style="gap:6px"><button class="btn btn-ghost btn-sm" data-action="acc-reload">Refresh</button><button class="btn btn-ghost btn-sm" data-action="acc-close">Close</button></div>
+      </div>
+      <p class="muted" style="margin-top:6px">Each attempt whose score you changed with an <em>Expert score</em>: the AI's band → yours. Green = the AI was too low, red = too high.
+        <em>Try current marker</em> marks it again with today's marker and shows what it would give now — nothing is saved, it only costs the AI calls of one marking.</p>
+      ${d ? `<div class="acc-gaps">
+        <span>${d.reviewed} reviewed</span>
+        ${ACC_PARTS.map(([k, n]) => `<span class="${tone(d.gap[k])}">Part ${n}: <b>${sign(d.gap[k])}</b></span>`).join('')}
+        <span class="${d.scoreGap > 2 ? 'is-low' : d.scoreGap < -2 ? 'is-high' : ''}">Score: <b>${sign(d.scoreGap)}</b></span>
+        <span class="muted" style="font-size:12px">average expert − AI</span>
+      </div>` : ''}
+      <div class="acc-wrap"><table class="acc-table">
+        <thead><tr><th>Student</th>${ACC_PARTS.map(([, n]) => `<th>Part ${n}</th>`).join('')}<th>Score</th><th>Current marker</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="7" class="muted">No expert reviews yet. Use “Expert score” on a result to add one.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  async function loadAccuracy({ open } = {}) {
+    if (open) state.accOpen = true;
+    setState({ loading: true, error: '' });
+    try { setState({ acc: await api('/admin/marking-accuracy'), loading: false }); }
+    catch (error) { setState({ loading: false, error: error.message }); }
+  }
+
+  function wireAccuracy() {
+    root.querySelectorAll('[data-acc-trial]').forEach(el => el.addEventListener('click', async () => {
+      const id = el.dataset.accTrial;
+      state.accTrial = { ...state.accTrial, [id]: 'busy' };
+      render();
+      try {
+        const out = await api(`/admin/results/${id}/trial-mark`, { method: 'POST' });
+        state.accTrial = { ...state.accTrial, [id]: out };
+      } catch (error) { state.accTrial = { ...state.accTrial, [id]: { error: error.message } }; }
+      render();
+    }));
+  }
 
   // ------------------------------------------------------------- support chat
 

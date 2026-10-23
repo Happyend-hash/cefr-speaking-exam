@@ -497,7 +497,7 @@ examResultSchema.methods.generateCertificate = function () {
  */
 examResultSchema.statics.markingAnchors = async function (limit = 3) {
   const all = await this.find({ 'teacherBands.correctedAt': { $exists: true } })
-    .select('teacherBands taskResults.transcription taskResults.taskNumber')
+    .select('teacherBands taskResults.transcription taskResults.taskNumber taskResults.type')
     .sort({ 'teacherBands.correctedAt': -1 })
     .limit(40)
     .lean();

@@ -26,7 +26,7 @@ import {
 import { invalidate as invalidateLeaderboard } from '../services/Leaderboard.js';
 import { SPEAKING_PART_MAX } from '../services/ScoreConversion.js';
 import { scoreSpeaking } from '../services/SpeakingScoring.js';
-import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark } from './exam.js';
+import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark, trialMark } from './exam.js';
 import { listUnmarked, retryOne, retryAll } from '../services/MarkingRetry.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -1817,6 +1817,61 @@ router.post('/results/:id/expert-score', async (req, res, next) => {
       by: req.user.email || String(req.user.id), note: req.body?.note, notify: req.body?.notify !== false
     });
     res.json({ success: true, message: 'Score updated.', data: out });
+  } catch (error) { next(error); }
+});
+
+/**
+ * @route   GET /api/admin/marking-accuracy
+ * @desc    How the AI marker compares with the expert (Jamshid, 2026-10-24):
+ *          every speaking attempt whose score an expert review changed, with
+ *          the AI's original part bands next to the expert's, and the average
+ *          gap per part — which part the marker gets wrong, and which way.
+ */
+router.get('/marking-accuracy', async (req, res, next) => {
+  try {
+    const list = await ExamResult.find({ 'expertReview.at': { $exists: true } })
+      .sort({ 'expertReview.at': -1 })
+      .limit(100)
+      .populate('student', 'email firstName lastName')
+      .populate('exam', 'title')
+      .select('student exam partBands expertReview overallScore overallLevel completedAt')
+      .lean();
+    const parts = Object.keys(SPEAKING_PART_MAX);
+    const rows = list.map(r => {
+      const ai = r.expertReview?.before?.bands || {};
+      const expert = r.partBands || {};
+      return {
+        id: String(r._id),
+        student: r.student?.email || '—',
+        studentName: [r.student?.firstName, r.student?.lastName].filter(Boolean).join(' '),
+        exam: r.exam?.title || 'Exam',
+        at: r.completedAt || r.expertReview?.at,
+        ai: Object.fromEntries(parts.map(k => [k, Number.isFinite(ai[k]) ? ai[k] : null])),
+        expert: Object.fromEntries(parts.map(k => [k, Number.isFinite(expert[k]) ? expert[k] : null])),
+        aiScore: r.expertReview?.before?.score ?? null,
+        aiLevel: r.expertReview?.before?.level || '',
+        expertScore: r.overallScore ?? null,
+        expertLevel: r.overallLevel || ''
+      };
+    });
+    const mean = xs => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 100) / 100 : null);
+    const gap = Object.fromEntries(parts.map(k => [k, mean(rows.filter(r => r.ai[k] !== null && r.expert[k] !== null).map(r => r.expert[k] - r.ai[k]))]));
+    const scoreGap = mean(rows.filter(r => r.aiScore !== null && r.expertScore !== null).map(r => r.expertScore - r.aiScore));
+    res.json({ success: true, data: { rows, gap, scoreGap, reviewed: rows.length } });
+  } catch (error) { next(error); }
+});
+
+/**
+ * @route   POST /api/admin/results/:id/trial-mark
+ * @desc    Mark the attempt again with today's marker and show the result —
+ *          NOTHING is saved. For checking a marking change against attempts
+ *          the teacher has already reviewed. Costs AI calls like a real marking.
+ */
+router.post('/results/:id/trial-mark', async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid result id', 400);
+    const out = await trialMark(req.params.id);
+    res.json({ success: true, data: { bands: out.bands, markers: out.markers, raw: out.raw, score: out.score, level: out.level, reasoning: out.reasoning || '' } });
   } catch (error) { next(error); }
 });
 

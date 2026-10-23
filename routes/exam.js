@@ -1150,6 +1150,55 @@ export async function rescueAttempt(resultId) {
  * Throws only if no reading at all succeeded — one good reading is still a
  * proper mark, and better than the averaging fallback.
  */
+/**
+ * What the whole-performance marker reads for each answer: the part, the
+ * question, the words, what the recording showed (pauses, pace), and —
+ * Jamshid, 2026-10-24 — whether the answer ran to the time limit (so a reply
+ * cut off mid-sentence is not taken for an unfinished one), plus Part 3's
+ * statement and its two sides, which the marker never used to see.
+ */
+export function speakingInputs(result, questionByNumber) {
+  return result.taskResults
+    .filter(t => t.status !== 'not_transcribed' && String(t.transcription || '').trim())
+    .map(t => {
+      const q = questionByNumber.get(t.taskNumber);
+      const limit = Number(q?.answerTime) || null;
+      return {
+        part: q?.part || '—',
+        question: q?.text || '',
+        transcription: t.transcription,
+        // What the recording shows that the transcript cannot: pauses, pace,
+        // fillers. Without this the marker judged fluency from clean text.
+        fluency: t.fluency || null,
+        answerTime: limit,
+        usedFullTime: Boolean(limit && Number(t.duration) >= limit - 1.5),
+        ...(q?.part === '3' && (q.pros?.length || q.cons?.length || q.topic)
+          ? { debate: { topic: q.topic || '', forSide: q.pros || [], againstSide: q.cons || [] } }
+          : {})
+      };
+    });
+}
+
+/**
+ * Mark an attempt again with today's marker WITHOUT saving anything — the
+ * teacher's check of a marking change against attempts they have reviewed.
+ * Costs the same AI calls as a real marking (two readings, a third if they
+ * disagree badly).
+ */
+export async function trialMark(resultId) {
+  const result = await ExamResult.findById(resultId);
+  if (!result) throw Object.assign(new Error('Attempt not found'), { statusCode: 404 });
+  const exam = await Exam.findById(result.exam).lean();
+  if (!exam) throw Object.assign(new Error('The test of this attempt no longer exists'), { statusCode: 404 });
+  const questionByNumber = new Map(flattenExam(exam).map(q => [q.taskNumber, q]));
+  const answers = speakingInputs(result, questionByNumber);
+  if (!answers.length) throw Object.assign(new Error('This attempt has no transcripts to mark'), { statusCode: 400 });
+  const anchors = (await ExamResult.markingAnchors()).filter(a => String(a._id || a.id || '') !== String(result._id));
+  return markTwice(() => AICallLimiter.run(() =>
+    AIEvaluationService.evaluateAttempt({ answers, examTitle: exam.title, pronunciation: result.pronunciation, fluency: result.fluency, anchors })
+  ));
+}
+
 export async function markTwice(markOnce) {
   const wanted = Number(process.env.SPEAKING_MARKERS) === 1 ? 1 : 2;
   const settled = await Promise.allSettled(Array.from({ length: wanted }, () => markOnce()));
@@ -1424,16 +1473,7 @@ export async function markAttempt(resultId) {
    * per-answer notes are supporting detail; the candidate's words are the
    * evidence. Losing the detail must not cost the mark.
    */
-  const speakingAnswers = result.taskResults
-    .filter(t => t.status !== 'not_transcribed' && String(t.transcription || '').trim())
-    .map(t => ({
-      part: questionByNumber.get(t.taskNumber)?.part || '—',
-      question: questionByNumber.get(t.taskNumber)?.text || '',
-      transcription: t.transcription,
-      // What the recording shows that the transcript cannot: pauses, pace,
-      // fillers. Without this the marker judged fluency from clean text.
-      fluency: t.fluency || null
-    }));
+  const speakingAnswers = speakingInputs(result, questionByNumber);
 
   let overall = null;
   let overallError = null;
