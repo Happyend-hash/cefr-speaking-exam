@@ -69,6 +69,9 @@
     csGroups: new Set(),     // the levels (groups) whose student list is open
     csShowCodes: false,      // parent codes are hidden (students may be looking at the screen)
     csReveal: null,          // one student's code shown for a moment
+    csPayYear: null,         // the school year shown in the payment months (null = this one)
+    csPayMonth: null,        // the month whose payment form is open ("2026-11")
+    csPayNote: '',
     csUnit: null,            // vocabulary: the unit being entered (a number) or 'general'
     csUnitVal: '', csUnitDate: '',
     csGenVals: {}, csGenOverall: '', csGenDate: '',
@@ -1449,7 +1452,27 @@
   const csMoney = n => `${Math.round(n || 0).toLocaleString('en-US').replace(/,/g, ' ')} so‘m`;
   const CS_MARKS = [['present', 'Came'], ['late', 'Late'], ['absent', 'Missed']];
   const CS_PAY = {
-    paid: ['is-paid', '✓ Paid'], partial: ['is-partial', 'Part paid'], due: ['is-due', 'Not yet'], overdue: ['is-overdue', '✗ Not paid']
+    paid: ['is-paid', '✓ Paid'], partial: ['is-partial', 'Part paid'], due: ['is-due', 'Not yet'], overdue: ['is-overdue', '✗ Not paid'],
+    advance: ['is-paid', '✓ Paid ahead'], upcoming: ['is-upcoming', '—']
+  };
+  const CS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const csAddMonths = (ym, n) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7); };
+  /**
+   * One month of a student's payments, worked out from the full record (the
+   * same rules as the server): voided payments never count; due by the 10th.
+   */
+  const csMonthPay = (s, ym) => {
+    const today = csToday();
+    const thisMonth = today.slice(0, 7);
+    const entries = (s.ledger || []).filter(p => p.month === ym);
+    const live = entries.filter(p => !p.voidedAt);
+    const paid = live.reduce((a, p) => a + p.amount, 0);
+    const fee = s.monthlyFee > 0 ? s.monthlyFee : null;
+    const future = ym > thisMonth;
+    const pastDue = !future && (ym < thisMonth || Number(today.slice(8, 10)) > 10);
+    let status = paid > 0 && (fee === null || paid >= fee) ? (future ? 'advance' : 'paid') : paid > 0 ? 'partial' : future ? 'upcoming' : pastDue ? 'overdue' : 'due';
+    if (status === 'overdue' && ym < (s.joinedMonth || '')) status = 'before';
+    return { month: ym, paid, fee, left: fee !== null ? Math.max(0, fee - paid) : null, status, entries };
   };
   const csPayBadge = p => { const [cls, text] = CS_PAY[p?.status] || CS_PAY.due; return `<span class="cs-pay ${cls}">${text}</span>`; };
   const csFace = (s, size = 40) => {
@@ -1565,6 +1588,7 @@
       <div class="row" style="justify-content:space-between">
         <h2 style="font-size:18px">Course students &amp; homework (${data.students.length})</h2>
         <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm" data-cs-report title="Emails who has paid and who hasn't, by group">✉ Payment report</button>
           <button class="btn btn-ghost btn-sm ${state.csUnitsOpen ? 'is-on' : ''}" data-cs-unitsopen aria-expanded="${state.csUnitsOpen}">Units per level</button>
           <button class="btn btn-ghost btn-sm cs-codes-toggle ${state.csShowCodes ? 'is-on' : ''}" data-cs-codes aria-pressed="${state.csShowCodes}">${state.csShowCodes ? '🙈 Hide codes' : '👁 Show codes'}</button>
           <button class="btn btn-ghost btn-sm" data-action="cs-close">Close</button>
@@ -1703,23 +1727,77 @@
           ${a.lateDays.length ? `<p class="cs-att-line"><span class="cs-late">Late:</span> ${a.lateDays.map(fmt).map(esc).join(', ')}</p>` : ''}`
         : '<p class="muted" style="font-size:13px">No attendance taken this month yet. Use "Take attendance" above the level table.</p>'}
       </div>
-      <div class="cs-box">
-        <div class="cs-box-head"><strong>Payment — ${esc(monthWord)}</strong>${csPayBadge(p)}</div>
-        <p class="cs-att-line">${p.paid ? `Paid <strong>${csMoney(p.paid)}</strong>` : 'Nothing paid yet'}${p.fee ? ` of ${csMoney(p.fee)}${p.left ? ` · <span class="cs-miss">${csMoney(p.left)} left</span>` : ''}` : ''}</p>
-        <form class="cs-pay-form" data-cs-pay="${esc(s.id)}">
-          <label>Amount <span class="cs-sum"><input type="number" min="1" step="any" inputmode="numeric" id="cs-pay-amount" value="${esc(state.csPayAmount ?? (p.left || p.fee || ''))}" required><span>so‘m</span></span></label>
+    </div>
+    ${paymentYear(s)}`;
+  }
+
+  /**
+   * Payments by month for one school year (Sentabr → Avgust): tap a month to
+   * enter a payment for it — this month, an earlier one, or one still to come.
+   * Payments are never deleted; one typed by mistake is marked as a mistake
+   * (kept, crossed out, not counted).
+   */
+  function paymentYear(s) {
+    const year = state.csPayYear ?? state.cs?.schoolYear ?? Number(csToday().slice(0, 4));
+    const months = Array.from({ length: 12 }, (_, i) => csAddMonths(`${year}-09`, i));
+    const sel = state.csPayMonth && months.includes(state.csPayMonth) ? state.csPayMonth : null;
+    const thisMonth = csToday().slice(0, 4) + '-' + csToday().slice(5, 7);
+    const cells = months.map(ym => {
+      const m = csMonthPay(s, ym);
+      const [cls, label] = m.status === 'before' ? ['is-upcoming', 'not joined'] : CS_PAY[m.status] || CS_PAY.due;
+      const voided = m.entries.some(e => e.voidedAt);
+      return `<button type="button" class="cs-pm ${cls} ${ym === sel ? 'is-sel' : ''} ${ym === thisMonth ? 'is-now' : ''}" data-cs-pm="${ym}" aria-pressed="${ym === sel}">
+        <span class="cs-pm-name">${CS_SHORT[Number(ym.slice(5)) - 1]} <small>${ym.slice(0, 4)}</small></span>
+        <strong>${m.paid ? csMoney(m.paid).replace(' so‘m', '') : '—'}</strong>
+        <span class="cs-pm-st">${label}${voided ? ' · mistake' : ''}</span>
+      </button>`;
+    }).join('');
+
+    let form = '';
+    if (sel) {
+      const m = csMonthPay(s, sel);
+      const amount = state.csPayAmount ?? (m.left || m.fee || '');
+      form = `<form class="cs-pm-form" data-cs-pay="${esc(s.id)}" data-month="${sel}">
+        <div class="cs-pm-form-top">
+          <strong>${esc(csMonthName(sel))}</strong>
+          ${m.fee ? `<span class="muted">${m.paid ? `${csMoney(m.paid)} of ${csMoney(m.fee)}${m.left ? ` · <span class="cs-miss">${csMoney(m.left)} left</span>` : ''}` : `fee ${csMoney(m.fee)}`}</span>` : '<span class="muted">Set the monthly fee below to see what is left.</span>'}
+          ${sel > thisMonth ? '<span class="cs-pay is-paid">paying ahead</span>' : ''}
+        </div>
+        <div class="cs-pm-fields">
+          <label>Amount <span class="cs-sum"><input type="number" min="1" step="any" inputmode="numeric" id="cs-pay-amount" value="${esc(amount)}" required><span>so‘m</span></span></label>
           <label>Paid on <input type="date" id="cs-pay-date" value="${esc(state.csPayDate || csToday())}" max="${csToday()}"></label>
+          <label>Note <input type="text" id="cs-pay-note" maxlength="80" placeholder="optional, e.g. cash, Click" value="${esc(state.csPayNote || '')}"></label>
           <button class="btn btn-sm" type="submit">Save payment</button>
-        </form>
-        ${p.payments.length ? `<ul class="cs-pay-list">${p.payments.map(x => `<li>${csMoney(x.amount)} <span class="muted">· ${esc(new Date(x.paidAt).toLocaleDateString())}</span>
-          <button type="button" class="cs-link" data-cs-unpay="${esc(s.id)}:${esc(x.id)}">delete</button></li>`).join('')}</ul>` : ''}
-        <form class="cs-fee-form" data-cs-fee="${esc(s.id)}">
-          <label>Monthly fee <span class="cs-sum"><input type="number" min="0" step="any" inputmode="numeric" id="cs-fee" value="${esc(state.csFee ?? (s.monthlyFee ?? ''))}" placeholder="e.g. 500000"><span>so‘m</span></span></label>
-          <button class="btn btn-ghost btn-sm" type="submit">Save fee</button>
-        </form>
-        ${s.paymentHistory.length ? `<div class="cs-pay-hist">${s.paymentHistory.map(h => `<span>${esc(csMonthName(h.month).split(' ')[0].slice(0, 3))} ${csPayBadge(h)}</span>`).join('')}</div>` : ''}
+        </div>
+        ${m.entries.length ? `<ul class="cs-pay-list">${m.entries.map(x => `<li class="${x.voidedAt ? 'is-void' : ''}">
+            <span class="cs-pay-amt">${csMoney(x.amount)}</span>
+            <span class="muted">paid ${esc(new Date(x.paidAt).toLocaleDateString())}${x.note ? ` · ${esc(x.note)}` : ''}</span>
+            ${x.voidedAt
+              ? `<span class="cs-void-why">mistake (${esc(new Date(x.voidedAt).toLocaleDateString())}): ${esc(x.voidReason)}</span>`
+              : `<button type="button" class="cs-link" data-cs-void="${esc(s.id)}:${esc(x.id)}">mark as mistake</button>`}
+          </li>`).join('')}</ul>` : '<p class="muted" style="font-size:13px">No payment for this month yet.</p>'}
+      </form>`;
+    }
+
+    const ahead = (s.paidAhead || []).filter(a => a.status === 'advance' || a.status === 'partial');
+    return `<div class="cs-box cs-pay-year">
+      <div class="cs-box-head">
+        <strong>Payments — school year ${year}–${String(year + 1).slice(2)}</strong>
+        <span class="row" style="gap:6px">
+          <button type="button" class="btn btn-ghost btn-sm" data-cs-py="-1" aria-label="Previous school year">‹ ${year - 1}</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-cs-py="1" aria-label="Next school year">${year + 1} ›</button>
+        </span>
       </div>
-    </div>`;
+      <p class="cs-att-line">This month: ${csPayBadge(s.payment)}${ahead.length ? ` · <span class="cs-ahead">Paid ahead: ${ahead.map(a => esc(csMonthName(a.month).split(' ')[0]) + (a.status === 'partial' ? ' (part)' : '')).join(', ')}</span>` : ''}</p>
+      <div class="cs-pm-grid">${cells}</div>
+      ${form || '<p class="muted" style="font-size:13px">Tap a month to enter a payment for it — including months still to come.</p>'}
+      <form class="cs-fee-form" data-cs-fee="${esc(s.id)}">
+        <label>Monthly fee <span class="cs-sum"><input type="number" min="0" step="any" inputmode="numeric" id="cs-fee" value="${esc(state.csFee ?? (s.monthlyFee ?? ''))}" placeholder="e.g. 500000"><span>so‘m</span></span></label>
+        <button class="btn btn-ghost btn-sm" type="submit">Save fee</button>
+      </form>
+      <p class="muted" style="font-size:12px;margin:0">Payments are never deleted. A wrong one is marked as a mistake and stays in the record.</p>
+    </div>
+      </div>`;
   }
 
   /** The panel under a clicked student: today's homework, then details. */
@@ -1875,6 +1953,15 @@
       if (ok) { state.csNew = { name: '', level: n.level, family: '', photo: '' }; state.csGroups = new Set([...state.csGroups, n.level]); render(); }
     });
 
+    // the payment email, on demand
+    root.querySelector('[data-cs-report]')?.addEventListener('click', async () => {
+      setState({ loading: true, error: '', notice: '' });
+      try {
+        const r = await api('/admin/course-students/payments/report', { method: 'POST' });
+        setState({ loading: false, notice: `Payment report emailed to ${r.to.join(', ')} — ${r.counts.paid} paid, ${r.counts.notPaid} not paid this month.` });
+      } catch (error) { setState({ loading: false, error: error.message }); }
+    });
+
     // vocabulary units
     root.querySelector('[data-cs-unitsopen]')?.addEventListener('click', () => setState({ csUnitsOpen: !state.csUnitsOpen }));
     $('cs-units-set')?.addEventListener('submit', e => {
@@ -1952,7 +2039,7 @@
       const open = () => {
         const id = el.dataset.csSel;
         const st = state.cs?.students.find(x => x.id === id);
-        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csToday()), csUnit: null, csName: undefined, csPayAmount: undefined, csPayDate: '', csFee: undefined });
+        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csToday()), csUnit: null, csName: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
@@ -2004,7 +2091,7 @@
       csCall(`/admin/course-students/${el.dataset.csNewcode}/code`, { method: 'POST' }, 'New code made — send it to the parents.');
     }));
     root.querySelectorAll('[data-cs-delete]').forEach(el => el.addEventListener('click', () => {
-      if (!confirm(`Remove ${el.dataset.name}, their photo and all their homework results? This cannot be undone.`)) return;
+      if (!confirm(`Remove ${el.dataset.name} from the course list? They disappear from the lists, the parents' page and the ranking — their payment record is kept.`)) return;
       csCall(`/admin/course-students/${el.dataset.csDelete}`, { method: 'DELETE' }, `${el.dataset.name} removed.`, { csSel: null });
     }));
     root.querySelectorAll('[data-cs-copy]').forEach(el => el.addEventListener('click', async () => {
@@ -2053,19 +2140,30 @@
     // payments and the monthly fee
     $('cs-pay-amount')?.addEventListener('input', e => { state.csPayAmount = e.target.value; });
     $('cs-pay-date')?.addEventListener('change', e => { state.csPayDate = e.target.value; });
+    $('cs-pay-note')?.addEventListener('input', e => { state.csPayNote = e.target.value; });
+    root.querySelectorAll('[data-cs-pm]').forEach(el => el.addEventListener('click', () => {
+      const ym = el.dataset.csPm;
+      setState(state.csPayMonth === ym ? { csPayMonth: null } : { csPayMonth: ym, csPayAmount: undefined, csPayDate: '', csPayNote: '' });
+    }));
+    root.querySelectorAll('[data-cs-py]').forEach(el => el.addEventListener('click', () => {
+      const year = (state.csPayYear ?? state.cs?.schoolYear ?? Number(csToday().slice(0, 4))) + Number(el.dataset.csPy);
+      setState({ csPayYear: year, csPayMonth: null });
+    }));
+    root.querySelectorAll('[data-cs-void]').forEach(el => el.addEventListener('click', () => {
+      const [sid, pid] = el.dataset.csVoid.split(':');
+      const reason = prompt('Why is this payment a mistake? (It stays in the record, crossed out, and is no longer counted.)');
+      if (!reason || !reason.trim()) return;
+      csCall(`/admin/course-students/${sid}/payments/${pid}/void`, { method: 'POST', body: { reason: reason.trim() } }, 'Marked as a mistake — kept in the record, not counted.');
+    }));
     $('cs-fee')?.addEventListener('input', e => { state.csFee = e.target.value; });
     root.querySelectorAll('[data-cs-pay]').forEach(form => form.addEventListener('submit', e => {
       e.preventDefault();
       const amount = Number(form.querySelector('#cs-pay-amount').value);
       if (!amount) return;
+      const month = form.dataset.month || state.cs.month;
       csCall(`/admin/course-students/${form.dataset.csPay}/payments`, {
-        method: 'POST', body: { month: state.cs.month, amount, paidAt: state.csPayDate || csToday() }
-      }, `Payment of ${csMoney(amount)} saved — parents see it now.`, { csPayAmount: undefined, csPayDate: '' });
-    }));
-    root.querySelectorAll('[data-cs-unpay]').forEach(el => el.addEventListener('click', () => {
-      const [sid, pid] = el.dataset.csUnpay.split(':');
-      if (!confirm('Delete this payment?')) return;
-      csCall(`/admin/course-students/${sid}/payments/${pid}`, { method: 'DELETE' }, 'Payment deleted.');
+        method: 'POST', body: { month, amount, paidAt: state.csPayDate || csToday(), note: state.csPayNote || '' }
+      }, `Payment of ${csMoney(amount)} for ${csMonthName(month)} saved — parents see it now.`, { csPayAmount: undefined, csPayDate: '', csPayNote: '' });
     }));
     root.querySelectorAll('[data-cs-fee]').forEach(form => form.addEventListener('submit', e => {
       e.preventDefault();

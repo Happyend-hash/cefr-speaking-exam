@@ -2,10 +2,11 @@ import express from 'express';
 import mongoose from 'mongoose';
 import CourseStudent, { LEVELS, SKILLS, ATTENDANCE } from '../models/CourseStudent.js';
 import {
-  newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
+  newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, schoolYearOf, paidAhead, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
 } from '../services/ParentPortal.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
+import { sendPaymentReport } from '../services/PaymentReport.js';
 
 /**
  * The teacher's side of the parents' page: the course list by level, each
@@ -44,6 +45,13 @@ const row = (s, units = {}) => {
     monthlyFee: typeof s.monthlyFee === 'number' ? s.monthlyFee : null,
     payment: paymentStatus(s),
     paymentHistory: paymentHistory(s),
+    paidAhead: paidAhead(s),
+    joinedMonth: monthOf(s.createdAt || Date.now()),
+    // every payment ever saved, including ones marked as a mistake — the panel draws the school year from these
+    ledger: (s.payments || []).map(p => ({
+      id: String(p._id), month: p.month, amount: p.amount, paidAt: p.paidAt, note: p.note || '',
+      savedAt: p.createdAt || null, voidedAt: p.voidedAt || null, voidReason: p.voidReason || ''
+    })),
     vocab: vocabSummary(s, units[s.level]),
     lastParentVisit: s.lastParentVisit || null
   };
@@ -53,7 +61,7 @@ const cleanName = v => String(v || '').replace(/\s+/g, ' ').trim().slice(0, 80);
 const cleanLevel = v => (LEVELS.includes(v) ? v : null);
 
 async function overview() {
-  const list = await CourseStudent.find().select('-photo.data').sort({ name: 1 });
+  const list = await CourseStudent.find({ removedAt: null }).select('-photo.data').sort({ name: 1 });
   const month = monthOf();
   const units = await unitsPerLevel();
   return {
@@ -61,6 +69,7 @@ async function overview() {
     skills: SKILLS,
     month,
     unitsPerLevel: units,
+    schoolYear: schoolYearOf(),
     students: list.map(s => row(s, units)),
     leaderboards: LEVELS.map(level => leaderboard(list, level, month)).filter(b => b.rows.length)
   };
@@ -377,38 +386,70 @@ router.delete('/:id/vocab-tests/:tid', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-/** A payment towards a month (part payments add up). */
+/**
+ * A payment towards a month (part payments add up). Any month from a year back
+ * to two years ahead — students may pay for months still to come.
+ */
 router.post('/:id/payments', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
     const month = String(req.body?.month || monthOf());
-    if (!/^\d{4}-\d{2}$/.test(month)) throw new APIError('Choose the month', 400);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new APIError('Choose the month', 400);
+    const shift = (ym, n) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7); };
+    if (month < shift(monthOf(), -24) || month > shift(monthOf(), 24)) throw new APIError('Choose a month within two years', 400);
     const amount = Math.round(Number(req.body?.amount));
     if (!Number.isFinite(amount) || amount <= 0 || amount > 100_000_000) throw new APIError('Enter the amount paid in so\u2019m', 400);
     const paidAt = req.body?.paidAt ? new Date(req.body.paidAt) : new Date();
     if (Number.isNaN(paidAt.getTime())) throw new APIError('Invalid payment date', 400);
+    if (paidAt.getTime() > Date.now() + 864e5) throw new APIError('The payment date can\u2019t be in the future', 400);
     s.payments.push({ month, amount, paidAt, note: String(req.body?.note || '').trim().slice(0, 80) });
     await s.save();
     res.status(201).json({ success: true, data: await overview() });
   } catch (error) { next(error); }
 });
 
-router.delete('/:id/payments/:pid', async (req, res, next) => {
+/**
+ * A payment typed by mistake: kept for ever, shown crossed out with the
+ * reason, and no longer counted. (Payments are never deleted.)
+ */
+router.post('/:id/payments/:pid/void', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
     const p = s.payments.id(req.params.pid);
     if (!p) throw new APIError('Payment not found', 404);
-    p.deleteOne();
+    if (p.voidedAt) throw new APIError('Already marked as a mistake', 400);
+    const reason = String(req.body?.reason || '').trim().slice(0, 120);
+    if (!reason) throw new APIError('Write why this payment is a mistake', 400);
+    p.voidedAt = new Date();
+    p.voidReason = reason;
     await s.save();
     res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }
 });
 
-/** Removing a child removes their photo and results with them. Brothers and sisters keep the family code. */
+router.delete('/:id/payments/:pid', (req, res) => {
+  res.status(405).json({ success: false, message: 'Payments are never deleted. Mark it as a mistake instead.' });
+});
+
+/** Email the payment report now (the same one that goes out each evening). */
+router.post('/payments/report', async (req, res, next) => {
+  try {
+    const r = await sendPaymentReport({ force: true });
+    if (!r.sent) throw new APIError(`The report was not sent: ${r.reason}`, 502);
+    res.json({ success: true, data: { to: r.to, counts: r.counts } });
+  } catch (error) { next(error); }
+});
+
+/**
+ * "Remove student": hidden from the course list, the parents' page and the
+ * ranking — but kept, so their payments are never lost.
+ */
 router.delete('/:id', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
-    await s.deleteOne();
+    s.removedAt = new Date();
+    s.active = false;
+    await s.save();
     res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }
 });

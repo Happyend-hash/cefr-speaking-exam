@@ -25,7 +25,7 @@ router.post('/login', async (req, res, next) => {
       });
     }
     const code = String(req.body?.code || '').replace(/\D/g, '');
-    const student = code.length === 6 ? await CourseStudent.findOne({ parentCode: code, active: true }).select('familyId codeVersion') : null;
+    const student = code.length === 6 ? await CourseStudent.findOne({ parentCode: code, active: true, removedAt: null }).select('familyId codeVersion') : null;
     if (!student) {
       noteWrongCode(ip);
       return res.status(401).json({ success: false, message: 'Kod noto‘g‘ri. Ustoz bergan 6 xonali kodni tekshiring.' });
@@ -50,7 +50,7 @@ router.get('/children/:id', parentAuth, async (req, res, next) => {
   try {
     const child = mine(req, req.params.id);
     if (!child) return res.status(404).json({ success: false, message: 'Topilmadi.' });
-    const sameLevel = await CourseStudent.find({ active: true, level: child.level }).select('name level active results');
+    const sameLevel = await CourseStudent.find({ active: true, removedAt: null, level: child.level }).select('name level active results');
     const board = leaderboard(sameLevel, child.level, monthOf());
     const family = new Set(req.children.map(c => String(c._id)));
     res.json({

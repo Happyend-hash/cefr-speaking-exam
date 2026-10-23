@@ -72,6 +72,7 @@ import gameRoutes from './routes/games.js';
 import assistantRoutes from './routes/assistant.js';
 import parentRoutes from './routes/parent.js';
 import CourseStudent from './models/CourseStudent.js';
+import { startPaymentReports } from './services/PaymentReport.js';
 import courseStudentRoutes from './routes/courseStudents.js';
 import { noteGuest } from './services/UsageStats.js';
 import { resumeStuckMarking } from './routes/exam.js';
@@ -263,6 +264,10 @@ mongoose.connect(MONGODB_URI)
      * goes stale without a restart in between (e.g. AI evaluation crashing
      * inside a still-running process, outside the outer `.catch`).
      */
+    // The daily payment email (only on days a payment changed), so who paid
+    // can be seen in Gmail even when the site is down.
+    startPaymentReports();
+
     resumeStuckMarking().catch(err => console.error('Startup marking-resume failed:', err.message));
     setInterval(() => {
       resumeStuckMarking().catch(err => console.error('Periodic marking-resume failed:', err.message));

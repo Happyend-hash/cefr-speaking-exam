@@ -69,6 +69,8 @@
     deadlineWas: (d, m) => `to‘lov muddati ${d}\u2011${m.toLowerCase()} edi`,
     badgePaid: 'To‘langan', badgePartial: 'Qisman to‘langan', badgeDue: 'To‘lov 10-gacha', badgeOverdue: 'To‘lov kerak',
     payHistTitle: 'To‘lovlar tarixi',
+    paidAhead: 'Oldindan to‘langan',
+    partialShort: 'qisman',
     // attendance
     attTitle: m => `Davomat — ${m}`,
     attLessons: 'Darslar', attPresent: 'Keldi', attLate: 'Kechikdi', attAbsent: 'Kelmadi',
@@ -298,7 +300,7 @@
   }
 
   /** The payment banner at the top of a child's page. */
-  function paymentBanner(p) {
+  function paymentBanner(p, ahead = []) {
     const m = cap(monthOnly(p.month));
     const last = p.lastPaidAt ? fmtDate(p.lastPaidAt) : '';
     let cls, icon, title, sub;
@@ -320,8 +322,15 @@
     }
     return `<section class="pp-pay ${cls}" role="status">
       <span class="pp-pay-icon" aria-hidden="true">${icon}</span>
-      <div><strong>${esc(title)}</strong>${sub ? `<small>${esc(sub)}</small>` : ''}</div>
+      <div><strong>${esc(title)}</strong>${sub ? `<small>${esc(sub)}</small>` : ''}${aheadLine(ahead)}</div>
     </section>`;
+  }
+
+  /** "Oldindan to'langan: Noyabr, Dekabr" — months still to come that are already paid. */
+  function aheadLine(ahead) {
+    const list = (ahead || []).filter(a => a.status === 'advance' || a.status === 'partial');
+    if (!list.length) return '';
+    return `<small class="pp-ahead">${T.paidAhead}: ${list.map(a => esc(cap(monthOnly(a.month))) + (a.status === 'partial' ? ` (${T.partialShort})` : '')).join(', ')}</small>`;
   }
 
   /** Attendance this month: counts, a calendar of lesson days, and the days missed. */
@@ -511,7 +520,7 @@
     return `${topBar()}
       <main class="pp-dash">
         ${state.children.length > 1 ? `<button class="pp-back" data-action="back">← ${T.back}</button>` : ''}
-        ${paymentBanner(d.payment)}
+        ${paymentBanner(d.payment, d.paidAhead)}
         <section class="pp-hero">
           ${avatar(d, 'is-big')}
           <h1>${esc(d.name)}</h1>

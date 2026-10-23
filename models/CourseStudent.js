@@ -47,11 +47,19 @@ const attendanceSchema = new mongoose.Schema({
 }, { _id: false });
 
 /** A payment towards one month ("2026-10"). Several can add up (part payments). */
+/**
+ * A payment towards one month ("2026-10"). Several can add up (part payments),
+ * and a payment can be for a month still to come (paid in advance).
+ * Payments are NEVER deleted (Jamshid, 2026-10-23): one typed by mistake is
+ * marked voided — kept and shown crossed out, with the reason, but not counted.
+ */
 const paymentSchema = new mongoose.Schema({
   month: { type: String, required: true, match: /^\d{4}-\d{2}$/ },
   amount: { type: Number, required: true, min: 1 },
   paidAt: { type: Date, default: Date.now },
-  note: { type: String, trim: true, maxlength: 80, default: '' }
+  note: { type: String, trim: true, maxlength: 80, default: '' },
+  voidedAt: { type: Date, default: null },
+  voidReason: { type: String, trim: true, maxlength: 120, default: '' }
 }, { _id: true, timestamps: true });
 
 /**
@@ -100,6 +108,8 @@ const courseStudentSchema = new mongoose.Schema({
   vocab: [vocabResultSchema],
   vocabTests: [vocabTestSchema],
   lastParentVisit: Date,
+  /** "Removed" in the admin panel: hidden everywhere, but kept so its payments are never lost. */
+  removedAt: { type: Date, default: null },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 

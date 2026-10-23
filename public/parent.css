@@ -277,3 +277,4 @@ td.is-low { color: var(--low); background: color-mix(in srgb, var(--low-bg) 60%,
 .pp-unit.is-mid { background: var(--mid-bg); } .pp-unit.is-mid strong { color: var(--mid); }
 .pp-unit.is-low { background: var(--low-bg); } .pp-unit.is-low strong { color: var(--low); }
 .pp-unit.is-empty strong { color: var(--ink-faint); }
+.pp-ahead { display: block; margin-top: 2px; font-weight: 700; color: var(--good); }
