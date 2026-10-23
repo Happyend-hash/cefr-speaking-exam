@@ -1685,7 +1685,9 @@
       <div class="cs-roll-top">
         <strong>Attendance — ${level}</strong>
         <label>Date <input type="date" id="cs-roll-date" value="${esc(date)}" max="${csToday()}"></label>
-        ${saved ? '<span class="cs-saved">already saved for this date — saving again replaces it</span>' : ''}
+        ${list.some(s => s.autoMarks?.includes(date))
+          ? '<span class="cs-saved">filled in from the homework: a result = Came, no result = Missed. Change anyone and Save.</span>'
+          : saved ? '<span class="cs-saved">already saved for this date — saving again replaces it</span>' : ''}
       </div>
       <div class="cs-roll-list">${list.filter(s => s.active).map(s => `<div class="cs-roll-row">
           ${csFace(s, 32)}<span class="cs-roll-name">${esc(s.name)}</span>
@@ -2161,7 +2163,7 @@
       const date = state.csDate || csToday();
       const ok = await csCall(`/admin/course-students/${id}/results`, {
         method: 'POST', body: { date, title: state.csTitle, level: s?.level, skills, replace: true }
-      }, `Saved — ${s?.name || 'the student'}'s parents can see it now.`);
+      }, `Saved — ${s?.name || 'the student'} is marked as came that day, and their parents can see it now.`);
       if (ok) setState(csFormFor(state.cs.students.find(x => x.id === id), date));
     });
 

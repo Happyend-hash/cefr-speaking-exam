@@ -1800,12 +1800,12 @@
 
   const INBOX_UZ = {
     title: 'Xabarlar',
-    empty: "Hozircha xabar yo'q. Ustozingiz yozganda shu yerda ko'rasiz.",
+    empty: "Hozircha xabar yo'q. English Hub Family jamoasidan yangi xabarlar shu yerda paydo bo'ladi.",
     back: 'Xabarlar',
     del: "O'chirish",
     delConfirm: "Bu xabar o'chirilsinmi?",
     gift: "Sizga sovg'a! 🎁",
-    giftHint: "Ustozingiz sizga sovg'a yubordi. Ochib ko'ring!",
+    giftHint: "English Hub Family jamoasi siz uchun maxsus sovg'a tayyorladi. Ochib ko'ring!",
     giftOpen: "Sovg'ani ochish",
     giftInside: "Ichida:",
     mocks: (s, w) => [s ? `${s} ta Speaking mock` : '', w ? `${w} ta Writing mock` : ''].filter(Boolean).join(' + '),

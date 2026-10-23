@@ -43,7 +43,11 @@ const resultSchema = new mongoose.Schema({
 /** One lesson day: "2026-10-09" (Tashkent date) and how the child was marked. */
 const attendanceSchema = new mongoose.Schema({
   date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
-  status: { type: String, enum: ATTENDANCE, required: true }
+  status: { type: String, enum: ATTENDANCE, required: true },
+  // Set by the homework (Jamshid, 2026-10-24), not by the roll call: a child
+  // with homework that day came; the rest of the group did not. A roll call
+  // always wins over it.
+  auto: { type: Boolean, default: undefined }
 }, { _id: false });
 
 /** A payment towards one month ("2026-10"). Several can add up (part payments). */

@@ -44,6 +44,8 @@ const row = (s, units = {}, books = {}, accounts = new Set()) => {
     attendance: attendanceSummary(s),
     // the marks of the last 70 days, so a roll call for an earlier date opens filled in
     marks: Object.fromEntries((s.attendance || []).filter(a => a.date >= dayOf(Date.now() - 70 * 864e5)).map(a => [a.date, a.status])),
+    // which of them came from the homework rather than a roll call
+    autoMarks: (s.attendance || []).filter(a => a.auto && a.date >= dayOf(Date.now() - 70 * 864e5)).map(a => a.date),
     monthlyFee: typeof s.monthlyFee === 'number' ? s.monthlyFee : null,
     payment: paymentStatus(s),
     paymentHistory: paymentHistory(s),
@@ -211,6 +213,33 @@ router.get('/:id/photo', async (req, res, next) => {
 });
 
 /**
+ * Attendance from the homework (Jamshid, 2026-10-24): on a day a group's
+ * homework is entered, a child with a result came, and a child without one
+ * did not. Written as automatic marks, so the roll call shows them filled in
+ * and can still change any of them; a mark from the roll call is never
+ * overwritten, except that homework turns "missed" into "came" (late stays
+ * late). With no homework left that day (all deleted), the automatic marks go.
+ */
+export async function attendanceFromHomework(date, level, alsoId = null) {
+  const group = await CourseStudent.find({ level, removedAt: null, $or: [{ active: true }, ...(alsoId ? [{ _id: alsoId }] : [])] });
+  const hasResult = st => (st.results || []).some(r => dayOf(r.date) === date);
+  const lesson = group.some(hasResult);
+  for (const st of group) {
+    const marks = st.attendance || [];
+    const mark = marks.find(a => a.date === date);
+    let next;   // undefined = leave as it is, null = remove, else the new mark
+    if (!lesson) next = mark?.auto ? null : undefined;
+    else if (hasResult(st)) next = !mark || mark.status === 'absent' ? { date, status: 'present', auto: true } : undefined;
+    else if (!mark) next = dayOf(st.createdAt || Date.now()) <= date ? { date, status: 'absent', auto: true } : undefined;
+    else if (mark.auto && mark.status !== 'absent') next = { date, status: 'absent', auto: true };
+    if (next === undefined) continue;
+    st.attendance = marks.filter(a => a.date !== date);
+    if (next) st.attendance.push(next);
+    await st.save();
+  }
+}
+
+/**
  * The homework of one day: a date (today by default), an optional note, and a
  * percent for each type given. A day has ONE result: saving the same day again
  * updates it (types left empty keep their earlier value; with replace: true the
@@ -249,6 +278,7 @@ router.post('/:id/results', async (req, res, next) => {
       for (const r of sameDay) if (String(r._id) !== String(keep._id)) r.deleteOne();
     }
     await s.save();
+    await attendanceFromHomework(day, s.level, s._id);
     res.status(sameDay.length ? 200 : 201).json({ success: true, data: await overview() });
   } catch (error) { next(error); }
 });
@@ -262,6 +292,7 @@ router.delete('/:id/results/:rid', async (req, res, next) => {
     const day = dayOf(r.date);
     s.results.filter(x => dayOf(x.date) === day).forEach(x => x.deleteOne());
     await s.save();
+    await attendanceFromHomework(day, s.level, s._id);
     res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }
 });
