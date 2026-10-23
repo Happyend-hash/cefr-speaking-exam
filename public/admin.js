@@ -87,6 +87,15 @@
     msgFind: '',
     msgFound: [],
     reviewModule: 'speaking', // the review queue: speaking or writing attempts
+    spOpen: false,           // the Support chat card
+    sp: null,                // { conversations, totals, unread }
+    spOnly: 'waiting',
+    spSel: null,             // the student whose conversation is open
+    spThread: null,
+    spDraft: {},             // replies being typed, per student
+    spImage: '',
+    spBusy: false,
+    spUnread: 0,
     refreshing: false,       // the Refresh button is working
     refreshedAt: '',         // when it last finished, shown next to it
     usage: null,             // the "Website use" numbers, refreshed every 2 min
@@ -141,7 +150,7 @@
    * is picked up too), then opens again the cards, groups and student that
    * were open and goes back to the same place on the page.
    */
-  const OPEN_CARDS = ['msgOpen', 'csOpen', 'reviewOpen', 'studentsOpen', 'voiceOpen', 'chatOpen', 'picturesOpen', 'sponsorsOpen', 'calibrationOpen'];
+  const OPEN_CARDS = ['spOpen', 'msgOpen', 'csOpen', 'reviewOpen', 'studentsOpen', 'voiceOpen', 'chatOpen', 'picturesOpen', 'sponsorsOpen', 'calibrationOpen'];
   function refreshAll() {
     if (state.refreshing) return;
     setState({ refreshing: true });
@@ -172,6 +181,7 @@
     await Promise.all([
       open.has('csOpen') ? loadCourse({}) : null,
       open.has('msgOpen') ? loadMessages({}) : null,
+      open.has('spOpen') ? loadSupportAdmin({}) : null,
       open.has('reviewOpen') ? loadReview({}) : null,
       open.has('studentsOpen') ? loadStudents({}) : null,
       open.has('voiceOpen') ? loadVoice({}) : null,
@@ -269,6 +279,7 @@
         ${usageCard()}
         ${unmarkedCard()}
         ${courseCard()}
+        ${supportCard()}
         ${messagesCard()}
         ${reviewCard()}
         ${studentsCard()}
@@ -1302,6 +1313,7 @@
     wireUsage();
     wireCourseAdmin();
     wireMessagesAdmin();
+    wireSupportAdmin();
     wireVoiceAdmin();
     wireChatAdmin();
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
@@ -1432,6 +1444,8 @@
     if (action === 'calibration-check') return runCalibrationCheck();
     if (action === 'sample-add') return setState({ addingSample: true, error: '' });
     if (action === 'sample-cancel') return setState({ addingSample: false });
+    if (action === 'sp-open') return loadSupportAdmin({ open: true });
+    if (action === 'sp-close') return setState({ spOpen: false });
     if (action === 'msg-open') return loadMessages({ open: true });
     if (action === 'msg-close') return setState({ msgOpen: false });
     if (action === 'review-open') return loadReview({ open: true });
@@ -2926,6 +2940,212 @@
   }
 
 
+  // ------------------------------------------------------------- support chat
+
+  const SP_KINDS = { question: ['❓', 'Question'], problem: ['🐞', 'Problem'], idea: ['💡', 'Idea'], praise: ['💚', 'Liked'] };
+  const spImages = new Map();   // image url -> object URL (the pictures need the admin's sign-in)
+
+  /**
+   * English Hub Support (Jamshid, 2026-10-24): every student's conversation
+   * with the team. Left: who wrote, newest first, with what is waiting;
+   * right: the conversation and the reply box. Students see replies as
+   * "English Hub Support".
+   */
+  function supportCard() {
+    const unread = state.spUnread || 0;
+    if (!state.spOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Support chat ${unread ? `<span class="sp-badge">${unread} new</span>` : ''}</h2>
+        <p class="muted" style="margin-top:6px">Students' questions, problems, ideas and what they liked about the website. They write from their message box; you answer here as <strong>English Hub Support</strong>.</p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="sp-open">Open support chat</button>
+      </div>`;
+    }
+    const data = state.sp;
+    const t = data?.totals || {};
+    const totals = Object.entries(SP_KINDS).map(([k, [e, l]]) => `<span class="sp-total is-${k}">${e} ${l} <b>${t[k] || 0}</b></span>`).join('');
+    const ago = at => {
+      const min = Math.round((Date.now() - new Date(at)) / 60000);
+      if (min < 1) return 'now';
+      if (min < 60) return `${min} min`;
+      if (min < 60 * 24) return `${Math.round(min / 60)} h`;
+      return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    };
+    const list = (data?.conversations || []).map(c => `<button class="sp-conv ${state.spSel === c.user ? 'is-sel' : ''} ${c.unread ? 'is-unread' : ''}" data-sp-conv="${esc(c.user)}">
+        <span class="sp-conv-top"><strong>${esc(c.name || c.email)}</strong><span class="muted">${esc(ago(c.lastAt))}</span></span>
+        <span class="sp-conv-mail">${esc(c.email)}</span>
+        <span class="sp-conv-last">${c.lastFrom === 'team' ? '<span class="muted">You: </span>' : c.lastKind ? `${SP_KINDS[c.lastKind]?.[0] || ''} ` : ''}${esc(c.lastText)}</span>
+        ${c.unread ? `<span class="sp-badge">${c.unread}</span>` : ''}
+      </button>`).join('');
+    const th = state.spThread;
+    const fmt = at => new Date(at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const bubbles = th ? th.messages.map(m => {
+      const team = m.from === 'team';
+      const k = !team && m.kind ? SP_KINDS[m.kind] : null;
+      return `<div class="sp-a-row ${team ? 'is-team' : 'is-user'}">
+        <div class="sp-a-bubble">
+          ${k ? `<span class="sp-a-kind is-${m.kind}">${k[0]} ${k[1]}</span>` : ''}
+          ${m.image ? `<a class="sp-a-shot" data-sp-img="${esc(m.image)}" target="_blank" rel="noopener"><img data-sp-src="${esc(m.image)}" alt="Screenshot"></a>` : ''}
+          ${m.text ? `<div class="sp-a-text">${esc(m.text)}</div>` : ''}
+          <span class="sp-a-meta">${esc(fmt(m.at))}${team ? ` · ${m.seen ? '✓✓ seen' : '✓ sent'}` : ''}</span>
+        </div>
+      </div>`;
+    }).join('') : '';
+    const pane = th ? `<div class="sp-a-pane">
+        <div class="sp-a-head">
+          <div><strong>${esc(th.user.name || th.user.email)}</strong><span class="muted">${esc(th.user.email)}</span></div>
+          <button class="btn btn-ghost btn-sm" data-msg-write="${esc(th.user.id)}" data-name="${esc(th.user.name)}" data-email="${esc(th.user.email)}" title="Send a message with a gift">🎁 Gift</button>
+        </div>
+        <div class="sp-a-msgs" id="sp-a-msgs">${bubbles || '<p class="muted">No messages.</p>'}</div>
+        <form class="sp-a-reply" id="sp-a-reply">
+          ${state.spImage ? `<div class="sp-a-preview"><img src="${state.spImage}" alt=""><button type="button" data-sp-unimage>×</button></div>` : ''}
+          <div class="sp-a-input">
+            <label class="sp-a-attach" title="Attach a picture">📎<input type="file" id="sp-a-file" accept="image/*" hidden></label>
+            <textarea id="sp-a-text" rows="2" maxlength="4000" placeholder="Reply as English Hub Support… (Ctrl+Enter to send)">${esc(state.spDraft[th.user.id] || '')}</textarea>
+            <button class="btn" type="submit" ${state.spBusy ? 'disabled' : ''}>${state.spBusy ? 'Sending…' : 'Send'}</button>
+          </div>
+        </form>
+      </div>` : `<div class="sp-a-pane is-empty"><p class="muted">Choose a conversation on the left.</p></div>`;
+    return `<div class="card" id="sp-card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <h2 style="font-size:18px">Support chat ${unread ? `<span class="sp-badge">${unread} new</span>` : ''}</h2>
+        <div class="row" style="gap:6px">
+          <button class="btn btn-sm ${state.spOnly === 'waiting' ? '' : 'btn-ghost'}" data-sp-only="waiting">Waiting for reply</button>
+          <button class="btn btn-sm ${state.spOnly === '' ? '' : 'btn-ghost'}" data-sp-only="">All</button>
+          <button class="btn btn-ghost btn-sm" data-action="sp-close">Close</button>
+        </div>
+      </div>
+      <div class="sp-totals">${totals}<span class="muted" style="font-size:12px">— everything students have written so far</span></div>
+      <div class="sp-a-wrap">
+        <div class="sp-a-list">${list || '<p class="muted" style="padding:12px">Nothing here yet.</p>'}</div>
+        ${pane}
+      </div>
+    </div>`;
+  }
+
+  async function loadSupportAdmin({ open, only } = {}) {
+    if (only !== undefined) state.spOnly = only;
+    if (open) state.spOpen = true;
+    try {
+      const data = await api(`/admin/support?${new URLSearchParams(state.spOnly ? { only: state.spOnly } : {})}`);
+      state.sp = data; state.spUnread = data.unread;
+      if (state.spSel) await loadSupportThread(state.spSel, { quiet: true });
+      renderKeepingReply();
+    } catch (error) { setState({ error: error.message }); }
+  }
+
+  async function loadSupportThread(user, { quiet = false } = {}) {
+    try {
+      const data = await api(`/admin/support/${user}`);
+      const before = state.spThread?.messages.length;
+      state.spSel = user; state.spThread = data; state.spUnread = data.unread;
+      const c = state.sp?.conversations.find(x => x.user === user);
+      if (c) c.unread = 0;
+      if (!quiet) { state.spImage = ''; render(); scrollSupportBottom(); }
+      else if (before !== data.messages.length) { renderKeepingReply(); scrollSupportBottom(); }
+    } catch (error) { setState({ error: error.message }); }
+  }
+
+  let spStickUntil = 0;   // pictures load after the scroll: keep to the bottom until they have
+  function scrollSupportBottom() {
+    const box = document.getElementById('sp-a-msgs');
+    if (box) box.scrollTop = box.scrollHeight;
+    spStickUntil = Date.now() + 3000;
+  }
+
+  /** Re-draw without losing the reply being typed. */
+  function renderKeepingReply() {
+    const ta = document.getElementById('sp-a-text');
+    const focused = ta && document.activeElement === ta;
+    const caret = focused ? ta.selectionStart : null;
+    const box = document.getElementById('sp-a-msgs');
+    const top = box ? box.scrollTop : null;
+    render();
+    const again = document.getElementById('sp-a-text');
+    if (again && focused) { again.focus(); again.setSelectionRange(caret, caret); }
+    const box2 = document.getElementById('sp-a-msgs');
+    if (box2 && top !== null) box2.scrollTop = top;
+  }
+
+  async function refreshSupportBadge() {
+    try {
+      const d = await api('/admin/support/unread');
+      if (d.unread !== state.spUnread) { state.spUnread = d.unread; if (state.spOpen) loadSupportAdmin(); else renderKeepingReply(); }
+    } catch { /* badge stays */ }
+  }
+
+  async function loadSupportImages() {
+    for (const el of root.querySelectorAll('img[data-sp-src]')) {
+      const url = el.dataset.spSrc;
+      if (!spImages.has(url)) {
+        try {
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
+          if (res.ok) spImages.set(url, URL.createObjectURL(await res.blob()));
+        } catch { continue; }
+      }
+      if (spImages.has(url)) {
+        el.addEventListener('load', () => {
+          if (Date.now() < spStickUntil) { const box = document.getElementById('sp-a-msgs'); if (box) box.scrollTop = box.scrollHeight; }
+        }, { once: true });
+        el.src = spImages.get(url);
+        const a = el.closest('a');
+        if (a) a.href = spImages.get(url);
+      }
+    }
+  }
+
+  function shrinkScreenshot(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1280 / img.naturalWidth, 2000 / img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+        const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(img.src);
+        resolve(c.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = () => reject(new Error('That file could not be read as a picture.'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  let spTimer = null;
+  function wireSupportAdmin() {
+    if (!spTimer) spTimer = setInterval(() => { if (!document.hidden && state.token) (state.spOpen ? loadSupportAdmin() : refreshSupportBadge()); }, 20000);
+    if (!state.spOpen) return;
+    loadSupportImages();
+    root.querySelectorAll('[data-sp-conv]').forEach(el => el.addEventListener('click', () => loadSupportThread(el.dataset.spConv)));
+    root.querySelectorAll('[data-sp-only]').forEach(el => el.addEventListener('click', () => loadSupportAdmin({ only: el.dataset.spOnly })));
+    const ta = document.getElementById('sp-a-text');
+    ta?.addEventListener('input', () => { state.spDraft[state.spSel] = ta.value; });
+    ta?.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.getElementById('sp-a-reply')?.requestSubmit(); } });
+    document.getElementById('sp-a-file')?.addEventListener('change', async e => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try { state.spImage = await shrinkScreenshot(file); } catch (error) { state.error = error.message; }
+      renderKeepingReply();
+    });
+    root.querySelector('[data-sp-unimage]')?.addEventListener('click', () => { state.spImage = ''; renderKeepingReply(); });
+    document.getElementById('sp-a-reply')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const user = state.spSel;
+      const text = (state.spDraft[user] || '').trim();
+      if ((!text && !state.spImage) || state.spBusy) return;
+      state.spBusy = true; renderKeepingReply();
+      try {
+        const out = await api(`/admin/support/${user}`, { method: 'POST', body: { text, image: state.spImage || undefined } });
+        state.spThread.messages.push(out.message);
+        state.spDraft[user] = ''; state.spImage = '';
+        const c = state.sp?.conversations.find(x => x.user === user);
+        if (c) { c.lastFrom = 'team'; c.lastText = text || '📷'; c.lastAt = out.message.at; c.unread = 0; }
+        state.error = '';
+      } catch (error) { state.error = error.message; }
+      state.spBusy = false;
+      render(); scrollSupportBottom();
+      document.getElementById('sp-a-text')?.focus();
+    });
+  }
+
   // ------------------------------------------------------------- messages
 
   const MSG_COLORS = [['#0f172a', 'Black'], ['#dc2626', 'Red'], ['#ea580c', 'Orange'], ['#ca8a04', 'Gold'], ['#16a34a', 'Green'], ['#2563eb', 'Blue'], ['#7c3aed', 'Purple'], ['#db2777', 'Pink']];
@@ -3603,7 +3823,7 @@
     const token = store.get('adminToken');
     if (token) {
       state.token = token;
-      loadTests().then(() => restoreAfterRefresh().catch(() => {}), () => signOut());
+      loadTests().then(() => { refreshSupportBadge(); return restoreAfterRefresh().catch(() => {}); }, () => signOut());
       return;
     }
     render();

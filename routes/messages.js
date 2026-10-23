@@ -1,5 +1,6 @@
 import express from 'express';
 import { inbox, unreadCount, markRead, openGift, claimGift, hide } from '../services/Messages.js';
+import { userUnread } from '../services/Support.js';
 
 /**
  * The student's message box — /api/messages (signed in).
@@ -12,7 +13,11 @@ router.get('/', async (req, res, next) => {
 });
 
 router.get('/unread', async (req, res, next) => {
-  try { res.json({ success: true, data: { unread: await unreadCount(req.user.id) } }); } catch (error) { next(error); }
+  try {
+    // The envelope's number counts unread support replies too.
+    const [messages, support] = await Promise.all([unreadCount(req.user.id), userUnread(req.user.id)]);
+    res.json({ success: true, data: { unread: messages + support, messages, support } });
+  } catch (error) { next(error); }
 });
 
 router.post('/:id/read', async (req, res, next) => {

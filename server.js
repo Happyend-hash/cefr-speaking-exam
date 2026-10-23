@@ -76,6 +76,8 @@ import { startPaymentReports } from './services/PaymentReport.js';
 import courseStudentRoutes from './routes/courseStudents.js';
 import messageRoutes from './routes/messages.js';
 import adminMessageRoutes from './routes/adminMessages.js';
+import supportRoutes from './routes/support.js';
+import adminSupportRoutes from './routes/adminSupport.js';
 import { noteGuest } from './services/UsageStats.js';
 import { resumeStuckMarking } from './routes/exam.js';
 import { retryAll, RETRY_EVERY_MS } from './services/MarkingRetry.js';
@@ -332,11 +334,13 @@ app.use('/api/chat', authenticate, requireVerifiedEmail, chatRoutes);
 app.use('/api/games', authenticate, requireVerifiedEmail, gameRoutes);
 app.use('/api/assistant', authenticate, requireVerifiedEmail, assistantRoutes);
 app.use('/api/messages', authenticate, messageRoutes);
+app.use('/api/support', authenticate, supportRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);
 app.use('/api/admin/course-students', authenticate, courseStudentRoutes);
 app.use('/api/admin/messages', authenticate, adminMessageRoutes);
+app.use('/api/admin/support', authenticate, adminSupportRoutes);
 app.use('/api/admin', authenticate, adminRoutes);
 
 // Health check

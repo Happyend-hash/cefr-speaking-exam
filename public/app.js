@@ -1831,7 +1831,7 @@
     if (!state.user || !isStudentShell()) return;
     try {
       const d = await api('/messages/unread');
-      if (d.unread !== state.unread) setState({ unread: d.unread });
+      if (d.unread !== state.unread || d.support !== state.supportUnread) setState({ unread: d.unread, supportUnread: d.support || 0 });
     } catch { /* the badge simply stays as it was */ }
   }
 
@@ -1839,7 +1839,8 @@
     go('inbox', { inboxSel: id, loading: !state.inbox });
     try {
       const data = await api('/messages');
-      setState({ inbox: data, unread: data.unread, loading: false });
+      setState({ inbox: data, loading: false });
+      loadUnread();
       if (id) openMessage(id);
     } catch (error) { setState({ loading: false, error: error.message }); }
   }
@@ -1858,7 +1859,8 @@
       try {
         const out = await api(`/messages/${id}/read`, { method: 'POST' });
         patchMessage(out.message);
-        setState({ unread: out.unread });
+        render();
+        loadUnread();
       } catch { /* stays unread; harmless */ }
     }
   }
@@ -1879,7 +1881,8 @@
       const out = await api(`/messages/${id}/claim`, { method: 'POST' });
       patchMessage(out.message);
       state.giftBalance = { ...(state.giftBalance || {}), [id]: out.balance };
-      setState({ giftBusy: false, unread: out.unread });
+      setState({ giftBusy: false });
+      loadUnread();
     } catch (error) { setState({ giftBusy: false, error: error.message }); }
   }
 
@@ -1888,7 +1891,8 @@
     try {
       const out = await api(`/messages/${id}`, { method: 'DELETE' });
       state.inbox.messages = state.inbox.messages.filter(m => m.id !== id);
-      setState({ inboxSel: null, unread: out.unread });
+      setState({ inboxSel: null });
+      loadUnread();
     } catch (error) { setState({ error: error.message }); }
   }
 
@@ -1979,7 +1983,13 @@
         <span class="inbox-row-side"><span class="muted">${esc(inboxDate(m.at, true))}</span>${!m.read ? `<span class="inbox-dot" aria-label="${INBOX_UZ.newTag}"></span>` : ''}</span>
       </button>`;
     }).join('');
+    const support = `<button class="inbox-support" data-sp-open>
+        <span class="sp-ava is-big" aria-hidden="true">${LOGO_MARK}</span>
+        <span class="inbox-row-main"><span class="inbox-row-title">${SP_UZ.team}</span><span class="inbox-row-text">${SP_UZ.pinned}</span></span>
+        ${state.supportUnread ? `<span class="nav-badge is-inline">${state.supportUnread}</span>` : `<span class="inbox-support-go">${icon('right')}</span>`}
+      </button>`;
     return `<div class="page-head"><h1>${INBOX_UZ.title}</h1></div>
+      ${support}
       ${rows ? `<div class="card inbox-list">${rows}</div>` : `<div class="card"><p class="muted">${INBOX_UZ.empty}</p></div>`}`;
   }
 
@@ -1992,6 +2002,7 @@
     if (state.screen !== 'inbox') return;
     root.querySelectorAll('[data-inbox-open]').forEach(el => el.addEventListener('click', () => openMessage(el.dataset.inboxOpen)));
     root.querySelector('[data-inbox-back]')?.addEventListener('click', () => { state.inboxSel = null; render(); });
+    root.querySelector('[data-sp-open]')?.addEventListener('click', () => openSupport());
     root.querySelectorAll('[data-gift-open]').forEach(el => el.addEventListener('click', () => giftOpen(el.dataset.giftOpen)));
     root.querySelectorAll('[data-gift-claim]').forEach(el => el.addEventListener('click', () => giftClaim(el.dataset.giftClaim)));
     root.querySelectorAll('[data-msg-del]').forEach(el => el.addEventListener('click', () => deleteMessage(el.dataset.msgDel)));
@@ -2004,6 +2015,189 @@
   setInterval(() => { if (document.visibilityState === 'visible') loadUnread(); }, 90 * 1000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadUnread(); });
   setTimeout(loadUnread, 1500);
+
+  // =========================================================== SUPPORT CHAT
+  //
+  // English Hub Support (services/Support.js): one conversation per student,
+  // pinned at the top of their message box. They ask, report a problem,
+  // suggest an idea or say what they liked — with a screenshot if they want.
+
+  const SP_UZ = {
+    team: 'English Hub Support',
+    teamSub: 'Odatda bir kun ichida javob beramiz',
+    pinned: "Savol, muammo yoki fikringiz bo'lsa — bizga yozing",
+    welcome: "Assalomu alaykum! 👋 Bu English Hub yordam markazi.\n\nSavolingiz bo'lsa, biror narsa ishlamayotgan bo'lsa yoki sayt haqida fikringiz bo'lsa — shu yerga yozing. Nima yoqdi, nima yoqmadi — har bir fikringiz saytni yaxshilashga yordam beradi. 💙",
+    kinds: { question: ['❓', 'Savol'], problem: ['🐞', 'Muammo'], idea: ['💡', 'Taklif'], praise: ['💚', 'Yoqdi'] },
+    kindHint: 'Xabar turi:',
+    placeholder: { question: 'Savolingizni yozing…', problem: "Nima ishlamayapti? Qayerda, qachon? Rasm ham qo'shishingiz mumkin…", idea: "Saytga nima qo'shsak yoki o'zgartirsak bo'ladi?…", praise: 'Saytda sizga nima yoqdi?…' },
+    attach: "Rasm qo'shish",
+    send: 'Yuborish',
+    sending: 'Yuborilmoqda…',
+    seen: "o'qildi",
+    sent: 'yuborildi',
+    today: 'Bugun',
+    yesterday: 'Kecha',
+    bigImage: 'Rasm juda katta yoki ochilmadi',
+    thanks: "Rahmat! Xabaringiz yetib keldi — tez orada javob beramiz."
+  };
+
+  const sp = { list: null, draft: '', kind: 'question', image: '', busy: false, poll: null, sentNow: false, stickUntil: 0 };
+
+  async function openSupport() {
+    go('support');
+    await loadSupport(true);
+    const box = root.querySelector('.sp-msgs');
+    if (box) box.scrollTop = box.scrollHeight;
+    sp.stickUntil = Date.now() + 4000;
+  }
+
+  async function loadSupport(first = false) {
+    try {
+      const data = await api('/support');
+      const changed = !sp.list || data.messages.length !== sp.list.length || data.messages.some((m, i) => m.seen !== sp.list[i]?.seen);
+      sp.list = data.messages;
+      if (first || changed) { renderKeepingComposer(); loadUnread(); }
+    } catch (error) { if (first) setState({ error: error.message }); }
+  }
+
+  /** Re-draw without losing what is being typed or where the caret is. */
+  function renderKeepingComposer() {
+    const ta = document.getElementById('sp-text');
+    const focused = ta && document.activeElement === ta;
+    const caret = focused ? ta.selectionStart : null;
+    const box = root.querySelector('.sp-msgs');
+    const atBottom = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    render();
+    const again = document.getElementById('sp-text');
+    if (again && focused) { again.focus(); again.setSelectionRange(caret, caret); }
+    const box2 = root.querySelector('.sp-msgs');
+    if (box2 && atBottom) { box2.scrollTop = box2.scrollHeight; sp.stickUntil = Date.now() + 3000; }
+  }
+
+  /** A phone screenshot shrunk to at most 1280 px wide as a JPEG, so it uploads quickly. */
+  function shrinkShot(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1280 / img.naturalWidth, 2000 / img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+        const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(img.src);
+        let q = 0.82; let out = c.toDataURL('image/jpeg', q);
+        while (out.length > 1150000 && q > 0.4) { q -= 0.12; out = c.toDataURL('image/jpeg', q); }
+        resolve(out);
+      };
+      img.onerror = () => reject(new Error(SP_UZ.bigImage));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  async function sendSupport() {
+    const text = sp.draft.trim();
+    if ((!text && !sp.image) || sp.busy) return;
+    sp.busy = true; renderKeepingComposer();
+    try {
+      const out = await api('/support', { method: 'POST', body: { kind: sp.kind, text, image: sp.image || undefined } });
+      sp.list = [...(sp.list || []), out.message];
+      sp.draft = ''; sp.image = ''; sp.sentNow = true;
+      state.error = '';
+    } catch (error) { state.error = error.message; }
+    sp.busy = false;
+    render();
+    const box = root.querySelector('.sp-msgs');
+    if (box) box.scrollTop = box.scrollHeight;
+    sp.stickUntil = Date.now() + 3000;
+    document.getElementById('sp-text')?.focus();
+  }
+
+  const spTime = at => new Date(at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', hour12: false });
+  function spDay(at) {
+    const d = new Date(at); const t = new Date();
+    const same = (a, b) => a.toDateString() === b.toDateString();
+    if (same(d, t)) return SP_UZ.today;
+    const y = new Date(t); y.setDate(t.getDate() - 1);
+    if (same(d, y)) return SP_UZ.yesterday;
+    return inboxDate(at);
+  }
+
+  function spBubble(m) {
+    const mine = m.from === 'user';
+    const k = m.kind && SP_UZ.kinds[m.kind];
+    return `<div class="sp-row ${mine ? 'is-mine' : 'is-team'}">
+      ${mine ? '' : `<span class="sp-ava" aria-hidden="true">${LOGO_MARK}</span>`}
+      <div class="sp-bubble">
+        ${mine && k ? `<span class="sp-kind is-${m.kind}">${k[0]} ${k[1]}</span>` : ''}
+        ${m.image ? `<button class="sp-shot" data-sp-zoom="${esc(m.image)}" aria-label="Rasmni kattalashtirish"><img data-authsrc="${esc(m.image)}" alt="Rasm"></button>` : ''}
+        ${m.text ? `<div class="sp-text">${esc(m.text)}</div>` : ''}
+        <span class="sp-meta">${esc(spTime(m.at))}${mine ? ` · <span class="${m.seen ? 'is-seen' : ''}">${m.seen ? `✓✓ ${SP_UZ.seen}` : `✓ ${SP_UZ.sent}`}</span>` : ''}</span>
+      </div>
+    </div>`;
+  }
+
+  function supportScreen() {
+    if (!sp.list) return `<div class="center-note"><span class="spinner"></span></div>`;
+    let lastDay = '';
+    const items = [{ from: 'team', text: SP_UZ.welcome, at: sp.list[0]?.at || new Date().toISOString(), welcome: true }, ...sp.list].map(m => {
+      const day = spDay(m.at);
+      const sep = !m.welcome && day !== lastDay ? `<div class="sp-day"><span>${esc(day)}</span></div>` : '';
+      if (!m.welcome) lastDay = day;
+      return sep + spBubble(m);
+    }).join('');
+    const kinds = Object.entries(SP_UZ.kinds).map(([k, [e, l]]) =>
+      `<button type="button" class="sp-chip is-${k} ${sp.kind === k ? 'is-on' : ''}" data-sp-kind="${k}" aria-pressed="${sp.kind === k}">${e} ${l}</button>`).join('');
+    return `<button class="crumb" data-go="inbox">${icon('left')} ${INBOX_UZ.back}</button>
+      <section class="sp-chat">
+        <header class="sp-head">
+          <span class="sp-ava is-big" aria-hidden="true">${LOGO_MARK}</span>
+          <div><strong>${SP_UZ.team}</strong><span>${SP_UZ.teamSub}</span></div>
+        </header>
+        <div class="sp-msgs" aria-live="polite">${items}
+          ${sp.sentNow ? `<div class="sp-note">${SP_UZ.thanks}</div>` : ''}
+        </div>
+        <form class="sp-compose" id="sp-compose">
+          <div class="sp-chips" role="group" aria-label="${SP_UZ.kindHint}">${kinds}</div>
+          ${sp.image ? `<div class="sp-preview"><img src="${sp.image}" alt=""><button type="button" data-sp-unimage aria-label="Rasmni olib tashlash">×</button></div>` : ''}
+          <div class="sp-input">
+            <label class="sp-attach" title="${SP_UZ.attach}" aria-label="${SP_UZ.attach}">📎<input type="file" id="sp-file" accept="image/*" hidden></label>
+            <textarea id="sp-text" rows="1" maxlength="2000" placeholder="${esc(SP_UZ.placeholder[sp.kind])}">${esc(sp.draft)}</textarea>
+            <button type="submit" class="sp-send" ${sp.busy ? 'disabled' : ''} aria-label="${SP_UZ.send}">
+              ${sp.busy ? '<span class="spinner"></span>' : '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>'}
+            </button>
+          </div>
+        </form>
+      </section>
+      ${sp.zoom ? `<div class="sp-zoom" data-sp-unzoom><img data-authsrc="${esc(sp.zoom)}" alt=""></div>` : ''}`;
+  }
+
+  function wireSupport() {
+    if (state.screen !== 'support') { clearInterval(sp.poll); sp.poll = null; return; }
+    // Screenshots load after the chat is drawn; if it was at the bottom, keep it there.
+    const msgs = root.querySelector('.sp-msgs');
+    if (msgs) {
+      msgs.querySelectorAll('img').forEach(img => img.addEventListener('load', () => { if (Date.now() < sp.stickUntil) msgs.scrollTop = msgs.scrollHeight; }, { once: true }));
+    }
+    if (!sp.poll) sp.poll = setInterval(() => { if (state.screen === 'support' && document.visibilityState === 'visible') loadSupport(); }, 8000);
+    const ta = document.getElementById('sp-text');
+    const grow = () => { if (!ta) return; ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`; };
+    grow();
+    ta?.addEventListener('input', () => { sp.draft = ta.value; sp.sentNow = false; grow(); });
+    ta?.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); sendSupport(); }
+    });
+    document.getElementById('sp-compose')?.addEventListener('submit', e => { e.preventDefault(); sendSupport(); });
+    root.querySelectorAll('[data-sp-kind]').forEach(el => el.addEventListener('click', () => { sp.kind = el.dataset.spKind; renderKeepingComposer(); }));
+    document.getElementById('sp-file')?.addEventListener('change', async e => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try { sp.image = await shrinkShot(file); state.error = ''; } catch (error) { state.error = error.message; }
+      renderKeepingComposer();
+    });
+    root.querySelector('[data-sp-unimage]')?.addEventListener('click', () => { sp.image = ''; renderKeepingComposer(); });
+    root.querySelectorAll('[data-sp-zoom]').forEach(el => el.addEventListener('click', () => { sp.zoom = el.dataset.spZoom; renderKeepingComposer(); }));
+    root.querySelector('[data-sp-unzoom]')?.addEventListener('click', () => { sp.zoom = null; renderKeepingComposer(); });
+  }
 
   // =========================================================== EXPERT SCORE
   //
@@ -6050,7 +6244,7 @@
     { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'writing', 'writing-check', 'briefing'] },
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
-    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install', 'inbox'] }
+    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install', 'inbox', 'support'] }
   ];
   const currentTab = () => TABS.find(t => t.screens.includes(state.screen))?.id || '';
   const isStudentShell = () => Boolean(state.user) && state.user.role !== 'admin';
@@ -6132,7 +6326,7 @@
       <div class="nav-links nav-desktop">${links}</div>
       <div class="nav-right">
         ${canLeave()
-          ? `<button class="nav-inbox ${state.screen === 'inbox' ? 'is-current' : ''}" data-go="inbox" aria-label="Xabarlar${state.unread ? ` — ${state.unread} ta yangi` : ''}">${icon('mail')}${state.unread ? `<span class="nav-badge">${state.unread > 9 ? '9+' : state.unread}</span>` : ''}</button>`
+          ? `<button class="nav-inbox ${['inbox', 'support'].includes(state.screen) ? 'is-current' : ''}" data-go="inbox" aria-label="Xabarlar${state.unread ? ` — ${state.unread} ta yangi` : ''}">${icon('mail')}${state.unread ? `<span class="nav-badge">${state.unread > 9 ? '9+' : state.unread}</span>` : ''}</button>`
           : ''}
         ${canLeave()
           ? `<button class="nav-me${premiumClass(me)}" data-go="profile" aria-label="Profil">${safePic(me.avatar) ? picInner(me) : `<span>${esc(initials)}</span>`}</button>`
@@ -6195,6 +6389,7 @@
       duel: duelScreen,
       vr: vrScreen,
       inbox: inboxScreen,
+      support: supportScreen,
       install: installScreen
     }[state.screen] || landingScreen;
 
@@ -8298,6 +8493,7 @@
   function wire() {
     resolveAuthedMedia();
     wireInbox();
+    wireSupport();
     root.querySelectorAll('[data-expert-save]').forEach(el => el.addEventListener('click', () => saveExpertScore(el.dataset.expertSave)));
 
     root.querySelectorAll('[data-open-attempt]').forEach(el =>
