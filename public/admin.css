@@ -405,3 +405,5 @@
 .msg-sent-main .muted { font-size: 13px; overflow-wrap: anywhere; }
 .msg-sent-meta { font-size: 12px !important; }
 .msg-sent-stats { display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+.review-email { font-size: 13px; color: var(--indigo-700); font-weight: 600; overflow-wrap: anywhere; user-select: all; }
+.msg-chip small { font-weight: 500; opacity: .8; }

@@ -1695,6 +1695,7 @@ router.get('/results', async (req, res, next) => {
         results: results.map(r => ({
           id: String(r._id),
           student: r.student?.email || '—',
+          studentId: r.student?._id ? String(r.student._id) : null,
           studentName: [r.student?.firstName, r.student?.lastName].filter(Boolean).join(' '),
           exam: r.exam?.title || 'Exam',
           mode: r.mode,
@@ -1838,6 +1839,7 @@ router.get('/writing-results', async (req, res, next) => {
         results: list.map(a => ({
           id: String(a._id),
           student: a.student?.email || '—',
+          studentId: a.student?._id ? String(a.student._id) : null,
           studentName: [a.student?.firstName, a.student?.lastName].filter(Boolean).join(' '),
           title: a.testTitle || (a.mode === 'check' ? 'Writing check' : 'Writing mock'),
           mode: a.mode,

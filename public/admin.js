@@ -308,6 +308,11 @@
    * It defaults to the unreviewed ones, because a queue that shows everything
    * shows no work to do.
    */
+  /** Write to (or send a gift to) the student of an attempt, straight from the review queue. */
+  const giftButton = r => (r.studentId
+    ? `<button class="btn btn-ghost btn-sm" data-msg-write="${esc(r.studentId)}" data-name="${esc(r.studentName)}" data-email="${esc(r.student)}" title="Write to ${esc(r.student)} or send a gift">🎁 Message</button>`
+    : '');
+
   function reviewCard() {
     if (!state.reviewOpen) {
       return `<div class="card" style="margin-top:28px">
@@ -340,12 +345,14 @@
         <div style="min-width:220px">
           <strong>${esc(r.studentName || r.student)}</strong>
           ${r.reviewed ? '<span class="tag tag-live">expert reviewed</span>' : ''}
+          ${r.studentName ? `<div class="review-email">${esc(r.student)}</div>` : ''}
           <div class="muted" style="font-size:13px">${esc(r.title)} · ${r.parts} part${r.parts === 1 ? '' : 's'}</div>
         </div>
         <div class="muted" style="font-size:13px">${r.at ? new Date(r.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : ''}</div>
         <div class="row" style="gap:10px;align-items:center">
           <span><strong>${r.score ?? '—'}</strong><span class="muted"> / 75</span></span>
           <span class="tag">${esc(r.level || '')}</span>
+          ${giftButton(r)}
           <a class="btn btn-sm" href="/?writing=${encodeURIComponent(r.id)}" target="_blank" rel="noopener">Review</a>
         </div>
       </div>`).join('');
@@ -355,6 +362,7 @@
           <strong>${esc(r.studentName || r.student)}</strong>
           ${r.corrected ? '<span class="tag tag-live">reviewed</span>' : ''}
           ${r.backupMark ? `<span class="tag tag-warn" title="${esc(r.backupReason || '')}">backup mark — re-mark</span>` : ''}
+          ${r.studentName ? `<div class="review-email">${esc(r.student)}</div>` : ''}
           <div class="muted" style="font-size:13px">
             ${esc(r.exam)}${r.part ? ` · Part ${esc(r.part)}` : ''} · ${r.answers} answer${r.answers === 1 ? '' : 's'}
           </div>
@@ -365,6 +373,7 @@
         <div class="row" style="gap:10px;align-items:center">
           <span><strong>${r.score ?? '—'}</strong><span class="muted"> / 75</span></span>
           <span class="tag">${esc(r.level || '')}</span>
+          ${giftButton(r)}
           <a class="btn btn-sm" href="/?result=${encodeURIComponent(r.id)}" target="_blank" rel="noopener">
             Review
           </a>
@@ -2942,7 +2951,7 @@
     const d = state.msgDraft;
     const toBtn = (v, label) => `<button type="button" class="btn btn-sm ${d.to === v ? '' : 'btn-ghost'}" data-msg-to="${v}" aria-pressed="${d.to === v}">${label}</button>`;
     const picker = d.to === 'pick' ? `<div class="msg-pick">
-        <div class="msg-chips">${d.picked.map(p => `<span class="msg-chip">${esc(p.name || p.email)}<button type="button" data-msg-unpick="${esc(p.id)}" aria-label="Remove ${esc(p.name || p.email)}">×</button></span>`).join('') || '<span class="muted" style="font-size:13px">No one chosen yet — search below.</span>'}</div>
+        <div class="msg-chips">${d.picked.map(p => `<span class="msg-chip">${esc(p.name || p.email)}${p.name && p.email ? ` <small>${esc(p.email)}</small>` : ''}<button type="button" data-msg-unpick="${esc(p.id)}" aria-label="Remove ${esc(p.name || p.email)}">×</button></span>`).join('') || '<span class="muted" style="font-size:13px">No one chosen yet — search below.</span>'}</div>
         <input id="msg-find" type="search" placeholder="Search a student by name or email" value="${esc(state.msgFind)}" autocomplete="off">
         ${state.msgFound.length ? `<div class="msg-found">${state.msgFound.map(s => `<button type="button" data-msg-pick="${esc(s.id)}" data-name="${esc(s.name)}" data-email="${esc(s.email)}" ${d.picked.some(p => p.id === s.id) ? 'disabled' : ''}>
             <strong>${esc(s.name || s.email)}</strong><span class="muted">${esc(s.email)}</span></button>`).join('')}</div>` : ''}
