@@ -461,3 +461,12 @@
 .cs-day-quick { display: inline-flex; gap: 6px; }
 .cs-day-quick .cs-type { padding: 4px 10px; font-size: 13px; }
 .cs-hw-past { margin: 4px 0 0; padding: 8px 12px; border-radius: 10px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 13px; }
+.cs-book-chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.cs-book-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 999px; background: #fff; border: 1px solid var(--indigo-200); font-size: 13px; font-weight: 600; color: var(--indigo-700); }
+.cs-book-chip small { color: var(--ink-faint); font-weight: 500; }
+.cs-book-chip button { border: 0; background: transparent; color: inherit; font-size: 15px; line-height: 1; padding: 0 6px; border-radius: 999px; cursor: pointer; }
+.cs-book-chip button:hover { background: var(--indigo-100, #e0e7ff); }
+.cs-book-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.cs-book-tab { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; color: var(--ink); }
+.cs-book-tab small { font-weight: 500; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.cs-book-tab.is-on { border-color: var(--indigo-600); background: var(--indigo-50); color: var(--indigo-700); box-shadow: 0 0 0 2px var(--indigo-200); }

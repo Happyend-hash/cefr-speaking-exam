@@ -4971,6 +4971,7 @@
     vrBody: "Kitoblardagi so'zlar bo'yicha test: o'zingiz mashq qiling, o'qituvchi ochgan xonada poygaga qo'shiling yoki uyga vazifani topshiring.",
     vrHwOption: 'Uyga vazifani topshirish',
     vrHwOptionDesc: book => (book ? `${book} — natija ustozingizga avtomatik yuboriladi` : 'Natija ustozingizga avtomatik yuboriladi'),
+    vrHwBookDone: (d, n) => `${n} ta unitdan ${d} tasi`,
     vrHwTitle: 'Uyga vazifa',
     vrHwHint: "Unitni tanlang. Test tugashi bilan natijangiz ustozingizdagi uyga vazifa natijalariga yoziladi.",
     vrHwNoBook: "Ustozingiz hali darajangiz uchun kitob tanlamagan. Ustozingizga ayting.",
@@ -5377,7 +5378,8 @@
     await loadVocabHomework();
     if (vr.hwResult !== r || r.saved !== null) return;
     const unit = vr.hwRun?.unit;
-    const now = unit === 'general' ? vr.hw?.general?.percent : vr.hw?.units?.find(u => u.n === unit)?.percent;
+    const book = (vr.hw?.books || []).find(b => b.key === vr.hwRun?.book) || vr.hw;
+    const now = unit === 'general' ? book?.general?.percent : book?.units?.find(u => u.n === unit)?.percent;
     r.saved = now === r.percent ? true : 'unknown';
     if (state.screen === 'vr') render();
   }
@@ -5388,15 +5390,16 @@
     render();
   }
 
-  async function vrStartHomework(unit) {
+  async function vrStartHomework(unit, bookKey = null) {
     if (vr.busy) return;
     vr.busy = true; render();
     try {
-      const out = await api('/games/vocabrace/homework/start', { method: 'POST', body: { unit, style: vr.style } });
+      const out = await api('/games/vocabrace/homework/start', { method: 'POST', body: { unit, book: bookKey || undefined, style: vr.style } });
+      const book = (vr.hw?.books || []).find(b => b.key === bookKey) || vr.hw?.book;
       vr.host = false; vr.solo = true; vr.code = null; vr.words = out.words;
-      vr.packKey = vr.hw?.book?.key; vr.packTitle = vr.hw?.book?.title || ''; vr.unitIds = []; vr.roster = [];
+      vr.packKey = book?.key; vr.packTitle = book?.title || ''; vr.unitIds = []; vr.roster = [];
       vr.style = out.style || vr.style; vr.total = out.question.total; vr.correct = 0; vr.score = 0; vr.missed = [];
-      vr.hwRun = { ...out.homework, unit }; vr.hwResult = null;
+      vr.hwRun = { ...out.homework, unit, book: book?.key }; vr.hwResult = null;
       vr.phase = 'question'; vr.q = out.question; vr.myPick = null; vr.reveal = null;
       vr.deadline = Date.now() + out.question.seconds * 1000;
     } catch (error) { state.error = error.message; }
@@ -5680,7 +5683,7 @@
         </button>
         ${vr.hw?.linked ? `<button class="vr-unit-row vr-hw-option" data-gm="vr-mode-hw">
           <span class="vr-unit-title">📘 ${esc(GM_UZ.vrHwOption)}</span>
-          <span class="vr-unit-count">${esc(GM_UZ.vrHwOptionDesc(vr.hw.book?.title))}</span>
+          <span class="vr-unit-count">${esc(GM_UZ.vrHwOptionDesc((vr.hw.books?.length ? vr.hw.books.map(b => b.title) : [vr.hw.book?.title].filter(Boolean)).join(', ')))}</span>
         </button>` : ''}
       </div>
     </section>`;
@@ -5697,23 +5700,39 @@
         <p class="muted">${esc(GM_UZ.vrHwNoBook)}</p></section>`;
     }
     const band = v => (v === null || v === undefined ? '' : v >= 75 ? 'is-good' : v >= 50 ? 'is-mid' : 'is-low');
-    const rows = hw.units.map(u => `
-      <button class="vr-unit-row vr-hw-unit" data-gm-hw="${u.n}" ${vr.busy ? 'disabled' : ''}>
-        <span class="vr-unit-title">${u.n}. ${esc(u.title)}</span>
-        <span class="vr-unit-count">${u.words} ${GM_UZ.vrWordsSuffix}</span>
-        <span class="vr-hw-pct ${band(u.percent)}">${u.percent === null ? esc(GM_UZ.vrHwNotYet) : `${u.percent}%`}</span>
-      </button>`).join('');
+    // Several books per level: one section each, with its own units and general test.
+    const books = hw.books?.length ? hw.books : [{ ...hw.book, units: hw.units, general: hw.general, generalWords: hw.generalWords, average: null }];
+    const several = books.length > 1;
+    if (vr.hwOpenBook === undefined) vr.hwOpenBook = books[0].key;
+    const section = b => {
+      const open = !several || vr.hwOpenBook === b.key;
+      const done = b.units.filter(u => u.percent !== null).length;
+      const rows = b.units.map(u => `
+        <button class="vr-unit-row vr-hw-unit" data-gm-hw="${u.n}" data-gm-book="${esc(b.key)}" ${vr.busy ? 'disabled' : ''}>
+          <span class="vr-unit-title">${u.n}. ${esc(u.title)}</span>
+          <span class="vr-unit-count">${u.words} ${GM_UZ.vrWordsSuffix}</span>
+          <span class="vr-hw-pct ${band(u.percent)}">${u.percent === null ? esc(GM_UZ.vrHwNotYet) : `${u.percent}%`}</span>
+        </button>`).join('');
+      return `<div class="vr-hw-book ${open ? 'is-open' : ''}">
+        ${several ? `<button class="vr-hw-book-head" data-gm-hwbook="${esc(b.key)}" aria-expanded="${open}">
+          <span class="vr-hw-book-title">📘 ${esc(b.title)}</span>
+          <span class="vr-hw-book-meta">${esc(GM_UZ.vrHwBookDone(done, b.units.length))}${b.average !== null && b.average !== undefined ? ` · ${b.average}%` : ''}</span>
+          <span class="vr-hw-book-chev">${icon('chevron')}</span>
+        </button>` : ''}
+        ${open ? `<div class="vr-units vr-hw-units">${rows}
+          <button class="vr-unit-row vr-hw-unit vr-hw-general" data-gm-hw="general" data-gm-book="${esc(b.key)}" ${vr.busy ? 'disabled' : ''}>
+            <span class="vr-unit-title">🏁 ${esc(GM_UZ.vrHwGeneral)}</span>
+            <span class="vr-unit-count">${esc(GM_UZ.vrHwGeneralDesc(b.generalWords || 0))}</span>
+            <span class="vr-hw-pct ${band(b.general?.percent)}">${b.general ? `${b.general.percent}%` : esc(GM_UZ.vrHwNotYet)}</span>
+          </button>
+        </div>` : ''}
+      </div>`;
+    };
     return `<section class="card gm-card">
-      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${esc(hw.book.title)}</h2></div>
+      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${esc(several ? GM_UZ.vrHwTitle : books[0].title)}</h2></div>
       <p class="muted">${esc(hw.name)} · ${esc(hw.level)}${hw.average !== null && hw.average !== undefined ? ` · ${esc(GM_UZ.vrHwAvg(hw.average))}` : ''}</p>
       <p class="muted">${esc(GM_UZ.vrHwHint)}</p>
-      <div class="vr-units vr-hw-units">${rows}
-        <button class="vr-unit-row vr-hw-unit vr-hw-general" data-gm-hw="general" ${vr.busy ? 'disabled' : ''}>
-          <span class="vr-unit-title">🏁 ${esc(GM_UZ.vrHwGeneral)}</span>
-          <span class="vr-unit-count">${esc(GM_UZ.vrHwGeneralDesc(hw.generalWords || 0))}</span>
-          <span class="vr-hw-pct ${band(hw.general?.percent)}">${hw.general ? `${hw.general.percent}%` : esc(GM_UZ.vrHwNotYet)}</span>
-        </button>
-      </div>
+      ${books.map(section).join('')}
     </section>`;
   }
 
@@ -6106,7 +6125,11 @@
     }));
     root.querySelectorAll('[data-gm-hw]').forEach(el => el.addEventListener('click', () => {
       const raw = el.dataset.gmHw;
-      vrStartHomework(raw === 'general' ? 'general' : Number(raw));
+      vrStartHomework(raw === 'general' ? 'general' : Number(raw), el.dataset.gmBook || null);
+    }));
+    root.querySelectorAll('[data-gm-hwbook]').forEach(el => el.addEventListener('click', () => {
+      vr.hwOpenBook = vr.hwOpenBook === el.dataset.gmHwbook ? null : el.dataset.gmHwbook;
+      render();
     }));
     root.querySelectorAll('[data-eh-word]').forEach(el => el.addEventListener('click', () => {
       eh.tapped = Number(el.dataset.ehWord);

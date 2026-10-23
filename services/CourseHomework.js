@@ -23,33 +23,45 @@ export async function linkedCourseStudent(userId) {
   return CourseStudent.findOne({ accountEmail: email, removedAt: null, active: true });
 }
 
-/** What the student's "Uyga vazifa" screen shows: their book's units with their current results. */
+/**
+ * What the student's "Uyga vazifa" screen shows: every book of their level
+ * (several since 2026-10-24), each with its units and current results and
+ * its own general test.
+ */
 export async function homeworkView(student) {
-  const book = (await booksPerLevel())[student.level];
-  if (!book) return { name: student.name, level: student.level, book: null, units: [], general: null };
-  const summary = vocabSummary(student, book.units.length, student.level, book);
-  return {
-    name: student.name,
-    level: student.level,
-    book: { key: book.key, title: book.title },
-    units: book.units.map(u => {
-      const cur = summary.list[u.n - 1] || {};
-      return { n: u.n, title: u.title, words: u.words, percent: cur.percent ?? null, date: cur.date || null, source: cur.source || null };
-    }),
-    general: summary.latestTest,
-    generalWords: book.units.reduce((a, u) => a + Math.min(u.words, GENERAL_WORDS_PER_UNIT), 0),
-    average: summary.average
-  };
+  const list = (await booksPerLevel())[student.level] || [];
+  const base = { name: student.name, level: student.level };
+  if (!list.length) return { ...base, books: [], book: null, units: [], general: null, average: null };
+  const summary = vocabSummary(student, 0, student.level, list);
+  const books = list.map((book, i) => {
+    const t = summary.tracks[i];
+    return {
+      key: book.key,
+      title: book.title,
+      units: book.units.map(u => {
+        const cur = t.list[u.n - 1] || {};
+        return { n: u.n, title: u.title, words: u.words, percent: cur.percent ?? null, date: cur.date || null, source: cur.source || null };
+      }),
+      general: t.latestTest,
+      generalWords: book.units.reduce((a, u) => a + Math.min(u.words, GENERAL_WORDS_PER_UNIT), 0),
+      average: t.average
+    };
+  });
+  // `book`, `units`, `general`, `generalWords` repeat the first book for screens made before several books.
+  return { ...base, books, book: { key: books[0].key, title: books[0].title }, units: books[0].units, general: books[0].general, generalWords: books[0].generalWords, average: summary.overall.average };
 }
 
 /**
  * The test a student is about to take: the pack, the unit ids and the
- * homework tag the quiz engine carries to the end. `unit`: a unit number or 'general'.
+ * homework tag the quiz engine carries to the end. `unit`: a unit number or
+ * 'general'; `bookKey`: which of the level's books (the first when not given).
  */
-export async function homeworkPlan(student, unit) {
-  const book = (await booksPerLevel())[student.level];
-  if (!book) throw new Error('Ustozingiz hali bu daraja uchun kitob tanlamagan');
-  const base = { courseStudentId: String(student._id), level: student.level, bookKey: book.key, bookTitle: book.title };
+export async function homeworkPlan(student, unit, bookKey = null) {
+  const list = (await booksPerLevel())[student.level] || [];
+  if (!list.length) throw new Error('Ustozingiz hali bu daraja uchun kitob tanlamagan');
+  const book = bookKey ? list.find(b => b.key === bookKey) : list[0];
+  if (!book) throw new Error('Bu kitob sizning darajangizda yo‘q');
+  const base = { courseStudentId: String(student._id), level: student.level, bookKey: book.key, firstBook: list[0].key, bookTitle: book.title };
   if (unit === 'general') {
     return {
       packKey: book.key, unitIds: book.units.map(u => u.id), perUnit: GENERAL_WORDS_PER_UNIT,
@@ -71,15 +83,16 @@ export async function saveHomeworkResult(homework) {
   // The level may have changed while the test was running: results belong to the level it was taken for.
   if (student.level !== homework.level) throw new Error('Darajangiz o‘zgargan — testni qaytadan boshlang');
   const date = dayOf();
+  const where = { book: homework.bookKey || null, firstBook: homework.firstBook || homework.bookKey || null };
   if (homework.kind === 'unit') {
-    recordUnitResult(student, { unit: homework.unit, percent: homework.percent, date, via: 'online' });
+    recordUnitResult(student, { unit: homework.unit, percent: homework.percent, date, via: 'online', ...where });
   } else {
     const perUnit = {};
     for (const [unitId, p] of Object.entries(homework.perUnit || {})) {
       const n = homework.unitNumbers?.[unitId];
       if (n) perUnit[n] = p;
     }
-    recordGeneralTest(student, { date, perUnit, percent: homework.percent, via: 'online' });
+    recordGeneralTest(student, { date, perUnit, percent: homework.percent, via: 'online', ...where });
   }
   await student.save();
   return true;

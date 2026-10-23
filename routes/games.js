@@ -157,7 +157,7 @@ router.post('/vocabrace/homework/start', handle(async (req, res) => {
   if (!student) throw new APIError('Bu bo‘lim faqat ustoz ro‘yxatiga qo‘shgan o‘quvchilar uchun', 403);
   const unit = req.body?.unit === 'general' ? 'general' : Number(req.body?.unit);
   let plan;
-  try { plan = await homeworkPlan(student, unit); } catch (error) { throw new APIError(error.message, 400); }
+  try { plan = await homeworkPlan(student, unit, req.body?.book ? String(req.body.book) : null); } catch (error) { throw new APIError(error.message, 400); }
   const out = vocabRace.solo(req.user.id, plan.packKey, plan.unitIds, req.body?.style, { homework: plan.homework, perUnit: plan.perUnit });
   reply(res, out.ok ? { ...out, homework: { kind: plan.homework.kind, label: plan.homework.label } } : out);
 }));

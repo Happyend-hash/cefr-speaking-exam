@@ -2674,3 +2674,14 @@ button.cx-seat { cursor: pointer; }
 .sp-zoom { position: fixed; inset: 0; z-index: 100; background: rgba(15, 23, 42, .85); display: grid; place-items: center; padding: 16px; cursor: zoom-out; }
 .sp-zoom img { max-width: 100%; max-height: 100%; border-radius: 12px; }
 main.has-tabs .sp-chat { height: calc(100dvh - 250px); }
+.vr-hw-book { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.vr-hw-book + .vr-hw-book { margin-top: 10px; }
+.vr-hw-book.is-open { border-color: var(--indigo-200); }
+.vr-hw-book-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 14px; border: 0; background: var(--indigo-50); font: inherit; text-align: left; cursor: pointer; color: var(--ink); flex-wrap: wrap; }
+.vr-hw-book-title { flex: 1 1 0; font-weight: 700; min-width: 0; }
+.vr-hw-book-meta { order: 3; flex: 1 1 100%; font-size: 13px; color: var(--ink-soft); padding-left: 2px; }
+.vr-hw-book-chev { order: 2; }
+.vr-hw-book-chev { display: grid; place-items: center; transition: transform .2s; color: var(--indigo-600); }
+.vr-hw-book-chev svg { width: 18px; height: 18px; }
+.vr-hw-book.is-open .vr-hw-book-chev { transform: rotate(90deg); }
+.vr-hw-book .vr-hw-units { padding: 10px; }

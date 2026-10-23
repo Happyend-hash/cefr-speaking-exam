@@ -375,8 +375,14 @@
   }
 
   /** Vocabulary units: the current result of each unit, the general test, and the units to revise. */
-  function vocabCard(v) {
-    if (!v || (!v.done && !v.tests.length)) return '';
+  function vocabCard(all) {
+    if (!all) return '';
+    // One card per book when the level studies several (each with its own units and general test).
+    const tracks = (all.tracks?.length ? all.tracks : [all]).filter(t => t.done || t.tests.length);
+    return tracks.map(t => vocabBook({ ...t, level: all.level }, (all.tracks?.length || 1) > 1)).join('');
+  }
+
+  function vocabBook(v, several) {
     const gen = v.latestTest;
     const chips = v.list.map(u => `
       <div class="pp-unit ${u.percent !== null && u.percent < 60 ? 'is-low' : band(u.percent)} ${u.percent === null ? 'is-empty' : ''}">
@@ -385,7 +391,7 @@
         ${u.before !== null ? `<small>${T.vocabWas(u.before)}</small>` : ''}
       </div>`).join('');
     return `<section class="pp-card pp-vocab">
-      <div class="pp-card-head"><h2>${T.vocabTitle(esc(v.level))}</h2><p>${T.vocabDone(v.done, v.units)}</p></div>
+      <div class="pp-card-head"><h2>${T.vocabTitle(esc(v.level))}</h2><p>${several && v.book?.title ? `📘 ${esc(v.book.title)} · ` : ''}${T.vocabDone(v.done, v.units)}</p></div>
       <div class="pp-vocab-stats">
         ${v.unitAverage !== null ? `<div><span>${T.vocabUnitAvg}</span><strong class="${band(v.unitAverage)}">${pct(v.unitAverage)}</strong></div>` : ''}
         <div><span>${T.vocabGeneral}</span><strong class="${band(gen?.percent)}">${gen ? pct(gen.percent) : `<small>${T.vocabNotYet}</small>`}</strong>${gen ? `<small>${fmtDate(`${gen.date}T12:00:00`)}</small>` : ''}</div>

@@ -79,7 +79,8 @@ async function overview() {
     month,
     unitsPerLevel: units,
     schoolYear: schoolYearOf(),
-    books: Object.fromEntries(Object.entries(books).map(([l, b]) => [l, b ? { key: b.key, title: b.title, units: b.units.length } : null])),
+    // several books per level now: { B1: [{ key, title, units }], A1: [] }
+    books: Object.fromEntries(Object.entries(books).map(([l, list]) => [l, list.map(b => ({ key: b.key, title: b.title, units: b.units.length }))])),
     bookChoices: bookChoices(),
     students: list.map(s => row(s, units, books, accounts)),
     leaderboards: LEVELS.map(level => leaderboard(list, level, month)).filter(b => b.rows.length)
@@ -352,16 +353,28 @@ const cleanPercent = (v, what = 'Result') => {
   return Math.round(n);
 };
 
-/** One unit's vocabulary test: { unit, percent, date }. The same unit on the same day again replaces it. */
+/**
+ * Which book of the student's level a vocabulary result is for: { book, firstBook, units }.
+ * `book` from the request (a pack key); a level without books has numbered units.
+ */
+async function bookFor(s, key) {
+  const list = (await booksPerLevel())[s.level] || [];
+  if (!list.length) return { book: null, firstBook: null, units: (await unitsPerLevel())[s.level] };
+  const b = key ? list.find(x => x.key === key) : list[0];
+  if (!b) throw new APIError('That book is not one of this level’s books', 400);
+  return { book: b.key, firstBook: list[0].key, units: b.units.length };
+}
+
+/** One unit's vocabulary test: { book, unit, percent, date }. The same unit of the same book on the same day again replaces it. */
 router.post('/:id/vocab', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
-    const units = (await unitsPerLevel())[s.level];
+    const { book, firstBook, units } = await bookFor(s, req.body?.book);
     const unit = Number(req.body?.unit);
     if (!Number.isInteger(unit) || unit < 1 || unit > units) throw new APIError(`Choose a unit from 1 to ${units}`, 400);
     const percent = cleanPercent(req.body?.percent);
     const date = cleanDay(req.body?.date);
-    recordUnitResult(s, { unit, percent, date, via: 'teacher' });
+    recordUnitResult(s, { unit, percent, date, via: 'teacher', book, firstBook });
     await s.save();
     res.status(201).json({ success: true, data: await overview() });
   } catch (error) { next(error); }
@@ -377,7 +390,7 @@ router.post('/:id/vocab', async (req, res, next) => {
 router.post('/:id/vocab/general', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
-    const units = (await unitsPerLevel())[s.level];
+    const { book, firstBook, units } = await bookFor(s, req.body?.book);
     const date = cleanDay(req.body?.date);
     const perUnit = {};
     for (const [k, v] of Object.entries(req.body?.units || {})) {
@@ -392,7 +405,7 @@ router.post('/:id/vocab/general', async (req, res, next) => {
     const percent = hasOverall ? cleanPercent(req.body.percent, 'Overall result')
       : Math.round(given.reduce((a, b) => a + b, 0) / given.length);
 
-    recordGeneralTest(s, { date, perUnit: given.length ? perUnit : {}, percent, units, via: 'teacher' });
+    recordGeneralTest(s, { date, perUnit: given.length ? perUnit : {}, percent, units, via: 'teacher', book, firstBook });
     await s.save();
     res.status(201).json({ success: true, data: await overview() });
   } catch (error) { next(error); }

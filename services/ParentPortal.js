@@ -260,43 +260,61 @@ async function loadCourseSettings(fresh) {
   if (!fresh && unitsCache && Date.now() - unitsCachedAt < 30_000) return;
   const doc = await CourseSetting.findOne({ key: 'course' }).lean().catch(() => null);
   const get = (m, l) => (m instanceof Map ? m.get(l) : m?.[l]);
-  booksCache = Object.fromEntries(LEVELS.map(l => [l, get(doc?.booksPerLevel || {}, l) ? bookView(get(doc.booksPerLevel, l)) : null]));
+  // Several books per level (levelBooks); a level saved before that has its one book in booksPerLevel.
+  booksCache = Object.fromEntries(LEVELS.map(l => {
+    const many = get(doc?.levelBooks || {}, l);
+    const keys = Array.isArray(many) ? many : get(doc?.booksPerLevel || {}, l) ? [get(doc.booksPerLevel, l)] : [];
+    return [l, keys.map(k => bookView(k)).filter(Boolean)];
+  }));
   unitsCache = Object.fromEntries(LEVELS.map(l => {
-    if (booksCache[l]) return [l, Math.min(MAX_UNITS, booksCache[l].units.length)];
+    if (booksCache[l].length) return [l, Math.min(MAX_UNITS, booksCache[l][0].units.length)];
     const n = Number(get(doc?.unitsPerLevel || {}, l));
     return [l, Number.isInteger(n) && n >= 1 && n <= MAX_UNITS ? n : DEFAULT_UNITS];
   }));
   unitsCachedAt = Date.now();
 }
 
-/** How many vocabulary units each level has, e.g. { A1: 20, A2: 24, … } — the book's unit count when a book is chosen. */
+/** How many numbered vocabulary units a level WITHOUT a book has, e.g. { A1: 20, A2: 24, … }. */
 export async function unitsPerLevel({ fresh = false } = {}) {
   await loadCourseSettings(fresh);
   return unitsCache;
 }
 
-/** The book each level studies: { A1: { key, title, units: [{ n, id, title, words }] } | null, … }. */
+/** The books each level studies, in order: { A1: [{ key, title, units: [{ n, id, title, words }] }], B1: [], … }. */
 export async function booksPerLevel({ fresh = false } = {}) {
   await loadCourseSettings(fresh);
   return booksCache;
 }
 
-/** Save { A1: 20, …, books: { A1: 'destination-b1' | '', … } }. */
+/** Save { A1: 20, …, books: { A1: ['destination-b1', 'essential-3'] | [] , … } } (a single key is taken as one book). */
 export async function saveUnitsPerLevel(values) {
+  await loadCourseSettings(true);
+  const before = booksCache;
   const set = {};
   const unset = {};
+  const stamp = [];   // levels whose first book changes: [level, the old first book]
   for (const l of LEVELS) {
     if (values?.[l] !== undefined && values[l] !== null && values[l] !== '') {
       const n = Number(values[l]);
       if (!Number.isInteger(n) || n < 1 || n > MAX_UNITS) throw new Error(`${l}: enter a number of units from 1 to ${MAX_UNITS}`);
       set[`unitsPerLevel.${l}`] = n;
     }
-    const book = values?.books?.[l];
-    if (book !== undefined) {
-      if (book === '' || book === null) unset[`booksPerLevel.${l}`] = '';
-      else if (!bookView(String(book))) throw new Error(`${l}: unknown book`);
-      else set[`booksPerLevel.${l}`] = String(book);
-    }
+    let books = values?.books?.[l];
+    if (books === undefined) continue;
+    if (!Array.isArray(books)) books = books === '' || books === null ? [] : [books];
+    books = [...new Set(books.map(String).filter(Boolean))];
+    if (books.length > 8) throw new Error(`${l}: at most 8 books`);
+    for (const k of books) if (!bookView(k)) throw new Error(`${l}: unknown book`);
+    set[`levelBooks.${l}`] = books;
+    unset[`booksPerLevel.${l}`] = '';
+    const oldFirst = before?.[l]?.[0]?.key;
+    if (oldFirst && books[0] !== oldFirst) stamp.push([l, oldFirst]);
+  }
+  // Results saved without a book belong to the level's first book. Before the
+  // first book changes, write that book on them so they stay with it.
+  for (const [level, book] of stamp) {
+    await CourseStudent.updateMany({ 'vocab.level': level }, { $set: { 'vocab.$[e].book': book } }, { arrayFilters: [{ 'e.level': level, 'e.book': { $exists: false } }] });
+    await CourseStudent.updateMany({ 'vocabTests.level': level }, { $set: { 'vocabTests.$[t].book': book } }, { arrayFilters: [{ 't.level': level, 't.book': { $exists: false } }] });
   }
   const update = {};
   if (Object.keys(set).length) update.$set = set;
@@ -311,15 +329,11 @@ export const bookChoices = () => VOCAB_PACKS.map(p => ({ key: p.key, title: p.ti
 const byWhen = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 const avg1 = values => (values.length ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10 : null);
 
-/**
- * One child's vocabulary units at a level: each unit's current result (the
- * newest — a general test replaces the unit results before it) with its
- * earlier results, the average of the current results, the average of the
- * unit tests alone (before any general test), the general tests and the
- * units that need work.
- */
-export function vocabSummary(student, units = DEFAULT_UNITS, level = student.level, book = null) {
-  const results = (student.vocab || []).filter(r => r.level === level).sort(byWhen);
+/** Which book a saved result belongs to: its own, or (saved before books were per result) the level's first book. */
+export const bookOfResult = (r, firstKey) => r.book || firstKey || null;
+
+/** One book's units (or the numbered units of a level without a book). */
+function trackSummary(results, testsOfBook, units, book) {
   const list = [];
   for (let unit = 1; unit <= units; unit += 1) {
     const all = results.filter(r => r.unit === unit);
@@ -337,14 +351,14 @@ export function vocabSummary(student, units = DEFAULT_UNITS, level = student.lev
       history: [...all].reverse().map(r => ({ id: String(r._id), date: r.date, percent: r.percent, source: r.source, via: r.via || 'teacher' }))
     });
   }
-  const tests = (student.vocabTests || []).filter(t => t.level === level).sort(byWhen).reverse()
+  const tests = testsOfBook.sort(byWhen).reverse()
     .map(t => ({ id: String(t._id), date: t.date, percent: t.percent, perUnit: Boolean(t.perUnit) }));
   const done = list.filter(u => u.percent !== null);
   const unitOnly = list.map(u => [...u.history].find(h => h.source === 'unit')).filter(Boolean).map(h => h.percent);
   return {
-    level,
-    units,
+    key: book?.key || null,
     book: book ? { key: book.key, title: book.title } : null,
+    units,
     list,
     done: done.length,
     average: avg1(done.map(u => u.percent)),
@@ -352,6 +366,42 @@ export function vocabSummary(student, units = DEFAULT_UNITS, level = student.lev
     tests,
     latestTest: tests[0] || null,
     weak: done.filter(u => u.percent < WEAK_UNIT).map(u => ({ unit: u.unit, percent: u.percent }))
+  };
+}
+
+/**
+ * One child's vocabulary at a level, book by book (`tracks`): each unit's
+ * current result (the newest — a general test replaces the unit results
+ * before it) with its earlier results, the averages, the general tests and
+ * the units that need work. A level without a book has one track of numbered
+ * units. The first track's fields are also given at the top, and `overall`
+ * sums up every book.
+ */
+export function vocabSummary(student, units = DEFAULT_UNITS, level = student.level, books = []) {
+  const list = (Array.isArray(books) ? books : books ? [books] : []).filter(Boolean);
+  const first = list[0]?.key || null;
+  const results = (student.vocab || []).filter(r => r.level === level).sort(byWhen);
+  const tests = (student.vocabTests || []).filter(t => t.level === level);
+  const tracks = (list.length ? list : [null]).map(b => {
+    const key = b?.key || null;
+    return trackSummary(
+      results.filter(r => bookOfResult(r, first) === key),
+      tests.filter(t => bookOfResult(t, first) === key),
+      b ? b.units.length : units,
+      b
+    );
+  });
+  const doneAll = tracks.flatMap(t => t.list.filter(u => u.percent !== null).map(u => u.percent));
+  return {
+    ...tracks[0],
+    level,
+    tracks,
+    overall: {
+      done: doneAll.length,
+      units: tracks.reduce((a, t) => a + t.units, 0),
+      average: avg1(doneAll),
+      weak: tracks.flatMap(t => t.weak.map(w => ({ ...w, book: t.book?.title || '' })))
+    }
   };
 }
 
@@ -500,6 +550,6 @@ export function readPhoto(dataUrl) {
 
 export default {
   newParentCode, isWeakCode, signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth,
-  familyChildren, familyOf, dashboard, mergeDays, paymentYear, paidAhead, schoolYearOf, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookView, bookChoices, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto,
+  familyChildren, familyOf, dashboard, mergeDays, paymentYear, paidAhead, schoolYearOf, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookView, bookChoices, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto, bookOfResult,
   attendanceSummary, attendanceHistory, paymentStatus, paymentHistory, PAYMENT_DUE_DAY
 };

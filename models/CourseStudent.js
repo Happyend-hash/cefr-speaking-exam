@@ -75,6 +75,10 @@ const paymentSchema = new mongoose.Schema({
  */
 const vocabResultSchema = new mongoose.Schema({
   level: { type: String, enum: LEVELS, required: true },
+  // The book the unit belongs to (a pack key) when a level studies several
+  // books (2026-10-24). Absent on results saved before: they belong to the
+  // level's first book.
+  book: { type: String, default: undefined },
   unit: { type: Number, required: true, min: 1, max: 60 },
   percent: { type: Number, required: true, min: 0, max: 100 },
   date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
@@ -86,6 +90,7 @@ const vocabResultSchema = new mongoose.Schema({
 
 const vocabTestSchema = new mongoose.Schema({
   level: { type: String, enum: LEVELS, required: true },
+  book: { type: String, default: undefined },         // the book whose units it tested (see vocabResultSchema)
   date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
   percent: { type: Number, required: true, min: 0, max: 100 },
   perUnit: { type: Boolean, default: false },         // a result per unit, or one overall result for all

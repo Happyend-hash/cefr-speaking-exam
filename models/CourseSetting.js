@@ -9,6 +9,8 @@ const courseSettingSchema = new mongoose.Schema({
   unitsPerLevel: { type: Map, of: Number, default: {} },
   /** The vocabulary book each level studies (a Vocabulary test pack key, e.g. "destination-b1"). Its units are the level's units. */
   booksPerLevel: { type: Map, of: String, default: {} },
+  /** Several books per level (2026-10-24), in order: { B1: ['destination-b1', 'essential-3'] }. Replaces booksPerLevel once saved. */
+  levelBooks: { type: Map, of: [String], default: {} },
   /** The daily payment email: when it was last sent. */
   paymentReportAt: { type: Date, default: null },
   /** The Tashkent day ("2026-10-23") the automatic evening email last went. */

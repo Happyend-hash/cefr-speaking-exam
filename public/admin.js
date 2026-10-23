@@ -1656,13 +1656,16 @@
       </div>
       <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type their family's code. Click a group to see its students, then click a student to enter today's homework.</p>
       ${state.csUnitsOpen ? `<form class="cs-units-set" id="cs-units-set">
-        <strong>Vocabulary book and units per level</strong>
-        <span class="muted">Choose the book each level studies: its units open in your students' accounts under <em>Vocabulary test → Uyga vazifani topshirish</em>, and their results come here by themselves. With no book, type the number of units yourself. Each level ends with a general test.</span>
+        <strong>Vocabulary books and units per level</strong>
+        <span class="muted">Choose the books each level studies — one or several. Their units open in your students' accounts under <em>Vocabulary test → Uyga vazifani topshirish</em>, book by book, and the results come here by themselves. Each book has its own general test. With no book, type the number of units yourself.</span>
         <div class="cs-units-books">${levels.map(l => {
-          const cur = data.books?.[l]?.key || '';
+          const chosen = state.csBooksDraft?.[l] ?? (data.books?.[l] || []).map(b => b.key);
+          const title = key => (data.bookChoices || []).find(b => b.key === key);
           return `<div class="cs-units-book-row"><span class="tag">${l}</span>
-            <select data-cs-book="${l}" aria-label="${l} book"><option value="">— no book —</option>${(data.bookChoices || []).map(b => `<option value="${esc(b.key)}" ${b.key === cur ? 'selected' : ''}>${esc(b.title)} (${b.units} units)</option>`).join('')}</select>
-            <label class="cs-units-n ${cur ? 'is-off' : ''}">units <input type="number" min="1" max="60" step="1" data-cs-unitsn="${l}" value="${esc(data.unitsPerLevel?.[l] ?? 20)}" ${cur ? 'disabled' : ''} required></label></div>`;
+            <span class="cs-book-chips">${chosen.map((k, i) => `<span class="cs-book-chip">${i + 1}. ${esc(title(k)?.title || k)} <small>${title(k)?.units ?? ''} units</small>
+              <button type="button" data-cs-bookrm="${l}:${esc(k)}" aria-label="Remove ${esc(title(k)?.title || k)} from ${l}">×</button></span>`).join('')}</span>
+            ${chosen.length < 8 ? `<select data-cs-bookadd="${l}" aria-label="Add a book to ${l}"><option value="">${chosen.length ? '+ Add another book' : '+ Add a book'}</option>${(data.bookChoices || []).filter(b => !chosen.includes(b.key)).map(b => `<option value="${esc(b.key)}">${esc(b.title)} (${b.units} units)</option>`).join('')}</select>` : ''}
+            ${chosen.length ? '' : `<label class="cs-units-n">units <input type="number" min="1" max="60" step="1" data-cs-unitsn="${l}" value="${esc(data.unitsPerLevel?.[l] ?? 20)}" required></label>`}</div>`;
         }).join('')}</div>
         <div><button class="btn btn-sm" type="submit">Save</button></div>
       </form>` : ''}
@@ -1713,9 +1716,19 @@
    * general test. Tap a unit to enter its result; tap "General test" to enter
    * the end-of-units test, which replaces the units' current results.
    */
+  /** The book of a student's level whose units are on screen (several books per level since 2026-10-24). */
+  function csTrack(s) {
+    const all = s?.vocab;
+    if (!all) return null;
+    const tracks = all.tracks?.length ? all.tracks : [all];
+    return tracks.find(t => t.key === state.csBook) || tracks[0];
+  }
+
   function vocabUnits(s) {
-    const v = s.vocab;
-    if (!v) return '';
+    const all = s.vocab;
+    if (!all) return '';
+    const tracks = all.tracks?.length ? all.tracks : [all];
+    const v = { ...csTrack(s), level: all.level };
     const sel = state.csUnit;
     const today = csToday();
     const fmt = d => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
@@ -1765,7 +1778,7 @@
 
     return `<div class="cs-vocab">
       <div class="cs-vocab-head">
-        <strong>Vocabulary units — ${esc(v.level)}${v.book?.title ? ` · ${esc(v.book.title)}` : ""}</strong>
+        <strong>Vocabulary units — ${esc(v.level)}${v.book?.title && tracks.length === 1 ? ` · ${esc(v.book.title)}` : ''}</strong>
         <span class="cs-vocab-stats">
           <span>${v.done}/${v.units} units</span>
           ${v.unitAverage !== null ? `<span>Units average <b class="${csBand(v.unitAverage)}">${v.unitAverage}%</b></span>` : ''}
@@ -1773,6 +1786,8 @@
           ${v.average !== null && gen ? `<span>Now <b class="${csBand(v.average)}">${v.average}%</b></span>` : ''}
         </span>
       </div>
+      ${tracks.length > 1 ? `<div class="cs-book-tabs" role="tablist">${tracks.map(t => `<button type="button" role="tab" class="cs-book-tab ${t.key === v.key ? 'is-on' : ''}" aria-selected="${t.key === v.key}" data-cs-book-tab="${esc(t.key)}">
+          📘 ${esc(t.book?.title || '')}<small>${t.done}/${t.units}${t.average !== null ? ` · ${t.average}%` : ''}</small></button>`).join('')}</div>` : ''}
       ${v.weak.length ? `<p class="cs-vocab-weak"><span class="cs-miss">Not learnt yet (below 60%):</span> ${v.weak.map(w => `Unit ${w.unit} (${w.percent}%)`).join(', ')}</p>` : ''}
       <div class="cs-units">${chips}${genChip}</div>
       ${form}
@@ -2045,19 +2060,31 @@
     });
 
     // vocabulary units
-    root.querySelector('[data-cs-unitsopen]')?.addEventListener('click', () => setState({ csUnitsOpen: !state.csUnitsOpen }));
+    root.querySelector('[data-cs-unitsopen]')?.addEventListener('click', () => setState({ csUnitsOpen: !state.csUnitsOpen, csBooksDraft: null }));
+    // the books chosen in the form, per level, before Save
+    const booksDraft = () => {
+      if (!state.csBooksDraft) state.csBooksDraft = Object.fromEntries((state.cs?.levels || []).map(l => [l, (state.cs?.books?.[l] || []).map(b => b.key)]));
+      return state.csBooksDraft;
+    };
+    root.querySelectorAll('[data-cs-bookadd]').forEach(el => el.addEventListener('change', () => {
+      if (!el.value) return;
+      const d = booksDraft();
+      d[el.dataset.csBookadd] = [...d[el.dataset.csBookadd], el.value];
+      render();
+    }));
+    root.querySelectorAll('[data-cs-bookrm]').forEach(el => el.addEventListener('click', () => {
+      const [l, key] = el.dataset.csBookrm.split(':');
+      const d = booksDraft();
+      d[l] = d[l].filter(k => k !== key);
+      render();
+    }));
     $('cs-units-set')?.addEventListener('submit', e => {
       e.preventDefault();
       const body = {};
-      root.querySelectorAll('[data-cs-unitsn]').forEach(el => { if (!el.disabled) body[el.dataset.csUnitsn] = Number(el.value); });
-      body.books = {};
-      root.querySelectorAll('[data-cs-book]').forEach(el => { body.books[el.dataset.csBook] = el.value; });
-      csCall('/admin/course-students/settings/units', { method: 'PUT', body }, 'Units per level saved.', { csUnitsOpen: false });
+      root.querySelectorAll('[data-cs-unitsn]').forEach(el => { body[el.dataset.csUnitsn] = Number(el.value); });
+      body.books = booksDraft();
+      csCall('/admin/course-students/settings/units', { method: 'PUT', body }, 'Books per level saved.', { csUnitsOpen: false, csBooksDraft: null });
     });
-    root.querySelectorAll('[data-cs-book]').forEach(el => el.addEventListener('change', () => {
-      const n = root.querySelector(`[data-cs-unitsn="${el.dataset.csBook}"]`);
-      if (n) { n.disabled = Boolean(el.value); n.closest('label')?.classList.toggle('is-off', Boolean(el.value)); }
-    }));
     $('cs-account-input')?.addEventListener('input', e => {
       state.csAccount = e.target.value;
       const btn = e.target.closest('form')?.querySelector('button[type=submit]');
@@ -2085,7 +2112,7 @@
       const unit = state.csUnit;
       const st = state.cs.students.find(x => x.id === state.csSel);
       await csCall(`/admin/course-students/${state.csSel}/vocab`, {
-        method: 'POST', body: { unit, percent: state.csUnitVal, date: state.csUnitDate || csToday() }
+        method: 'POST', body: { book: csTrack(st)?.key || undefined, unit, percent: state.csUnitVal, date: state.csUnitDate || csToday() }
       }, `Unit ${unit} saved for ${st?.name || 'the student'}.`, { csUnitVal: '' });
     });
     root.querySelectorAll('[data-cs-unitdel]').forEach(el => el.addEventListener('click', () => {
@@ -2095,13 +2122,14 @@
     root.querySelectorAll('[data-cs-gen]').forEach(el => el.addEventListener('input', () => { state.csGenVals[el.dataset.csGen] = el.value; }));
     $('cs-gen-overall')?.addEventListener('input', e => { state.csGenOverall = e.target.value; });
     $('cs-gen-date')?.addEventListener('change', e => { state.csGenDate = e.target.value; });
+    root.querySelectorAll('[data-cs-book-tab]').forEach(el => el.addEventListener('click', () => setState({ csBook: el.dataset.csBookTab, csUnit: null })));
     $('cs-gen-form')?.addEventListener('submit', async e => {
       e.preventDefault();
       const units = Object.fromEntries(Object.entries(state.csGenVals).filter(([, v]) => String(v).trim() !== ''));
       if (!Object.keys(units).length && String(state.csGenOverall).trim() === '') return setState({ error: 'Type the overall result, or a result for each unit.' });
       const st = state.cs.students.find(x => x.id === state.csSel);
       const ok = await csCall(`/admin/course-students/${state.csSel}/vocab/general`, {
-        method: 'POST', body: { date: state.csGenDate || csToday(), units, percent: state.csGenOverall === '' ? undefined : state.csGenOverall }
+        method: 'POST', body: { book: csTrack(st)?.key || undefined, date: state.csGenDate || csToday(), units, percent: state.csGenOverall === '' ? undefined : state.csGenOverall }
       }, `General test saved for ${st?.name || 'the student'} — the units now show its results.`);
       if (ok) setState({ csGenVals: {}, csGenOverall: '' });
     });
