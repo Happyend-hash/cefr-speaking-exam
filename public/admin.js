@@ -1596,10 +1596,15 @@
       </div>
       <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type their family's code. Click a group to see its students, then click a student to enter today's homework.</p>
       ${state.csUnitsOpen ? `<form class="cs-units-set" id="cs-units-set">
-        <strong>Vocabulary units per level</strong>
-        <span class="muted">Each level ends with a general test after its last unit.</span>
-        <div class="cs-units-set-row">${levels.map(l => `<label><span class="tag">${l}</span><input type="number" min="1" max="60" step="1" data-cs-unitsn="${l}" value="${esc(data.unitsPerLevel?.[l] ?? 20)}" required></label>`).join('')}
-          <button class="btn btn-sm" type="submit">Save</button></div>
+        <strong>Vocabulary book and units per level</strong>
+        <span class="muted">Choose the book each level studies: its units open in your students' accounts under <em>Vocabulary test → Uyga vazifani topshirish</em>, and their results come here by themselves. With no book, type the number of units yourself. Each level ends with a general test.</span>
+        <div class="cs-units-books">${levels.map(l => {
+          const cur = data.books?.[l]?.key || '';
+          return `<div class="cs-units-book-row"><span class="tag">${l}</span>
+            <select data-cs-book="${l}" aria-label="${l} book"><option value="">— no book —</option>${(data.bookChoices || []).map(b => `<option value="${esc(b.key)}" ${b.key === cur ? 'selected' : ''}>${esc(b.title)} (${b.units} units)</option>`).join('')}</select>
+            <label class="cs-units-n ${cur ? 'is-off' : ''}">units <input type="number" min="1" max="60" step="1" data-cs-unitsn="${l}" value="${esc(data.unitsPerLevel?.[l] ?? 20)}" ${cur ? 'disabled' : ''} required></label></div>`;
+        }).join('')}</div>
+        <div><button class="btn btn-sm" type="submit">Save</button></div>
       </form>` : ''}
       ${addForm}
       ${tables || '<p class="muted" style="margin-top:12px">No students yet. Add the first one above.</p>'}
@@ -1654,7 +1659,8 @@
     const fmt = d => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
     const chips = v.list.map(u => `<button type="button" class="cs-unit ${csBand(u.percent)} ${u.percent === null ? 'is-empty' : ''} ${sel === u.unit ? 'is-sel' : ''} ${u.percent !== null && u.percent < 60 ? 'is-weak' : ''}"
         data-cs-unit="${u.unit}" aria-pressed="${sel === u.unit}">
-        <span class="cs-unit-no">Unit ${u.unit}</span>
+        <span class="cs-unit-no">Unit ${u.unit}${u.via === 'online' ? ' <span class="cs-online" title="The student took this test on the website">🌐</span>' : ''}</span>
+        ${u.title ? `<span class="cs-unit-title">${esc(u.title)}</span>` : ''}
         <strong>${u.percent === null ? '—' : `${u.percent}%`}</strong>
         ${u.before !== null ? `<small>was ${u.before}%</small>` : u.source === 'general' ? '<small>general test</small>' : ''}
       </button>`).join('');
@@ -1674,7 +1680,7 @@
         </div>
         ${u?.history.length ? `<ul class="cs-unit-hist">${u.history.map((h, i) => `<li class="${i === 0 ? 'is-now' : ''}">
             <span>${esc(fmt(h.date))}</span><strong class="${csBand(h.percent)}">${h.percent}%</strong>
-            <span class="muted">${h.source === 'general' ? 'general test' : 'unit test'}${i === 0 ? ' · current' : ''}</span>
+            <span class="muted">${h.source === 'general' ? 'general test' : 'unit test'}${h.via === 'online' ? ' · on the website' : ''}${i === 0 ? ' · current' : ''}</span>
             ${h.source === 'unit' ? `<button type="button" class="cs-link" data-cs-unitdel="${esc(h.id)}">delete</button>` : ''}</li>`).join('')}</ul>`
           : '<p class="muted" style="font-size:13px">No result for this unit yet.</p>'}
       </form>`;
@@ -1697,7 +1703,7 @@
 
     return `<div class="cs-vocab">
       <div class="cs-vocab-head">
-        <strong>Vocabulary units — ${esc(v.level)}</strong>
+        <strong>Vocabulary units — ${esc(v.level)}${v.book?.title ? ` · ${esc(v.book.title)}` : ""}</strong>
         <span class="cs-vocab-stats">
           <span>${v.done}/${v.units} units</span>
           ${v.unitAverage !== null ? `<span>Units average <b class="${csBand(v.unitAverage)}">${v.unitAverage}%</b></span>` : ''}
@@ -1849,6 +1855,15 @@
         <label>Level <select data-cs-level="${esc(s.id)}">${levelOptions(s.level)}</select></label>
         <label>Family <select data-cs-family="${esc(s.id)}">${familyOptions(s.id, '')}</select></label>
         <div class="cs-code-box"><span class="muted">Parent code</span>${csCode(s, true)}</div>
+        <form class="cs-account" data-cs-account="${esc(s.id)}">
+          <label>Student's website account (Gmail)
+            <input type="email" id="cs-account-input" maxlength="120" placeholder="student@gmail.com" value="${esc(state.csAccount ?? s.accountEmail ?? '')}" autocomplete="off"></label>
+          <button class="btn btn-sm" type="submit" ${state.csAccount === undefined || state.csAccount.trim().toLowerCase() === (s.accountEmail || '') ? 'disabled' : ''}>Save</button>
+          <span class="cs-account-state ${s.accountEmail ? (s.accountFound ? 'is-ok' : 'is-warn') : ''}">${!s.accountEmail
+            ? 'Not linked — the student cannot hand in vocabulary homework on the website.'
+            : s.accountFound ? '✓ Linked: “Uyga vazifani topshirish” shows in this account.'
+            : 'No account with this email yet — it links by itself once the student signs up with it.'}</span>
+        </form>
         <div class="row" style="gap:6px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" data-cs-copy="${esc(s.parentCode)}" data-name="${esc(s.name)}">Copy message for parents</button>
           <button class="btn btn-ghost btn-sm" data-cs-newcode="${esc(s.id)}" data-name="${esc(s.name)}">New code</button>
@@ -1967,8 +1982,28 @@
     $('cs-units-set')?.addEventListener('submit', e => {
       e.preventDefault();
       const body = {};
-      root.querySelectorAll('[data-cs-unitsn]').forEach(el => { body[el.dataset.csUnitsn] = Number(el.value); });
+      root.querySelectorAll('[data-cs-unitsn]').forEach(el => { if (!el.disabled) body[el.dataset.csUnitsn] = Number(el.value); });
+      body.books = {};
+      root.querySelectorAll('[data-cs-book]').forEach(el => { body.books[el.dataset.csBook] = el.value; });
       csCall('/admin/course-students/settings/units', { method: 'PUT', body }, 'Units per level saved.', { csUnitsOpen: false });
+    });
+    root.querySelectorAll('[data-cs-book]').forEach(el => el.addEventListener('change', () => {
+      const n = root.querySelector(`[data-cs-unitsn="${el.dataset.csBook}"]`);
+      if (n) { n.disabled = Boolean(el.value); n.closest('label')?.classList.toggle('is-off', Boolean(el.value)); }
+    }));
+    $('cs-account-input')?.addEventListener('input', e => {
+      state.csAccount = e.target.value;
+      const btn = e.target.closest('form')?.querySelector('button[type=submit]');
+      const st = state.cs?.students.find(x => x.id === state.csSel);
+      if (btn) btn.disabled = e.target.value.trim().toLowerCase() === (st?.accountEmail || '');
+    });
+    root.querySelector('[data-cs-account]')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const id = e.currentTarget.dataset.csAccount;
+      const email = String(state.csAccount ?? '').trim();
+      const st = state.cs?.students.find(x => x.id === id);
+      await csCall(`/admin/course-students/${id}`, { method: 'PATCH', body: { accountEmail: email } },
+        email ? `${st?.name || 'Student'} linked to ${email}.` : `${st?.name || 'Student'} unlinked from the website account.`, { csAccount: undefined });
     });
     root.querySelectorAll('[data-cs-unit]').forEach(el => el.addEventListener('click', () => {
       const raw = el.dataset.csUnit;
@@ -2039,7 +2074,7 @@
       const open = () => {
         const id = el.dataset.csSel;
         const st = state.cs?.students.find(x => x.id === id);
-        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csToday()), csUnit: null, csName: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined });
+        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csToday()), csUnit: null, csName: undefined, csAccount: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });

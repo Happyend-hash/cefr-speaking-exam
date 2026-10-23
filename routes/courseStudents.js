@@ -2,11 +2,13 @@ import express from 'express';
 import mongoose from 'mongoose';
 import CourseStudent, { LEVELS, SKILLS, ATTENDANCE } from '../models/CourseStudent.js';
 import {
-  newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, schoolYearOf, paidAhead, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
+  newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookChoices, schoolYearOf, paidAhead, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
 } from '../services/ParentPortal.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { sendPaymentReport } from '../services/PaymentReport.js';
+import { recordUnitResult, recordGeneralTest } from '../services/CourseVocab.js';
+import User from '../models/User.js';
 
 /**
  * The teacher's side of the parents' page: the course list by level, each
@@ -25,7 +27,7 @@ async function load(id) {
 }
 
 /** What the admin list shows for one child (no photo bytes). */
-const row = (s, units = {}) => {
+const row = (s, units = {}, books = {}, accounts = new Set()) => {
   const d = dashboard(s);
   return {
     id: String(s._id),
@@ -52,7 +54,9 @@ const row = (s, units = {}) => {
       id: String(p._id), month: p.month, amount: p.amount, paidAt: p.paidAt, note: p.note || '',
       savedAt: p.createdAt || null, voidedAt: p.voidedAt || null, voidReason: p.voidReason || ''
     })),
-    vocab: vocabSummary(s, units[s.level]),
+    vocab: vocabSummary(s, units[s.level], s.level, books[s.level]),
+    accountEmail: s.accountEmail || '',
+    accountFound: Boolean(s.accountEmail && accounts.has(s.accountEmail)),
     lastParentVisit: s.lastParentVisit || null
   };
 };
@@ -64,13 +68,18 @@ async function overview() {
   const list = await CourseStudent.find({ removedAt: null }).select('-photo.data').sort({ name: 1 });
   const month = monthOf();
   const units = await unitsPerLevel();
+  const books = await booksPerLevel();
+  const emails = list.map(s => s.accountEmail).filter(Boolean);
+  const accounts = new Set(emails.length ? (await User.find({ email: { $in: emails } }).select('email').lean()).map(u => u.email) : []);
   return {
     levels: LEVELS,
     skills: SKILLS,
     month,
     unitsPerLevel: units,
     schoolYear: schoolYearOf(),
-    students: list.map(s => row(s, units)),
+    books: Object.fromEntries(Object.entries(books).map(([l, b]) => [l, b ? { key: b.key, title: b.title, units: b.units.length } : null])),
+    bookChoices: bookChoices(),
+    students: list.map(s => row(s, units, books, accounts)),
     leaderboards: LEVELS.map(level => leaderboard(list, level, month)).filter(b => b.rows.length)
   };
 }
@@ -119,6 +128,15 @@ router.patch('/:id', async (req, res, next) => {
       s.level = level;
     }
     if (req.body?.active !== undefined) s.active = Boolean(req.body.active);
+    if (req.body?.accountEmail !== undefined) {
+      const email = String(req.body.accountEmail || '').trim().toLowerCase();
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new APIError('Enter the student\u2019s account email, e.g. name@gmail.com', 400);
+      if (email) {
+        const other = await CourseStudent.findOne({ accountEmail: email, removedAt: null, _id: { $ne: s._id } }).select('name');
+        if (other) throw new APIError(`${email} is already linked to ${other.name}`, 409);
+      }
+      s.accountEmail = email;
+    }
     if (req.body?.monthlyFee !== undefined) {
       const fee = req.body.monthlyFee === null || req.body.monthlyFee === '' ? null : Math.round(Number(req.body.monthlyFee));
       if (fee !== null && (!Number.isFinite(fee) || fee < 0 || fee > 100_000_000)) throw new APIError('Enter the monthly fee in so\u2019m', 400);
@@ -312,8 +330,7 @@ router.post('/:id/vocab', async (req, res, next) => {
     if (!Number.isInteger(unit) || unit < 1 || unit > units) throw new APIError(`Choose a unit from 1 to ${units}`, 400);
     const percent = cleanPercent(req.body?.percent);
     const date = cleanDay(req.body?.date);
-    s.vocab = (s.vocab || []).filter(r => !(r.level === s.level && r.unit === unit && r.date === date && r.source === 'unit'));
-    s.vocab.push({ level: s.level, unit, percent, date, source: 'unit' });
+    recordUnitResult(s, { unit, percent, date, via: 'teacher' });
     await s.save();
     res.status(201).json({ success: true, data: await overview() });
   } catch (error) { next(error); }
@@ -344,18 +361,7 @@ router.post('/:id/vocab/general', async (req, res, next) => {
     const percent = hasOverall ? cleanPercent(req.body.percent, 'Overall result')
       : Math.round(given.reduce((a, b) => a + b, 0) / given.length);
 
-    // the same day again: replace that general test
-    const old = (s.vocabTests || []).filter(t => t.level === s.level && t.date === date).map(t => String(t._id));
-    s.vocabTests = (s.vocabTests || []).filter(t => !old.includes(String(t._id)));
-    s.vocab = (s.vocab || []).filter(r => !(r.test && old.includes(String(r.test))));
-
-    const testId = new mongoose.Types.ObjectId();
-    s.vocabTests.push({ _id: testId, level: s.level, date, percent, perUnit: given.length > 0 });
-    for (let unit = 1; unit <= units; unit += 1) {
-      const p = given.length ? perUnit[unit] : percent;
-      if (p === undefined) continue;
-      s.vocab.push({ level: s.level, unit, percent: p, date, source: 'general', test: testId });
-    }
+    recordGeneralTest(s, { date, perUnit: given.length ? perUnit : {}, percent, units, via: 'teacher' });
     await s.save();
     res.status(201).json({ success: true, data: await overview() });
   } catch (error) { next(error); }

@@ -2492,3 +2492,19 @@ button.cx-seat { cursor: pointer; }
 .google-btn { display: flex; justify-content: center; min-height: 44px; }
 .auth-or { display: flex; align-items: center; gap: 10px; color: var(--ink-faint, #94a3b8); font-size: 13px; }
 .auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--line, #e2e8f0); }
+
+/* Vocabulary test → "Uyga vazifani topshirish" */
+.vr-hw-option { border-color: var(--indigo-200); background: var(--indigo-50); }
+.vr-hw-units { max-height: none; }
+.vr-hw-unit { cursor: pointer; text-align: left; font: inherit; }
+.vr-hw-unit:disabled { opacity: .6; cursor: wait; }
+.vr-hw-pct { min-width: 92px; text-align: right; font-weight: 700; font-size: 14px; color: var(--ink-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vr-hw-pct.is-good { color: #15803d; }
+.vr-hw-pct.is-mid { color: #b45309; }
+.vr-hw-pct.is-low { color: #b91c1c; }
+.vr-hw-general { border-style: dashed; }
+.vr-hw-saved { color: #15803d; font-weight: 700; }
+.vr-hw-failed { color: #b91c1c; font-weight: 600; }
+@media (max-width: 480px) { .vr-hw-unit { flex-wrap: wrap; } .vr-hw-pct { min-width: 0; } }
+.vr-hw-general { flex-wrap: wrap; }
+.vr-hw-general .vr-unit-count { white-space: normal; flex: 1 1 100%; order: 3; }

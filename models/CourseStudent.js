@@ -75,6 +75,8 @@ const vocabResultSchema = new mongoose.Schema({
   percent: { type: Number, required: true, min: 0, max: 100 },
   date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
   source: { type: String, enum: ['unit', 'general'], default: 'unit' },
+  // 'online' = the student took it on the website ("Uyga vazifani topshirish"); 'teacher' = typed in by the teacher
+  via: { type: String, enum: ['teacher', 'online'], default: 'teacher' },
   test: { type: mongoose.Schema.Types.ObjectId }     // the general test it came from
 }, { _id: true, timestamps: true });
 
@@ -82,7 +84,8 @@ const vocabTestSchema = new mongoose.Schema({
   level: { type: String, enum: LEVELS, required: true },
   date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
   percent: { type: Number, required: true, min: 0, max: 100 },
-  perUnit: { type: Boolean, default: false }          // a result per unit, or one overall result for all
+  perUnit: { type: Boolean, default: false },         // a result per unit, or one overall result for all
+  via: { type: String, enum: ['teacher', 'online'], default: 'teacher' }
 }, { _id: true, timestamps: true });
 
 const courseStudentSchema = new mongoose.Schema({
@@ -108,6 +111,12 @@ const courseStudentSchema = new mongoose.Schema({
   vocab: [vocabResultSchema],
   vocabTests: [vocabTestSchema],
   lastParentVisit: Date,
+  /**
+   * The student's website account (Gmail), typed in by the teacher. Links the
+   * course student to the account, so the account sees "Uyga vazifani
+   * topshirish" in Vocabulary test and its results land here by themselves.
+   */
+  accountEmail: { type: String, trim: true, lowercase: true, default: '', index: true },
   /** "Removed" in the admin panel: hidden everywhere, but kept so its payments are never lost. */
   removedAt: { type: Date, default: null },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import CourseStudent, { LEVELS, SKILLS } from '../models/CourseStudent.js';
 import CourseSetting from '../models/CourseSetting.js';
+import { VOCAB_PACKS } from '../content/vocabPacks.js';
 
 /**
  * The parents' page: sign in with the family's 6-digit code, see the
@@ -245,31 +246,67 @@ export const MAX_UNITS = 60;
 export const WEAK_UNIT = 60;
 
 let unitsCache = null;
+let booksCache = null;
 let unitsCachedAt = 0;
-/** How many vocabulary units each level has, e.g. { A1: 20, A2: 24, … }. */
-export async function unitsPerLevel({ fresh = false } = {}) {
-  if (!fresh && unitsCache && Date.now() - unitsCachedAt < 30_000) return unitsCache;
+
+/** A vocabulary book (Vocabulary test pack) as the course uses it: unit n = the book's n-th unit. */
+export function bookView(packKey, packs = VOCAB_PACKS) {
+  const pack = packs.find(p => p.key === packKey);
+  if (!pack) return null;
+  return { key: pack.key, title: pack.title, units: pack.units.map((u, i) => ({ n: i + 1, id: String(u.id), title: u.title, words: u.words.length })) };
+}
+
+async function loadCourseSettings(fresh) {
+  if (!fresh && unitsCache && Date.now() - unitsCachedAt < 30_000) return;
   const doc = await CourseSetting.findOne({ key: 'course' }).lean().catch(() => null);
-  const saved = doc?.unitsPerLevel || {};
+  const get = (m, l) => (m instanceof Map ? m.get(l) : m?.[l]);
+  booksCache = Object.fromEntries(LEVELS.map(l => [l, get(doc?.booksPerLevel || {}, l) ? bookView(get(doc.booksPerLevel, l)) : null]));
   unitsCache = Object.fromEntries(LEVELS.map(l => {
-    const n = Number(saved instanceof Map ? saved.get(l) : saved[l]);
+    if (booksCache[l]) return [l, Math.min(MAX_UNITS, booksCache[l].units.length)];
+    const n = Number(get(doc?.unitsPerLevel || {}, l));
     return [l, Number.isInteger(n) && n >= 1 && n <= MAX_UNITS ? n : DEFAULT_UNITS];
   }));
   unitsCachedAt = Date.now();
+}
+
+/** How many vocabulary units each level has, e.g. { A1: 20, A2: 24, … } — the book's unit count when a book is chosen. */
+export async function unitsPerLevel({ fresh = false } = {}) {
+  await loadCourseSettings(fresh);
   return unitsCache;
 }
 
+/** The book each level studies: { A1: { key, title, units: [{ n, id, title, words }] } | null, … }. */
+export async function booksPerLevel({ fresh = false } = {}) {
+  await loadCourseSettings(fresh);
+  return booksCache;
+}
+
+/** Save { A1: 20, …, books: { A1: 'destination-b1' | '', … } }. */
 export async function saveUnitsPerLevel(values) {
-  const clean = {};
+  const set = {};
+  const unset = {};
   for (const l of LEVELS) {
-    if (values?.[l] === undefined) continue;
-    const n = Number(values[l]);
-    if (!Number.isInteger(n) || n < 1 || n > MAX_UNITS) throw new Error(`${l}: enter a number of units from 1 to ${MAX_UNITS}`);
-    clean[`unitsPerLevel.${l}`] = n;
+    if (values?.[l] !== undefined && values[l] !== null && values[l] !== '') {
+      const n = Number(values[l]);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_UNITS) throw new Error(`${l}: enter a number of units from 1 to ${MAX_UNITS}`);
+      set[`unitsPerLevel.${l}`] = n;
+    }
+    const book = values?.books?.[l];
+    if (book !== undefined) {
+      if (book === '' || book === null) unset[`booksPerLevel.${l}`] = '';
+      else if (!bookView(String(book))) throw new Error(`${l}: unknown book`);
+      else set[`booksPerLevel.${l}`] = String(book);
+    }
   }
-  await CourseSetting.updateOne({ key: 'course' }, { $set: clean }, { upsert: true });
+  const update = {};
+  if (Object.keys(set).length) update.$set = set;
+  if (Object.keys(unset).length) update.$unset = unset;
+  if (Object.keys(update).length) await CourseSetting.updateOne({ key: 'course' }, update, { upsert: true });
   return unitsPerLevel({ fresh: true });
 }
+
+/** Every book a level can study: [{ key, title, units }]. */
+export const bookChoices = () => VOCAB_PACKS.map(p => ({ key: p.key, title: p.title, units: p.units.length }));
 
 const byWhen = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 const avg1 = values => (values.length ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10 : null);
@@ -281,7 +318,7 @@ const avg1 = values => (values.length ? Math.round((values.reduce((a, b) => a + 
  * unit tests alone (before any general test), the general tests and the
  * units that need work.
  */
-export function vocabSummary(student, units = DEFAULT_UNITS, level = student.level) {
+export function vocabSummary(student, units = DEFAULT_UNITS, level = student.level, book = null) {
   const results = (student.vocab || []).filter(r => r.level === level).sort(byWhen);
   const list = [];
   for (let unit = 1; unit <= units; unit += 1) {
@@ -290,12 +327,14 @@ export function vocabSummary(student, units = DEFAULT_UNITS, level = student.lev
     const lastUnitTest = [...all].reverse().find(r => r.source === 'unit') || null;
     list.push({
       unit,
+      title: book?.units?.[unit - 1]?.title || '',
       percent: now ? now.percent : null,
       date: now ? now.date : null,
       source: now ? now.source : null,
       // what the unit test said before a general test replaced it
       before: now && now.source === 'general' && lastUnitTest ? lastUnitTest.percent : null,
-      history: [...all].reverse().map(r => ({ id: String(r._id), date: r.date, percent: r.percent, source: r.source }))
+      via: now ? now.via || 'teacher' : null,
+      history: [...all].reverse().map(r => ({ id: String(r._id), date: r.date, percent: r.percent, source: r.source, via: r.via || 'teacher' }))
     });
   }
   const tests = (student.vocabTests || []).filter(t => t.level === level).sort(byWhen).reverse()
@@ -305,6 +344,7 @@ export function vocabSummary(student, units = DEFAULT_UNITS, level = student.lev
   return {
     level,
     units,
+    book: book ? { key: book.key, title: book.title } : null,
     list,
     done: done.length,
     average: avg1(done.map(u => u.percent)),
@@ -460,6 +500,6 @@ export function readPhoto(dataUrl) {
 
 export default {
   newParentCode, isWeakCode, signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth,
-  familyChildren, familyOf, dashboard, mergeDays, paymentYear, paidAhead, schoolYearOf, vocabSummary, unitsPerLevel, saveUnitsPerLevel, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto,
+  familyChildren, familyOf, dashboard, mergeDays, paymentYear, paidAhead, schoolYearOf, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookView, bookChoices, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto,
   attendanceSummary, attendanceHistory, paymentStatus, paymentHistory, PAYMENT_DUE_DAY
 };

@@ -49,9 +49,10 @@ export class VocabRaceHub {
     setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; },
     clearTimer = t => clearTimeout(t),
     random = Math.random,
-    onFinish = () => {}
+    onFinish = () => {},
+    onHomework = async () => {}
   } = {}) {
-    Object.assign(this, { packs, now, setTimer, clearTimer, random, onFinish });
+    Object.assign(this, { packs, now, setTimer, clearTimer, random, onFinish, onHomework });
     this.clients = new Map(); // id -> { user, streams, roomCode, dropTimer }
     this.rooms = new Map();   // code -> room
   }
@@ -100,12 +101,14 @@ export class VocabRaceHub {
     return { id: String(id), name: u.name || "O'quvchi", premium: Boolean(u.premium), avatar: u.avatar || null };
   }
 
-  pool(pack, unitIds) {
+  /** The words of some units; `perUnit` takes at most that many random words from each unit (the general test). */
+  pool(pack, unitIds, perUnit = 0) {
     const wanted = new Set(unitIds.map(String));
     const out = [];
     for (const u of pack.units) {
       if (!wanted.has(String(u.id))) continue;
-      for (const w of u.words) out.push({ unitId: String(u.id), word: w.word, pos: w.pos, synonym: w.synonym, uz: w.uz });
+      const words = perUnit ? shuffle(u.words, this.random).slice(0, perUnit) : u.words;
+      for (const w of words) out.push({ unitId: String(u.id), word: w.word, pos: w.pos, synonym: w.synonym, uz: w.uz });
     }
     return out;
   }
@@ -152,13 +155,13 @@ export class VocabRaceHub {
    * userId`) simply never matches a real user id, so a solo room can safely
    * reuse ask()/answer()/settle()/finishPlayer() unchanged.
    */
-  solo(userId, packKey, unitIds, style) {
+  solo(userId, packKey, unitIds, style, { homework = null, perUnit = 0 } = {}) {
     userId = String(userId);
     const pack = this.pack(packKey);
     if (!pack) return { ok: false, reason: 'Bu lug’at to’plami topilmadi' };
     const ids = [...new Set((unitIds || []).map(String))].filter(id => pack.units.some(u => String(u.id) === id));
     if (!ids.length) return { ok: false, reason: 'Kamida bitta bo’lim tanlang' };
-    const pool = this.pool(pack, ids);
+    const pool = this.pool(pack, ids, perUnit);
     if (!pool.length) return { ok: false, reason: 'Bu bo’limlarda so’z topilmadi' };
 
     this.sweep();
@@ -173,9 +176,10 @@ export class VocabRaceHub {
     const player = {
       user: { id: userId, name: c?.user?.name, premium: c?.user?.premium, avatar: c?.user?.avatar },
       qs: null, cursor: 0, score: 0, correct: 0, streak: 0, best: 0, missed: [],
-      finished: false, finishedAt: null, timer: null, askedAt: 0
+      finished: false, finishedAt: null, timer: null, askedAt: 0, results: []
     };
     const room = {
+      homework,   // { courseStudentId, kind: 'unit' | 'general', ... } — "Uyga vazifani topshirish"
       code, hostId: null, solo: true, packKey: pack.key, packTitle: pack.title, unitIds: ids, pool,
       style: VOCAB_RACE_STYLES.includes(style) ? style : 'track',
       players: new Map([[userId, player]]),
@@ -287,7 +291,7 @@ export class VocabRaceHub {
       const options = shuffle([correctText, ...distractors], this.random);
       return {
         kicker: type.kicker, prompt: promptText, pos: type.promptField === 'word' ? entry.pos : null,
-        options, answer: options.indexOf(correctText), word: entry.word, uz: entry.uz
+        options, answer: options.indexOf(correctText), word: entry.word, uz: entry.uz, unitId: entry.unitId
       };
     });
   }
@@ -361,6 +365,7 @@ export class VocabRaceHub {
       player.streak = 0;
       player.missed.push({ word: q.word, uz: q.uz });
     }
+    (player.results ||= []).push({ unitId: q.unitId, correct });
     this.send(player.user.id, 'reveal', { i: player.cursor, answer: q.answer, picked: pick, gained, score: player.score, streak: player.streak });
     const next = player.cursor + 1;
     // Broadcast (not just to the host) so every player's own screen can show
@@ -379,10 +384,36 @@ export class VocabRaceHub {
     }, NEXT_MS);
   }
 
+  /** A homework test's result: overall percent and a percent per unit (by unit id). */
+  homeworkResult(player) {
+    const byUnit = {};
+    for (const r of player.results || []) {
+      const u = (byUnit[r.unitId] ||= { correct: 0, total: 0 });
+      u.total += 1;
+      if (r.correct) u.correct += 1;
+    }
+    const total = player.qs.length;
+    return {
+      percent: total ? Math.round((player.correct / total) * 100) : 0,
+      correct: player.correct, total,
+      perUnit: Object.fromEntries(Object.entries(byUnit).map(([id, u]) => [id, Math.round((u.correct / u.total) * 100)]))
+    };
+  }
+
   finishPlayer(room, player) {
     player.finished = true;
     player.finishedAt = this.now();
-    this.send(player.user.id, 'finished-you', { score: player.score, correct: player.correct, total: player.qs.length, missed: player.missed });
+    const homework = room.homework ? { ...room.homework, ...this.homeworkResult(player) } : null;
+    this.send(player.user.id, 'finished-you', {
+      score: player.score, correct: player.correct, total: player.qs.length, missed: player.missed,
+      homework: homework ? { percent: homework.percent, kind: homework.kind, label: homework.label, saved: null } : null
+    });
+    if (homework) {
+      // Saved by the route (CourseStudent); the student is told when it is in.
+      Promise.resolve(this.onHomework({ userId: player.user.id, homework }))
+        .then(() => this.send(player.user.id, 'homework-saved', { ok: true, percent: homework.percent }))
+        .catch(error => this.send(player.user.id, 'homework-saved', { ok: false, reason: error?.message || 'saqlanmadi' }));
+    }
     this.broadcast(room, 'progress', {
       id: player.user.id, correct: player.correct, total: player.qs.length, cursor: player.qs.length,
       score: player.score, finished: true, finishedAt: player.finishedAt

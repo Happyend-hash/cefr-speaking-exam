@@ -1,7 +1,7 @@
 import express from 'express';
 import CourseStudent from '../models/CourseStudent.js';
 import {
-  signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth, dashboard, childCard, leaderboard, monthOf, vocabSummary, unitsPerLevel
+  signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth, dashboard, childCard, leaderboard, monthOf, vocabSummary, unitsPerLevel, booksPerLevel
 } from '../services/ParentPortal.js';
 
 /**
@@ -57,7 +57,7 @@ router.get('/children/:id', parentAuth, async (req, res, next) => {
       success: true,
       data: {
         ...dashboard(child),
-        vocab: vocabSummary(child, (await unitsPerLevel())[child.level]),
+        vocab: vocabSummary(child, (await unitsPerLevel())[child.level], child.level, (await booksPerLevel())[child.level]),
         leaderboard: { ...board, rows: board.rows.map(({ id, ...r }) => ({ ...r, mine: family.has(id), self: id === String(child._id) })) }
       }
     });

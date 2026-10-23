@@ -4505,8 +4505,24 @@
     tbStarted: by => `🎲 ${by} Taboo o'yinini boshladi`,
     tbEnd: 'Taboo tugadi — natijalar reytingga qo\'shildi:',
     // word sprint
-    vrTitle: 'Word Sprint',
-    vrBody: "O'qituvchi xona ochadi, o'quvchilar kod bilan qo'shiladi va tanlangan bo'lim(lar)dagi BARCHA so'zlar bo'yicha poyga boshlanadi.",
+    vrTitle: 'Vocabulary test',
+    vrBody: "Kitoblardagi so'zlar bo'yicha test: o'zingiz mashq qiling, o'qituvchi ochgan xonada poygaga qo'shiling yoki uyga vazifani topshiring.",
+    vrHwOption: 'Uyga vazifani topshirish',
+    vrHwOptionDesc: book => (book ? `${book} — natija ustozingizga avtomatik yuboriladi` : 'Natija ustozingizga avtomatik yuboriladi'),
+    vrHwTitle: 'Uyga vazifa',
+    vrHwHint: "Unitni tanlang. Test tugashi bilan natijangiz ustozingizdagi uyga vazifa natijalariga yoziladi.",
+    vrHwNoBook: "Ustozingiz hali darajangiz uchun kitob tanlamagan. Ustozingizga ayting.",
+    vrHwGeneral: 'Umumiy test',
+    vrHwGeneralDesc: n => `Barcha unitlardan ${n} ta so'z — har bir unit natijasi yangilanadi`,
+    vrHwStart: 'Topshirish',
+    vrHwNotYet: 'topshirilmagan',
+    vrHwDone: p => `Natijangiz: ${p}%`,
+    vrHwSaving: 'Ustozingizga yuborilmoqda…',
+    vrHwSaved: "✓ Uyga vazifa natijalariga yozildi",
+    vrHwFailed: r => `Natija saqlanmadi: ${r}. Ustozingizga ayting.`,
+    vrHwBack: 'Unitlarga qaytish',
+    vrHwUnknown: "Javob kechikdi — «Unitlarga qaytish»ni bosib, natijangiz yozilganini ko'ring.",
+    vrHwAvg: p => `O'rtacha natija: ${p}%`,
     vrHostBtn: 'Xona ochish',
     vrJoinTile: "O'ynash", // students: opens the join-or-practice-alone choice, not straight to the join form
     vrPickPack: "Lug'at to'plamini tanlang",
@@ -4587,10 +4603,10 @@
       ? `<button class="btn" data-gm="vr">${GM_UZ.vrHostBtn}</button>`
       : `<button class="btn" data-gm="vr">${GM_UZ.vrJoinTile}</button>`;
     return `
+      ${card('is-indigo', 'flag', GM_UZ.vrTitle, GM_UZ.vrBody, 'vocab-race', vrButton)}
       ${card('is-indigo', 'search', GM_UZ.ehTitle, GM_UZ.ehBody, 'error-hunter', `<button class="btn" data-gm="eh">${GM_UZ.play}</button>`)}
       ${card('is-gold', 'target', GM_UZ.duelTitle, GM_UZ.duelBody, 'duel', `<button class="btn" data-gm="duel">${GM_UZ.findOpponent}</button>`)}
       ${card('is-green', 'users', GM_UZ.tabooTitle, GM_UZ.tabooBody, 'taboo', `<button class="btn btn-ghost" data-ch-tab="voice">${GM_UZ.toRooms}</button>`)}
-      ${card('is-indigo', 'flag', GM_UZ.vrTitle, GM_UZ.vrBody, 'vocab-race', vrButton)}
       ${leaders}`;
   }
 
@@ -4879,8 +4895,51 @@
     packsList: null, pack: null, picked: [], style: 'track',
     code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
     q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [],
-    deadline: 0, timer: null, busy: false
+    deadline: 0, timer: null, busy: false,
+    hw: null,        // "Uyga vazifa": { linked, book, units, general, … } — null until loaded
+    hwRun: null,     // the homework test running now: { kind, label }
+    hwResult: null   // after it: { percent, label, saved: null | true | false, reason }
   };
+
+  /** Is this account one of the teacher's course students? Only then "Uyga vazifani topshirish" shows. */
+  async function loadVocabHomework() {
+    try { vr.hw = await api('/games/vocabrace/homework'); }
+    catch { vr.hw = { linked: false }; }
+    if (state.screen === 'vr') render();
+  }
+
+  /** If the "saved" message got lost in a reconnect, look at the units themselves. */
+  async function vrCheckHomeworkSaved() {
+    const r = vr.hwResult;
+    if (!r || r.saved !== null) return;
+    await loadVocabHomework();
+    if (vr.hwResult !== r || r.saved !== null) return;
+    const unit = vr.hwRun?.unit;
+    const now = unit === 'general' ? vr.hw?.general?.percent : vr.hw?.units?.find(u => u.n === unit)?.percent;
+    r.saved = now === r.percent ? true : 'unknown';
+    if (state.screen === 'vr') render();
+  }
+
+  function vrChooseHomework() {
+    vr.phase = 'hw-units';
+    loadVocabHomework();
+    render();
+  }
+
+  async function vrStartHomework(unit) {
+    if (vr.busy) return;
+    vr.busy = true; render();
+    try {
+      const out = await api('/games/vocabrace/homework/start', { method: 'POST', body: { unit, style: vr.style } });
+      vr.host = false; vr.solo = true; vr.code = null; vr.words = out.words;
+      vr.packKey = vr.hw?.book?.key; vr.packTitle = vr.hw?.book?.title || ''; vr.unitIds = []; vr.roster = [];
+      vr.style = out.style || vr.style; vr.total = out.question.total; vr.correct = 0; vr.score = 0; vr.missed = [];
+      vr.hwRun = { ...out.homework, unit }; vr.hwResult = null;
+      vr.phase = 'question'; vr.q = out.question; vr.myPick = null; vr.reveal = null;
+      vr.deadline = Date.now() + out.question.seconds * 1000;
+    } catch (error) { state.error = error.message; }
+    vr.busy = false; render();
+  }
 
   async function loadVocabRacePacks() {
     try { vr.packsList = await api('/games/vocabrace/packs'); }
@@ -4894,9 +4953,11 @@
     Object.assign(vr, {
       host: staff, solo: false, phase: staff ? 'setup' : 'choose', pack: null, picked: [], style: 'track',
       code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
-      q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [], busy: false
+      q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [], busy: false,
+      hwRun: null, hwResult: null
     });
     go('vr');
+    if (!staff) loadVocabHomework();
     if (staff && !vr.packsList) loadVocabRacePacks();
     if (!vr.active) {
       vr.active = true;
@@ -4935,7 +4996,13 @@
 
   /** A personalized room snapshot from 'hello' — used to pick up where this browser left off after a reconnect. */
   function vrApplyRoomView(r) {
-    if (!r) { vr.phase = vr.host ? 'setup' : 'choose'; vr.code = null; return; }
+    // Screens the student is on before any room exists (and a finished solo
+    // result they are reading) stay put when the stream reconnects.
+    if (!vr.host && vr.solo && vr.phase === 'finished-you') return;
+    if (!r) {
+      if (!vr.host && ['solo-setup', 'hw-units'].includes(vr.phase)) { vr.code = null; return; }
+      vr.phase = vr.host ? 'setup' : 'choose'; vr.code = null; return;
+    }
     vr.host = r.isHost; vr.solo = Boolean(r.solo); vr.code = r.code; vr.packKey = r.packKey; vr.packTitle = r.packTitle; vr.unitIds = r.unitIds;
     vr.words = r.words; vr.roster = r.roster; vr.style = r.style || 'track';
     if (r.over) { vr.phase = 'podium'; vr.podium = r.podium; return; }
@@ -4973,6 +5040,12 @@
         break;
       case 'finished-you':
         vr.phase = 'finished-you'; vr.score = data.score; vr.correct = data.correct; vr.total = data.total; vr.missed = data.missed || [];
+        vr.hwResult = data.homework ? { ...data.homework, saved: null } : null;
+        if (vr.hwResult) setTimeout(vrCheckHomeworkSaved, 10000);
+        break;
+      case 'homework-saved':
+        if (vr.hwResult) { vr.hwResult.saved = Boolean(data.ok); vr.hwResult.reason = data.reason || ''; }
+        if (data.ok) loadVocabHomework();
         break;
       case 'progress': {
         const row = vr.roster.find(r => r.id === data.id);
@@ -5142,6 +5215,41 @@
         <button class="vr-unit-row" data-gm="vr-mode-join">
           <span class="vr-unit-title">${esc(GM_UZ.vrJoinTile)}</span>
           <span class="vr-unit-count">${esc(GM_UZ.vrJoinOptionDesc)}</span>
+        </button>
+        ${vr.hw?.linked ? `<button class="vr-unit-row vr-hw-option" data-gm="vr-mode-hw">
+          <span class="vr-unit-title">📘 ${esc(GM_UZ.vrHwOption)}</span>
+          <span class="vr-unit-count">${esc(GM_UZ.vrHwOptionDesc(vr.hw.book?.title))}</span>
+        </button>` : ''}
+      </div>
+    </section>`;
+  }
+
+  /** "Uyga vazifani topshirish": the units of the student's book, with their current results. */
+  function vrHomeworkScreen() {
+    const hw = vr.hw;
+    if (!hw) return `<section class="card gm-card"><span class="spinner"></span></section>`;
+    if (!hw.linked) return `<section class="card gm-card"><p class="muted">${esc(GM_UZ.vrHwNoBook)}</p></section>`;
+    if (!hw.book) {
+      return `<section class="card gm-card">
+        <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${esc(GM_UZ.vrHwTitle)}</h2></div>
+        <p class="muted">${esc(GM_UZ.vrHwNoBook)}</p></section>`;
+    }
+    const band = v => (v === null || v === undefined ? '' : v >= 75 ? 'is-good' : v >= 50 ? 'is-mid' : 'is-low');
+    const rows = hw.units.map(u => `
+      <button class="vr-unit-row vr-hw-unit" data-gm-hw="${u.n}" ${vr.busy ? 'disabled' : ''}>
+        <span class="vr-unit-title">${u.n}. ${esc(u.title)}</span>
+        <span class="vr-unit-count">${u.words} ${GM_UZ.vrWordsSuffix}</span>
+        <span class="vr-hw-pct ${band(u.percent)}">${u.percent === null ? esc(GM_UZ.vrHwNotYet) : `${u.percent}%`}</span>
+      </button>`).join('');
+    return `<section class="card gm-card">
+      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${esc(hw.book.title)}</h2></div>
+      <p class="muted">${esc(hw.name)} · ${esc(hw.level)}${hw.average !== null && hw.average !== undefined ? ` · ${esc(GM_UZ.vrHwAvg(hw.average))}` : ''}</p>
+      <p class="muted">${esc(GM_UZ.vrHwHint)}</p>
+      <div class="vr-units vr-hw-units">${rows}
+        <button class="vr-unit-row vr-hw-unit vr-hw-general" data-gm-hw="general" ${vr.busy ? 'disabled' : ''}>
+          <span class="vr-unit-title">🏁 ${esc(GM_UZ.vrHwGeneral)}</span>
+          <span class="vr-unit-count">${esc(GM_UZ.vrHwGeneralDesc(hw.generalWords || 0))}</span>
+          <span class="vr-hw-pct ${band(hw.general?.percent)}">${hw.general ? `${hw.general.percent}%` : esc(GM_UZ.vrHwNotYet)}</span>
         </button>
       </div>
     </section>`;
@@ -5318,6 +5426,23 @@
       ? `<h3 class="vr-missed-head">${esc(GM_UZ.vrMissed)}</h3>
          <ul class="vr-missed">${vr.missed.map(m => `<li><span>${esc(m.word)}</span><span>${esc(m.uz)}</span></li>`).join('')}</ul>`
       : '';
+    const hw = vr.hwResult;
+    if (hw) {
+      const status = hw.saved === null ? `<p class="muted"><span class="spinner"></span> ${esc(GM_UZ.vrHwSaving)}</p>`
+        : hw.saved === 'unknown' ? `<p class="muted">${esc(GM_UZ.vrHwUnknown)}</p>`
+        : hw.saved ? `<p class="vr-hw-saved">${esc(GM_UZ.vrHwSaved)}</p>`
+        : `<p class="vr-hw-failed">${esc(GM_UZ.vrHwFailed(hw.reason || ''))}</p>`;
+      return `<section class="card gm-summary">
+        <h2>${esc(hw.label || GM_UZ.vrHwTitle)}</h2>
+        <div class="gm-big">${hw.percent}<span>%</span></div>
+        <p class="muted">${esc(GM_UZ.vrCorrectOf(vr.correct, vr.total))}</p>
+        ${status}
+        ${missed}
+        <div class="gm-actions" style="margin-top:16px">
+          <button class="btn btn-lg" data-gm="vr-hw-back">${GM_UZ.vrHwBack}</button>
+        </div>
+      </section>`;
+    }
     return `<section class="card gm-summary">
       <h2>${esc(vr.solo ? GM_UZ.vrSoloDone : GM_UZ.vrYouFinished)}</h2>
       <div class="gm-big">${vr.score}<span> ball</span></div>
@@ -5387,6 +5512,7 @@
     }
     if (vr.phase === 'choose') return `${back}${vrChooseScreen()}`;
     if (vr.phase === 'solo-setup') return `${back}${vrSetupScreen()}`;
+    if (vr.phase === 'hw-units') return `${back}${vrHomeworkScreen()}`;
     if (vr.phase === 'waiting') return `${back}${vrWaitingScreen()}`;
     if (vr.phase === 'question' || vr.phase === 'reveal') return `${back}${vrQuestionScreen()}`;
     if (vr.phase === 'finished-you') return `${back}${vrFinishedScreen()}`;
@@ -5497,6 +5623,8 @@
       if (a === 'vr') return openVocabRace();
       if (a === 'vr-create') return vrCreateRoom();
       if (a === 'vr-mode-solo') return vrChooseSolo();
+      if (a === 'vr-mode-hw') return vrChooseHomework();
+      if (a === 'vr-hw-back') { vr.hwResult = null; vr.hwRun = null; vr.phase = 'hw-units'; loadVocabHomework(); return render(); }
       if (a === 'vr-mode-join') return vrChooseJoin();
       if (a === 'vr-solo-start') return vrStartSolo();
       if (a === 'vr-solo-again') { vr.phase = 'solo-setup'; return render(); }
@@ -5513,6 +5641,10 @@
         eh.index += 1;
         return beginEhItem();
       }
+    }));
+    root.querySelectorAll('[data-gm-hw]').forEach(el => el.addEventListener('click', () => {
+      const raw = el.dataset.gmHw;
+      vrStartHomework(raw === 'general' ? 'general' : Number(raw));
     }));
     root.querySelectorAll('[data-eh-word]').forEach(el => el.addEventListener('click', () => {
       eh.tapped = Number(el.dataset.ehWord);

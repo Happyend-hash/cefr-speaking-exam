@@ -2,6 +2,7 @@ import { ErrorHunt } from './ErrorHunt.js';
 import { DuelHub } from './DuelHub.js';
 import { TabooGame } from './TabooGame.js';
 import { VocabRaceHub } from './VocabRaceHub.js';
+import { saveHomeworkResult } from './CourseHomework.js';
 import { voiceHub } from './VoiceRooms.js';
 import { award } from './Games.js';
 
@@ -37,6 +38,9 @@ export const taboo = new TabooGame({
 });
 
 export const vocabRace = new VocabRaceHub({
+  // "Uyga vazifani topshirish": the result goes straight into the course
+  // student's vocabulary units (see services/CourseHomework.js).
+  onHomework: ({ homework }) => saveHomeworkResult(homework),
   onFinish({ code, results }) {
     for (const r of results) {
       if (r.points > 0) {

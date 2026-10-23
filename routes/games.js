@@ -6,6 +6,7 @@ import { award, gameLeaderboard, todayPoints, DAILY_CAP } from '../services/Game
 import { fallbackName } from '../services/Leaderboard.js';
 import { badgeOf, BADGE_FIELDS } from '../services/Premium.js';
 import { APIError } from '../middleware/errorHandler.js';
+import { linkedCourseStudent, homeworkView, homeworkPlan } from '../services/CourseHomework.js';
 
 /**
  * Games: Error Hunter, Word Duel and Taboo, and the games ranking.
@@ -141,6 +142,24 @@ router.post('/vocabrace/create', handle(async (req, res) => {
 router.post('/vocabrace/solo', handle(async (req, res) => {
   await player(req.user.id);
   reply(res, vocabRace.solo(req.user.id, req.body?.packKey, req.body?.unitIds, req.body?.style));
+}));
+/**
+ * "Uyga vazifani topshirish": only for accounts the teacher linked to a course
+ * student. GET answers { linked: false } for everyone else (no option shown).
+ */
+router.get('/vocabrace/homework', handle(async (req, res) => {
+  const student = await linkedCourseStudent(req.user.id);
+  res.json({ success: true, data: student ? { linked: true, ...(await homeworkView(student)) } : { linked: false } });
+}));
+router.post('/vocabrace/homework/start', handle(async (req, res) => {
+  await player(req.user.id);
+  const student = await linkedCourseStudent(req.user.id);
+  if (!student) throw new APIError('Bu bo‘lim faqat ustoz ro‘yxatiga qo‘shgan o‘quvchilar uchun', 403);
+  const unit = req.body?.unit === 'general' ? 'general' : Number(req.body?.unit);
+  let plan;
+  try { plan = await homeworkPlan(student, unit); } catch (error) { throw new APIError(error.message, 400); }
+  const out = vocabRace.solo(req.user.id, plan.packKey, plan.unitIds, req.body?.style, { homework: plan.homework, perUnit: plan.perUnit });
+  reply(res, out.ok ? { ...out, homework: { kind: plan.homework.kind, label: plan.homework.label } } : out);
 }));
 router.post('/vocabrace/style', handle(async (req, res) => reply(res, vocabRace.setStyle(req.user.id, req.body?.style))));
 router.post('/vocabrace/join', handle(async (req, res) => {
