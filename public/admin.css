@@ -458,3 +458,6 @@
   .sp-a-list { max-height: 260px; border-right: 0; border-bottom: 1px solid var(--line); }
   .sp-a-pane { height: 520px; }
 }
+.cs-day-quick { display: inline-flex; gap: 6px; }
+.cs-day-quick .cs-type { padding: 4px 10px; font-size: 13px; }
+.cs-hw-past { margin: 4px 0 0; padding: 8px 12px; border-radius: 10px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 13px; }

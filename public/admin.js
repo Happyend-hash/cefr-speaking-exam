@@ -1503,6 +1503,9 @@
     };
   };
   const csToday = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const csDaysAgo = n => new Date(Date.now() - n * 864e5 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  // The homework date chosen by hand (e.g. yesterday), kept while moving from student to student.
+  let csHwDay = '';
   const csMonthName = ym => { const [y, m] = String(ym || '').split('-'); return `${CS_MONTHS[Number(m) - 1] || ''} ${y || ''}`; };
   const csPct = v => (v === null || v === undefined ? '—' : `${Number.isInteger(v) ? v : v.toFixed(1)}%`);
   const csBand = v => (v === null || v === undefined ? '' : v >= 75 ? 'is-good' : v >= 50 ? 'is-mid' : 'is-low');
@@ -1891,9 +1894,14 @@
       <form class="cs-hw" id="cs-hw">
         <div class="cs-hw-top">
           <strong>Homework results</strong>
-          <label>Date <input type="date" id="cs-hw-date" value="${esc(hwDate)}"></label>
+          <label>Date <input type="date" id="cs-hw-date" value="${esc(hwDate)}" max="${csToday()}"></label>
+          <span class="cs-day-quick">
+            <button type="button" class="cs-type ${hwDate === csToday() ? 'is-on' : ''}" data-cs-hwday="0">Today</button>
+            <button type="button" class="cs-type ${hwDate === csDaysAgo(1) ? 'is-on' : ''}" data-cs-hwday="1">Yesterday</button>
+          </span>
           <label>Note <input type="text" id="cs-hw-title" maxlength="80" placeholder="optional, e.g. Unit 5" value="${esc(state.csTitle || '')}"></label>
         </div>
+        ${hwDate !== csToday() ? `<p class="cs-hw-past">📅 Entering homework for <strong>${esc(new Date(`${hwDate}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }))}</strong> — attendance is marked for that day. The date stays chosen for the next students; press <em>Today</em> to go back.</p>` : ''}
         <p class="muted" style="font-size:13px">${savedDay
           ? '<span class="cs-saved">Already saved for this day</span> — add or change any type below; it stays one result for the day.'
           : 'Choose the homework types you gave, then type each result in percent. You can add more types for the same day later.'}</p>
@@ -2133,7 +2141,7 @@
       const open = () => {
         const id = el.dataset.csSel;
         const st = state.cs?.students.find(x => x.id === id);
-        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csToday()), csUnit: null, csName: undefined, csAccount: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined });
+        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
@@ -2150,10 +2158,14 @@
       root.querySelector(`[data-cs-val="${k}"]`)?.focus();
     }));
     root.querySelectorAll('[data-cs-val]').forEach(el => el.addEventListener('input', () => { state.csVals[el.dataset.csVal] = el.value; }));
-    $('cs-hw-date')?.addEventListener('change', e => {
+    const pickHwDay = value => {
+      const day = value && value <= csToday() ? value : csToday();
+      csHwDay = day === csToday() ? '' : day;
       const st = state.cs?.students.find(x => x.id === id);
-      setState(csFormFor(st, e.target.value || csToday()));
-    });
+      setState(csFormFor(st, day));
+    };
+    $('cs-hw-date')?.addEventListener('change', e => pickHwDay(e.target.value));
+    root.querySelectorAll('[data-cs-hwday]').forEach(el => el.addEventListener('click', () => pickHwDay(csDaysAgo(Number(el.dataset.csHwday)))));
     $('cs-hw-title')?.addEventListener('input', e => { state.csTitle = e.target.value; });
     $('cs-hw')?.addEventListener('submit', async e => {
       e.preventDefault();
