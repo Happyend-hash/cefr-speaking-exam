@@ -114,12 +114,20 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-        'img-src': ["'self'", 'data:', 'blob:'],
+        'img-src': ["'self'", 'data:', 'blob:', 'https://lh3.googleusercontent.com'],
         'media-src': ["'self'", 'blob:'],
         // AI Ustoz: the browser talks to Google's Gemini Live directly.
-        'connect-src': ["'self'", 'wss://generativelanguage.googleapis.com']
+        // Sign in with Google: Google's button script, its frame and its styles.
+        'connect-src': ["'self'", 'wss://generativelanguage.googleapis.com', 'https://accounts.google.com/gsi/'],
+        'script-src': ["'self'", 'https://accounts.google.com/gsi/client'],
+        'frame-src': ["'self'", 'https://accounts.google.com/gsi/'],
+        'style-src': ["'self'", 'https:', "'unsafe-inline'"]
       }
-    }
+    },
+    // Google's sign-in popup must be able to report back to this page.
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+    // Google's button checks which site it is on.
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
   })
 );
 app.use(cors({

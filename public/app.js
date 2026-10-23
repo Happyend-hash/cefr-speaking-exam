@@ -5822,6 +5822,11 @@
       <div class="card form-card">
         <div class="auth-logo">${logoLockup()}</div>
         <h2 style="margin-bottom:18px">${isSignup ? 'Create your account' : 'Welcome back'}</h2>
+        ${google.clientId ? `
+        <div class="google-sign">
+          <div id="google-btn" class="google-btn" aria-label="Sign in with Google"></div>
+          <div class="auth-or"><span>${isSignup ? 'or sign up with email' : 'or sign in with email'}</span></div>
+        </div>` : ''}
         <form id="auth-form">
           ${isSignup ? `
           <div class="field">
@@ -8010,6 +8015,7 @@
       rec.isRecording ? endRecording() : beginRecording());
 
     document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit);
+    mountGoogleButton();
     document.getElementById('verify-form')?.addEventListener('submit', handleVerifyCodeSubmit);
     document.getElementById('code-login-form')?.addEventListener('submit', handleCodeLoginSubmit);
     document.getElementById('forgot-form')?.addEventListener('submit', handleForgotSubmit);
@@ -8078,6 +8084,73 @@
         }
         return;
       case 'finish': return submitExam();
+    }
+  }
+
+  // ------------------------------------------------- Sign in with Google
+
+  /**
+   * Google's own button (Google Identity Services). The server tells us the
+   * public client id; without one the button simply doesn't show. Google hands
+   * back a signed ID token, which the server checks before signing in — or
+   * creating the account for a new student.
+   */
+  const google = { clientId: '', script: null };
+
+  async function loadGoogleConfig() {
+    try {
+      const cfg = await api('/auth/google/config');
+      google.clientId = cfg?.clientId || '';
+      if (google.clientId && (state.screen === 'login' || state.screen === 'signup')) render();
+    } catch { google.clientId = ''; }
+  }
+
+  function googleScript() {
+    if (!google.script) {
+      google.script = new Promise((resolve, reject) => {
+        const el = document.createElement('script');
+        el.src = 'https://accounts.google.com/gsi/client';
+        el.async = true;
+        el.onload = () => resolve(window.google);
+        el.onerror = () => { google.script = null; reject(new Error('Google sign-in could not load')); };
+        document.head.appendChild(el);
+      });
+    }
+    return google.script;
+  }
+
+  async function mountGoogleButton() {
+    const box = document.getElementById('google-btn');
+    if (!box || !google.clientId) return;
+    try {
+      const g = await googleScript();
+      if (!document.body.contains(box)) return;           // the screen changed meanwhile
+      g.accounts.id.initialize({
+        client_id: google.clientId,
+        callback: onGoogleCredential,
+        ux_mode: 'popup',
+        context: state.screen === 'signup' ? 'signup' : 'signin',
+        itp_support: true
+      });
+      g.accounts.id.renderButton(box, {
+        type: 'standard', theme: 'outline', size: 'large', shape: 'pill',
+        text: state.screen === 'signup' ? 'signup_with' : 'signin_with',
+        logo_alignment: 'center', width: Math.min(box.clientWidth || 320, 400)
+      });
+    } catch (error) {
+      box.innerHTML = `<p class="muted" style="font-size:13px;text-align:center">${esc(error.message)}</p>`;
+    }
+  }
+
+  async function onGoogleCredential(response) {
+    setState({ loading: true, error: '', notice: '' });
+    try {
+      const data = await api('/auth/google', { method: 'POST', body: { credential: response.credential } });
+      state.loading = false;
+      if (data.created) state.notice = 'Welcome! Your account was created with Google.';
+      signIn(data);
+    } catch (error) {
+      setState({ loading: false, error: error.message });
     }
   }
 
@@ -8233,6 +8306,7 @@
   }
 
   (function boot() {
+    loadGoogleConfig();
     const token = store.get('token');
     const user = store.get('user');
     if (!token) countGuestVisit();

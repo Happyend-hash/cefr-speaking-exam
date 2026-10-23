@@ -1,4 +1,5 @@
 import express from 'express';
+import { googleConfigured, googleClientId } from '../services/GoogleAuth.js';
 import AuthService from '../services/AuthService.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { authenticate } from '../middleware/auth.js';
@@ -101,6 +102,31 @@ router.post('/login', async (req, res, next) => {
       message: 'Login successful',
       data: result
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/auth/google/config
+ * @desc    The public Google client id for the sign-in button ('' = button hidden).
+ */
+router.get('/google/config', (req, res) => {
+  res.json({ success: true, data: { clientId: googleConfigured() ? googleClientId() : '' } });
+});
+
+/**
+ * @route   POST /api/auth/google
+ * @desc    Sign in or sign up with Google: { credential } is the ID token
+ *          Google's button gave the page. Checked on the server, never trusted as is.
+ */
+router.post('/google', async (req, res, next) => {
+  try {
+    if (!googleConfigured()) throw new APIError('Google sign-in is not switched on yet', 503);
+    const credential = String(req.body?.credential || '');
+    if (!credential || credential.length > 4096) throw new APIError('Missing Google sign-in', 400);
+    const result = await AuthService.googleLogin(credential);
+    res.status(result.created ? 201 : 200).json({ success: true, message: 'Signed in with Google', data: result });
   } catch (error) {
     next(error);
   }

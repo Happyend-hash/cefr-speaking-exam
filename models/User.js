@@ -38,6 +38,15 @@ const userSchema = new mongoose.Schema(
       select: false
     },
 
+    // "Sign in with Google": Google's id for this person, set the first time
+    // they sign in with Google (new account, or linked to an existing one with
+    // the same, Google-verified, email).
+    googleId: {
+      type: String,
+      index: { unique: true, sparse: true },
+      select: false
+    },
+
     // Shown on the leaderboard instead of the real name. Unique regardless of
     // case, so nobody can appear as someone else; the lower-cased copy is what
     // the uniqueness is enforced on.
@@ -349,6 +358,8 @@ userSchema.methods.comparePassword = async function (passwordAttempt) {
 userSchema.methods.getPublicProfile = function () {
   const obj = this.toObject();
   delete obj.password;
+  obj.google = Boolean(obj.googleId);
+  delete obj.googleId;
   delete obj.twoFactorSecret;
   delete obj.passwordResetToken;
   delete obj.passwordResetExpires;

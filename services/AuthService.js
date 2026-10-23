@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import User from '../models/User.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { sendMail, emailConfigured } from './EmailService.js';
+import { verifyGoogleIdToken } from './GoogleAuth.js';
 
 const VERIFICATION_CODE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resend requests
@@ -350,6 +351,54 @@ class AuthService {
       console.error('Error logging in user:', error);
       throw error;
     }
+  }
+
+  /**
+   * Sign in (or sign up) with a Google ID token. Google has verified the
+   * email, so the account needs no emailed code:
+   *   - a Google id we know: that account;
+   *   - otherwise an account with the same email: linked to Google from now
+   *     on (this also finishes a sign-up that never entered its code);
+   *   - otherwise a new student account, with a random password nobody knows
+   *     (they can still set one later with "Forgot password").
+   */
+  async googleLogin(idToken, { verify = verifyGoogleIdToken } = {}) {
+    let g;
+    try { g = await verify(idToken); } catch (error) {
+      throw new APIError(`Google sign-in failed: ${error.message}`, 401, 'google_failed');
+    }
+
+    let user = await User.findOne({ googleId: g.sub }).select('+password +googleId');
+    if (!user) user = await User.findOne({ email: g.email }).select('+password +googleId');
+
+    if (user) {
+      if (user.status === 'suspended') throw new APIError('This account has been suspended', 403);
+      if (!user.googleId) user.googleId = g.sub;
+      if (!user.isEmailVerified) {
+        user.isEmailVerified = true;
+        user.emailVerificationToken = undefined;
+        user.emailVerificationExpires = undefined;
+        user.emailVerificationAttempts = 0;
+      }
+      if (user.status !== 'active') user.status = 'active';
+      return { ...(await this.startSession(user)), created: false };
+    }
+
+    const parts = g.name.split(/\s+/).filter(Boolean);
+    const firstName = (g.givenName || parts[0] || g.email.split('@')[0]).slice(0, 50);
+    const lastName = (g.familyName || parts.slice(1).join(' ') || firstName).slice(0, 50);
+    user = new User({
+      email: g.email,
+      firstName,
+      lastName,
+      password: crypto.randomBytes(24).toString('base64url'),
+      googleId: g.sub,
+      isEmailVerified: true,
+      emailVerificationRequired: true,
+      status: 'active'
+    });
+    await user.save();
+    return { ...(await this.startSession(user)), created: true };
   }
 
   /**
