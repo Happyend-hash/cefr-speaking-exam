@@ -5860,6 +5860,7 @@
           <span><strong>Ota-onalar uchun</strong><small>Farzandingiz natijalarini kod bilan ko‘ring</small></span>
           <span aria-hidden="true">→</span>
         </a>
+        <p class="muted" style="text-align:center;margin-top:14px;font-size:13px"><a href="/privacy">Maxfiylik siyosati / Privacy policy</a></p>
       </div>`;
   }
 

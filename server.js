@@ -396,6 +396,8 @@ app.use('/downloads', express.static(path.join(__dirname, 'public', 'downloads')
 app.use(express.static(path.join(__dirname, 'public')));
 // The parents' page, at a short address parents can type: /ota-ona or /parent.
 app.get(['/parent', '/ota-ona'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'parent.html')));
+// Privacy policy (needed for Sign in with Google and payment providers).
+app.get(['/privacy', '/maxfiylik'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
 
 // Any non-API GET falls through to the client, so deep links and reloads work.
 // Declared after express.static so real files always win.
