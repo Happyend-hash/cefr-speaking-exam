@@ -30,7 +30,7 @@ import { isRescuable, rescueAttempt, markAttempt, retranscribeAndMark, trialMark
 import { listUnmarked, retryOne, retryAll } from '../services/MarkingRetry.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
-import { usageReport } from '../services/UsageStats.js';
+import { usageReport, usageList } from '../services/UsageStats.js';
 import WritingAttempt from '../models/WritingAttempt.js';
 import { reviewSpeaking, reviewWriting } from '../services/ExpertReview.js';
 
@@ -567,6 +567,14 @@ router.get('/overview', async (req, res, next) => {
  * @desc    How many people used the site today, this hour and over 30 days
  *          (the panel asks again every 2 minutes)
  */
+/** @route GET /api/admin/usage/list?kind=…&day=YYYY-MM-DD — the people behind one number on the card. */
+router.get('/usage/list', async (req, res, next) => {
+  try {
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || '')) ? String(req.query.day) : undefined;
+    res.json({ success: true, data: await usageList(String(req.query.kind || ''), { day }) });
+  } catch (error) { next(error); }
+});
+
 router.get('/usage', async (req, res, next) => {
   try {
     res.json({ success: true, data: await usageReport() });

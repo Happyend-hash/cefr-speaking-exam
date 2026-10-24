@@ -192,6 +192,111 @@ export async function usageReport(now = Date.now()) {
   };
 }
 
+// ------------------------------------------------------------------ lists
+
+const fullName = u => [u?.firstName, u?.lastName].filter(Boolean).join(' ');
+const person = u => ({ id: String(u._id), name: fullName(u) || u.email || '—', email: u.email || '', role: u.role || 'student' });
+const hhmm = d => (d ? new Date(new Date(d).getTime() + TZ_MS).toISOString().slice(11, 16) : '');
+
+/**
+ * Who is behind a number on the "Website use" card (Jamshid, 2026-10-24):
+ * kind = online | students | guests | signups | speaking | writing | ai,
+ * for today or (students) any tracked day. Returns { title, rows, note }.
+ * Visitors who did not sign in have no account, so they are listed only as
+ * anonymous visits with their times.
+ */
+export async function usageList(kind, { day = dayOf(), now = Date.now() } = {}) {
+  const start = dayStart(day);
+  const end = dayStart(addDays(day, 1));
+  const users = async ids => {
+    const list = await User.find({ _id: { $in: ids } }).select('firstName lastName email role createdAt').lean();
+    return new Map(list.map(u => [String(u._id), u]));
+  };
+
+  if (kind === 'online') {
+    const live = [...lastSeen].filter(([, at]) => now - at <= ONLINE_WINDOW_MS).sort((a, b) => b[1] - a[1]);
+    const byId = await users(live.map(([id]) => id));
+    return {
+      title: 'Online now',
+      rows: live.filter(([id]) => byId.has(id)).map(([id, at]) => ({ ...person(byId.get(id)), detail: `last active ${hhmm(at)}`, at: new Date(at) }))
+    };
+  }
+
+  if (kind === 'students') {
+    const acts = await DailyActivity.find({ day, kind: 'user' }).sort({ last: -1 }).lean();
+    const byId = await users(acts.map(a => a.user).filter(Boolean));
+    return {
+      title: day === dayOf(now) ? 'Students today' : `Students on ${day}`,
+      rows: acts.filter(a => byId.has(String(a.user))).map(a => ({
+        ...person(byId.get(String(a.user))),
+        detail: `${hhmm(a.first)}–${hhmm(a.last)} · active in ${a.hours?.length || 1} hour${(a.hours?.length || 1) === 1 ? '' : 's'}`,
+        at: a.last
+      }))
+    };
+  }
+
+  if (kind === 'guests') {
+    const acts = await DailyActivity.find({ day, kind: 'guest' }).sort({ first: 1 }).lean();
+    return {
+      title: 'Visitors not signed in',
+      note: 'They have no account, so there is no name to show — each line is one browser that opened the site.',
+      rows: acts.map((a, i) => ({ id: a.key, name: `Visitor ${i + 1}`, email: '', detail: `${hhmm(a.first)}–${hhmm(a.last)}`, at: a.first }))
+    };
+  }
+
+  if (kind === 'signups') {
+    const list = await User.find({ createdAt: { $gte: start, $lt: end } }).sort({ createdAt: -1 })
+      .select('firstName lastName email role createdAt isEmailVerified googleId').lean();
+    return {
+      title: 'New sign-ups',
+      rows: list.map(u => ({ ...person(u), detail: `${hhmm(u.createdAt)} · ${u.googleId ? 'Google' : 'email'}${u.isEmailVerified ? '' : ' · email not confirmed'}`, at: u.createdAt }))
+    };
+  }
+
+  if (kind === 'speaking') {
+    const list = await ExamResult.find({ createdAt: { $gte: start, $lt: end } }).sort({ createdAt: -1 })
+      .populate('student', 'firstName lastName email role').populate('exam', 'title')
+      .select('student exam mode part status overallScore overallLevel createdAt').lean();
+    return {
+      title: 'Speaking mocks started',
+      rows: list.filter(r => r.student).map(r => ({
+        ...person(r.student),
+        detail: `${hhmm(r.createdAt)} · ${r.exam?.title || 'Speaking'}${r.mode === 'practice' ? ` · practice Part ${r.part || ''}` : ''} · ${
+          r.status === 'completed' ? `${r.overallScore ?? '—'}/75 ${r.overallLevel || ''}` : r.status === 'in_progress' ? 'not finished' : r.status}`,
+        link: r.status === 'completed' ? `/?result=${r._id}` : null,
+        at: r.createdAt
+      }))
+    };
+  }
+
+  if (kind === 'writing') {
+    const list = await WritingAttempt.find({ createdAt: { $gte: start, $lt: end } }).sort({ createdAt: -1 })
+      .populate('student', 'firstName lastName email role')
+      .select('student mode testTitle status score level complete createdAt').lean();
+    return {
+      title: 'Writing checks and mocks',
+      rows: list.filter(r => r.student).map(r => ({
+        ...person(r.student),
+        detail: `${hhmm(r.createdAt)} · ${r.mode === 'check' ? 'Writing check' : r.testTitle || 'Writing mock'} · ${
+          r.status === 'completed' ? (r.score != null ? `${r.score}/75 ${r.level || ''}` : r.level || 'marked') : r.status === 'in_progress' ? 'not finished' : r.status}`,
+        link: r.status === 'completed' ? `/?writing=${r._id}` : null,
+        at: r.createdAt
+      }))
+    };
+  }
+
+  if (kind === 'ai') {
+    const list = await User.find({ 'assistantUsage.day': day }).select('firstName lastName email role assistantUsage').lean();
+    return {
+      title: 'AI Ustoz',
+      rows: list.sort((a, b) => (b.assistantUsage?.sessions || 0) - (a.assistantUsage?.sessions || 0))
+        .map(u => ({ ...person(u), detail: `${u.assistantUsage?.sessions || 0} session${u.assistantUsage?.sessions === 1 ? '' : 's'}` }))
+    };
+  }
+
+  throw Object.assign(new Error('Unknown list'), { statusCode: 400 });
+}
+
 export const _test = { seen, lastSeen, reset() { seen.clear(); lastSeen.clear(); estimateCache = { at: 0, key: '', days: {} }; } };
 
-export default { noteUser, noteGuest, onlineNow, usageReport, dayOf, hourOf };
+export default { noteUser, noteGuest, onlineNow, usageReport, usageList, dayOf, hourOf };

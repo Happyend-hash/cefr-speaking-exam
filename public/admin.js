@@ -2396,12 +2396,14 @@
       : u.yesterdaySoFar == null ? `Yesterday ${u.activeYesterday}${u.yesterdayEstimated ? ' (estimate)' : ''}`
       : `${u.yesterdaySoFar} by this time yesterday (${u.activeYesterday} all day)`;
 
-    const tile = (label, value, note = '', cls = '') => `
-      <div class="u-tile ${cls}">
+    // Every tile opens the list of people behind its number (2026-10-24).
+    const tile = (label, value, note = '', cls = '', kind = '') => `
+      <button type="button" class="u-tile ${cls} ${kind && state.uList?.kind === kind && !state.uList?.day ? 'is-open' : ''}" ${kind ? `data-u-list="${kind}"` : 'disabled'} aria-expanded="${kind && state.uList?.kind === kind}">
         <div class="u-label">${label}</div>
         <div class="u-value">${value}</div>
         ${note ? `<div class="u-note">${note}</div>` : ''}
-      </div>`;
+        ${kind ? '<span class="u-more">See who ›</span>' : ''}
+      </button>`;
 
     const days = u.days || [];
     const todayIndex = days.length - 1;
@@ -2413,7 +2415,7 @@
       labelAt: i => (i === todayIndex ? 'Today' : (todayIndex - i) % 7 === 0 && todayIndex - i >= 7 ? shortDay(days[i].day) : ''),
       tip: i => {
         const d = days[i];
-        return `${shortDay(d.day)}: ${d.users} student${d.users === 1 ? '' : 's'}`
+        return `${shortDay(d.day)}: ${d.users} student${d.users === 1 ? '' : 's'}${d.estimated ? '' : ' — click to see who'}`
           + (d.estimated ? ' (estimate from mocks, writing and chat)' : d.guests ? `, ${d.guests} visitor${d.guests === 1 ? '' : 's'} not signed in` : '');
       }
     });
@@ -2437,16 +2439,17 @@
       </div>
 
       <div class="u-tiles">
-        ${tile('<span class="u-live"></span>Online now', u.onlineNow, 'active in the last 5 min')}
+        ${tile('<span class="u-live"></span>Online now', u.onlineNow, 'active in the last 5 min', '', 'online')}
         ${tile('Students today', u.activeToday,
-          `${esc(vsYesterday)}${diff ? ` <span class="${diff > 0 ? 'u-up' : 'u-down'}">${diff > 0 ? '▲' : '▼'} ${Math.abs(diff)}</span>` : ''}`, 'is-main')}
-        ${tile('Visitors not signed in', u.guestsToday, 'opened the site, no account')}
-        ${tile('New sign-ups', u.newSignups)}
-        ${tile('Speaking mocks', u.speakingToday, 'started today')}
-        ${tile('Writing', u.writingToday, 'checks and mocks')}
-        ${tile('AI Ustoz', u.aiSessionsToday, `${u.aiPeopleToday} student${u.aiPeopleToday === 1 ? '' : 's'}`)}
-        ${u.weekAverage != null ? tile('7-day average', u.weekAverage, 'students a day') : ''}
+          `${esc(vsYesterday)}${diff ? ` <span class="${diff > 0 ? 'u-up' : 'u-down'}">${diff > 0 ? '▲' : '▼'} ${Math.abs(diff)}</span>` : ''}`, 'is-main', 'students')}
+        ${tile('Visitors not signed in', u.guestsToday, 'opened the site, no account', '', 'guests')}
+        ${tile('New sign-ups', u.newSignups, '', '', 'signups')}
+        ${tile('Speaking mocks', u.speakingToday, 'started today', '', 'speaking')}
+        ${tile('Writing', u.writingToday, 'checks and mocks', '', 'writing')}
+        ${tile('AI Ustoz', u.aiSessionsToday, `${u.aiPeopleToday} student${u.aiPeopleToday === 1 ? '' : 's'}`, '', 'ai')}
+        ${u.weekAverage != null ? tile('7-day average', u.weekAverage, 'students a day', '', 'week') : ''}
       </div>
+      ${usageListPanel(u)}
 
       <div class="u-charts">
         <figure class="u-fig">
@@ -2460,6 +2463,46 @@
         </figure>
       </div>
     </div>`;
+  }
+
+  /** The list under the tiles: who is behind the number that was clicked. */
+  function usageListPanel(u) {
+    const l = state.uList;
+    if (!l) return '';
+    const close = '<button type="button" class="btn btn-ghost btn-sm" data-u-close>Close</button>';
+    if (l.kind === 'week') {
+      const week = (u.days || []).slice(-8, -1);
+      return `<div class="u-list">
+        <div class="u-list-head"><strong>Last 7 days</strong>${close}</div>
+        <div class="u-week">${week.map(d => `<button type="button" class="u-week-day" data-u-day="${esc(d.day)}" ${d.estimated ? 'disabled' : ''}>
+          <span>${esc(new Date(`${d.day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }))}</span>
+          <b>${d.users}</b><small>${d.estimated ? 'estimate' : 'students ›'}</small></button>`).join('')}</div>
+      </div>`;
+    }
+    const d = l.data;
+    const rows = d?.rows || [];
+    return `<div class="u-list">
+      <div class="u-list-head"><strong>${esc(d?.title || 'Loading…')}${d ? ` <span class="muted">· ${rows.length}</span>` : ''}</strong>${close}</div>
+      ${l.busy ? '<span class="spinner"></span>' : l.error ? `<p class="u-err">${esc(l.error)}</p>`
+        : rows.length ? `${d.note ? `<p class="muted" style="font-size:13px;margin:0 0 8px">${esc(d.note)}</p>` : ''}<ol class="u-people">${rows.map(r => `<li>
+            <span class="u-who"><strong>${esc(r.name)}</strong>${r.email && r.email !== r.name ? `<span class="u-mail">${esc(r.email)}</span>` : ''}${r.role && r.role !== 'student' ? `<span class="tag">${esc(r.role)}</span>` : ''}</span>
+            <span class="u-detail">${esc(r.detail || '')}</span>
+            <span class="u-acts">${r.link ? `<a class="btn btn-ghost btn-sm" href="${esc(r.link)}" target="_blank" rel="noopener">Open</a>` : ''}${r.email && r.role === 'student' ? `<button type="button" class="btn btn-ghost btn-sm" data-u-msg="${esc(r.id)}" data-name="${esc(r.name)}" data-email="${esc(r.email)}">✉</button>` : ''}</span>
+          </li>`).join('')}</ol>`
+        : '<p class="muted">Nobody yet.</p>'}
+    </div>`;
+  }
+
+  async function openUsageList(kind, day = null) {
+    if (state.uList?.kind === kind && (state.uList?.day || null) === day) { state.uList = null; return refreshUsageCard(); }
+    if (kind === 'week') { state.uList = { kind }; return refreshUsageCard(); }
+    state.uList = { kind, day, busy: true };
+    refreshUsageCard();
+    try {
+      const data = await api(`/admin/usage/list?${new URLSearchParams(day ? { kind, day } : { kind })}`);
+      if (state.uList?.kind === kind) state.uList = { kind, day, data };
+    } catch (error) { if (state.uList?.kind === kind) state.uList = { kind, day, error: error.message }; }
+    refreshUsageCard();
   }
 
   function refreshUsageCard() {
@@ -2484,6 +2527,23 @@
     document.querySelector('[data-usage-refresh]')?.addEventListener('click', e => {
       e.currentTarget.disabled = true;
       refreshUsage();
+    });
+    const card = document.getElementById('usage-card');
+    card?.querySelectorAll('[data-u-list]').forEach(el => el.addEventListener('click', () => openUsageList(el.dataset.uList)));
+    card?.querySelectorAll('[data-u-day]').forEach(el => el.addEventListener('click', () => openUsageList('students', el.dataset.uDay)));
+    card?.querySelector('[data-u-close]')?.addEventListener('click', () => { state.uList = null; refreshUsageCard(); });
+    card?.querySelectorAll('[data-u-msg]').forEach(el => el.addEventListener('click', () => {
+      state.msgDraft.to = 'pick';
+      if (!state.msgDraft.picked.some(p => p.id === el.dataset.uMsg)) state.msgDraft.picked.push({ id: el.dataset.uMsg, name: el.dataset.name, email: el.dataset.email });
+      loadMessages({ open: true }).then(() => document.getElementById('msg-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }));
+    // the 30-day chart: a day's bar opens that day's students
+    const days = state.usage?.days || [];
+    card?.querySelectorAll('.u-fig:first-child .u-col').forEach((g, i) => {
+      const d = days[i];
+      if (!d || d.estimated) return;
+      g.style.cursor = 'pointer';
+      g.addEventListener('click', () => openUsageList('students', d.day === state.usage.today ? null : d.day));
     });
     if (!usageTimer) {
       usageTimer = setInterval(() => { if (!document.hidden) refreshUsage(); }, USAGE_EVERY_MS);
