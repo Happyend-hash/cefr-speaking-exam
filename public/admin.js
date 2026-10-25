@@ -81,6 +81,7 @@
     csPayAmount: undefined,
     csPayDate: '',
     csFee: undefined,
+    folder: null,            // the dashboard folder open (null = the dashboard itself)
     msgOpen: false,          // the Messages card
     msg: null,               // { sent, maxGift } once loaded
     msgDraft: { to: 'all', picked: [], title: '', html: '', giftOn: false, gs: 1, gw: 0 },
@@ -212,7 +213,7 @@
       api('/admin/usage')
         .then(usage => { state.usage = usage; state.usageError = ''; })
         .catch(error => { state.usageError = `Could not load the numbers: ${error.message}`; })
-        .finally(() => refreshUsageCard());
+        .finally(() => { if (state.folder) refreshUsageCard(); else render(); });
       setState({ tests, overview, unmarked: unmarked?.attempts || [], loading: false, screen: 'tests' });
     } catch (error) {
       setState({ loading: false, error: error.message });
@@ -256,13 +257,157 @@
       </main>`;
   }
 
-  function mainScreen() {
+  // ------------------------------------------------------------- dashboard
+  //
+  // The panel as folders (Jamshid, 2026-10-25): one screen of tiles, each
+  // opening its own page with the tools inside. The address (#/course,
+  // #/support, …) follows the folder, so Refresh and the browser's Back
+  // button land where you were.
+
+  const ICON = {
+    chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
+    school: '<path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/>',
+    chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+    check: '<path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/>',
+    users: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7"/><path d="M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5.5-5-6.5"/>',
+    doc: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+    mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/>',
+    star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>',
+    back: '<path d="M15 18l-6-6 6-6"/>',
+    arrow: '<path d="M9 6l6 6-6 6"/>',
+    home: '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>'
+  };
+  const svg = (name, size = 22) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  function testsSection() {
+    return `<div class="row" style="justify-content:space-between;margin-top:8px">
+        <h2>Tests</h2>
+        <button class="btn btn-sm" data-action="new-test">+ New test</button>
+      </div>
+      ${state.screen === 'new-test' ? newTestForm() : ''}
+      ${state.loading ? '<div class="center-note"><span class="spinner"></span></div>' : ''}
+      ${state.tests.length === 0 && !state.loading
+        ? '<div class="card"><p class="muted">No tests yet. Create one, then add questions to it.</p></div>'
+        : state.tests.map(testCard).join('')}`;
+  }
+
+  /** The folders, in the order they appear on the dashboard. */
+  const FOLDERS = [
+    { key: 'use', icon: 'chart', tone: 'indigo', title: 'Website use', desc: 'Who is on the site, sign-ups, mocks and the last 30 days.',
+      body: () => usageCard(),
+      meta: () => (state.usage ? `${plural(state.usage.activeToday, 'student')} today · ${state.usage.onlineNow} online now` : '') },
+    { key: 'course', icon: 'school', tone: 'green', title: 'Course students', desc: 'Your groups: homework, vocabulary, attendance, payments and parent codes.',
+      body: () => courseCard(), open: ['cs-open'],
+      meta: () => (state.cs ? `${plural((state.cs.students || []).length, 'student')} · ${(state.cs.leaderboards || []).length} groups` : 'Groups, homework and payments') },
+    { key: 'support', icon: 'chat', tone: 'sky', title: 'Support chat', desc: "Students' questions, problems, ideas and what they liked about the site.",
+      body: () => supportCard(), open: ['sp-open'],
+      badge: () => state.spUnread || 0, meta: () => (state.spUnread ? `${plural(state.spUnread, 'new message')} waiting` : 'No new messages') },
+    { key: 'messages', icon: 'mail', tone: 'violet', title: 'Messages & gifts', desc: 'Write to students, announce updates and gift mocks.',
+      body: () => messagesCard(), open: ['msg-open'], meta: () => 'Send to one, a few or everyone' },
+    { key: 'marking', icon: 'check', tone: 'amber', title: 'Marking & reviews', desc: 'Review attempts, expert scores, marking accuracy, calibration and repairs.',
+      body: () => `${unmarkedCard()}${reviewCard()}${accuracyCard()}${calibrationCard()}${remarkCard()}${rescueCard()}${purgeCard()}`,
+      open: ['review-open', 'acc-open', 'calibration-open'],
+      badge: () => (state.unmarked || []).length,
+      meta: () => ((state.unmarked || []).length ? `${plural(state.unmarked.length, 'attempt')} not marked` : 'Everything is marked') },
+    { key: 'accounts', icon: 'users', tone: 'rose', title: 'Accounts & access', desc: 'Every account: mocks left, packages, Premium and blocking.',
+      body: () => studentsCard(), open: ['students-open'],
+      meta: () => (state.overview ? `${plural(state.overview.students, 'account')}` : '') },
+    { key: 'tests', icon: 'doc', tone: 'slate', title: 'Tests', desc: 'Speaking and writing tests and their questions.',
+      body: () => testsSection(),
+      meta: () => `${state.tests.filter(t => t.isPublished).length} published · ${plural(state.tests.length, 'test')}` },
+    { key: 'community', icon: 'mic', tone: 'teal', title: 'Rooms, chat & pictures', desc: 'Speaking rooms and recordings, chat moderation and profile pictures.',
+      body: () => `${voiceCard()}${chatCard()}${picturesCard()}`, open: ['voice-open', 'chat-open', 'pictures-open'], meta: () => 'Live rooms and moderation' },
+    { key: 'sponsors', icon: 'star', tone: 'gold', title: 'Sponsors', desc: 'The banners shown in the app.',
+      body: () => sponsorsCard(), open: ['sponsors-open'], meta: () => 'Banners in the app' }
+  ];
+
+  const folderFromHash = () => {
+    const key = String(location.hash || '').replace(/^#\/?/, '');
+    return FOLDERS.some(f => f.key === key) ? key : null;
+  };
+
+  /** Open a folder: its page, its address, and the data of the tools inside. */
+  const CARD_STATE = {
+    'cs-open': 'csOpen', 'sp-open': 'spOpen', 'msg-open': 'msgOpen', 'review-open': 'reviewOpen', 'acc-open': 'accOpen',
+    'calibration-open': 'calibrationOpen', 'students-open': 'studentsOpen', 'voice-open': 'voiceOpen',
+    'chat-open': 'chatOpen', 'pictures-open': 'picturesOpen', 'sponsors-open': 'sponsorsOpen'
+  };
+
+  function enterFolder(key, { push = true } = {}) {
+    const f = FOLDERS.find(x => x.key === key) || null;
+    // Leaving a folder closes its tools, so their live updates stop (and the support badge still counts).
+    for (const [open, flag] of Object.entries(CARD_STATE)) {
+      if (state[flag] && !(f?.open || []).includes(open)) handleAction(open.replace(/-open$/, '-close'));
+    }
+    state.folder = f ? f.key : null;
+    if (push) {
+      const hash = f ? `#/${f.key}` : '';
+      if (location.hash !== hash) history.pushState(null, '', hash || location.pathname);
+    }
+    setState({ error: '', notice: '' });
+    window.scrollTo({ top: 0 });
+    for (const action of f?.open || []) handleAction(action);
+  }
+
+  function homeScreen() {
     const o = state.overview;
+    const u = state.usage;
+    const hour = new Date().getHours();
+    const hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    const kpi = (label, value, note = '') => `<div class="kpi"><span class="kpi-label">${label}</span><span class="kpi-value">${value ?? '—'}</span>${note ? `<span class="kpi-note">${note}</span>` : ''}</div>`;
+    const tiles = FOLDERS.map(f => {
+      const badge = f.badge ? f.badge() : 0;
+      const meta = f.meta ? f.meta() : '';
+      return `<button type="button" class="folder is-${f.tone}" data-folder="${f.key}">
+        <span class="folder-top">
+          <span class="folder-ic">${svg(f.icon)}</span>
+          ${badge ? `<span class="folder-badge">${badge > 99 ? '99+' : badge}</span>` : ''}
+        </span>
+        <span class="folder-title">${esc(f.title)}</span>
+        <span class="folder-desc">${esc(f.desc)}</span>
+        <span class="folder-meta">${esc(meta)}<span class="folder-go">${svg('arrow', 16)}</span></span>
+      </button>`;
+    }).join('');
+    return `<section class="dash-hero">
+        <div>
+          <p class="dash-kicker">${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+          <h1 class="dash-title">${hello}${state.user?.firstName ? `, ${esc(state.user.firstName)}` : ''}</h1>
+          <p class="dash-sub">Everything for English Hub in one place. Open a folder to get started.</p>
+        </div>
+        <div class="kpis">
+          ${kpi('Students today', u?.activeToday, u ? `${u.onlineNow} online now` : '')}
+          ${kpi('Accounts', o?.students)}
+          ${kpi('Published tests', o?.published)}
+          ${kpi('Attempts', o?.attempts)}
+        </div>
+      </section>
+      ${alerts()}
+      <div class="folders">${tiles}</div>`;
+  }
+
+  function folderScreen(f) {
+    return `<nav class="crumbs" aria-label="Breadcrumb">
+        <button type="button" class="crumb-btn" data-folder="">${svg('home', 16)} Dashboard</button>
+        <span class="crumb-sep">/</span><span class="crumb-here">${esc(f.title)}</span>
+      </nav>
+      <header class="folder-head is-${f.tone}">
+        <span class="folder-ic">${svg(f.icon, 26)}</span>
+        <div><h1>${esc(f.title)}</h1><p>${esc(f.desc)}</p></div>
+        <button type="button" class="btn btn-ghost btn-sm folder-back" data-folder="">${svg('back', 16)} All folders</button>
+      </header>
+      ${alerts()}
+      <div class="fv">${f.body()}</div>`;
+  }
+
+  function mainScreen() {
+    const f = FOLDERS.find(x => x.key === state.folder);
     return `
       <div class="admin-bar">
-        <div class="brand">Question Manager</div>
+        <button type="button" class="brand admin-brand" data-folder="">English Hub <span>Teacher panel</span></button>
         <div class="row">
-          <span class="muted">${esc(state.user?.email || '')}</span>
+          <span class="muted admin-who">${esc(state.user?.email || '')}</span>
           <a class="btn btn-ghost btn-sm" href="/">Exam site</a>
           ${state.refreshedAt ? `<span class="muted admin-refreshed">Updated ${esc(state.refreshedAt)}</span>` : ''}
           <button class="btn btn-sm admin-refresh ${state.refreshing ? 'is-busy' : ''}" data-action="refresh" ${state.refreshing ? 'disabled' : ''} title="Load the latest changes">
@@ -272,43 +417,8 @@
           <button class="btn btn-ghost btn-sm" data-action="signout">Sign out</button>
         </div>
       </div>
-      <main class="stack">
-        ${alerts()}
-        ${o ? `<div class="grid grid-3">
-          <div class="card stat"><div class="stat-label">Students</div><div class="stat-value">${o.students}</div></div>
-          <div class="card stat"><div class="stat-label">Published tests</div><div class="stat-value">${o.published}</div></div>
-          <div class="card stat"><div class="stat-label">Attempts</div><div class="stat-value">${o.attempts}</div></div>
-        </div>` : ''}
-
-        ${usageCard()}
-        ${unmarkedCard()}
-        ${courseCard()}
-        ${supportCard()}
-        ${messagesCard()}
-        ${reviewCard()}
-        ${accuracyCard()}
-        ${studentsCard()}
-        ${voiceCard()}
-        ${chatCard()}
-        ${picturesCard()}
-        ${sponsorsCard()}
-
-        <div class="row" style="justify-content:space-between;margin-top:8px">
-          <h2>Tests</h2>
-          <button class="btn btn-sm" data-action="new-test">+ New test</button>
-        </div>
-
-        ${state.screen === 'new-test' ? newTestForm() : ''}
-
-        ${state.loading ? '<div class="center-note"><span class="spinner"></span></div>' : ''}
-        ${state.tests.length === 0 && !state.loading
-          ? '<div class="card"><p class="muted">No tests yet. Create one, then add questions to it.</p></div>'
-          : state.tests.map(testCard).join('')}
-
-        ${calibrationCard()}
-        ${remarkCard()}
-        ${rescueCard()}
-        ${purgeCard()}
+      <main class="stack dash">
+        ${f ? folderScreen(f) : homeScreen()}
       </main>`;
   }
 
@@ -1315,6 +1425,7 @@
   }
 
   function wire() {
+    root.querySelectorAll('[data-folder]').forEach(el => el.addEventListener('click', () => enterFolder(el.dataset.folder || null)));
     wireUsage();
     wireCourseAdmin();
     wireMessagesAdmin();
@@ -2520,7 +2631,7 @@
     } catch (error) {
       state.usageError = `Could not load the numbers: ${error.message}`;
     }
-    refreshUsageCard();
+    if (!state.folder && state.screen !== 'login') render(); else refreshUsageCard();
   }
 
   function wireUsage() {
@@ -4011,10 +4122,16 @@
   // -------------------------------------------------------------------- boot
 
   (function boot() {
+    // Back and Forward move between the dashboard and its folders.
+    window.addEventListener('popstate', () => { if (state.token) enterFolder(folderFromHash(), { push: false }); });
     const token = store.get('adminToken');
     if (token) {
       state.token = token;
-      loadTests().then(() => { refreshSupportBadge(); return restoreAfterRefresh().catch(() => {}); }, () => signOut());
+      loadTests().then(() => {
+        refreshSupportBadge();
+        if (folderFromHash()) enterFolder(folderFromHash(), { push: false });
+        return restoreAfterRefresh().catch(() => {});
+      }, () => signOut());
       return;
     }
     render();
