@@ -344,3 +344,16 @@ input[type="search"], input[type="number"], input[type="date"], select, textarea
 .vr-unit-row[data-gm^="vr-mode"] .vr-unit-count { white-space: normal; }
 :root[data-theme="night"] .vr-unit-row { background: rgba(255, 255, 255, .04); }
 :root[data-theme="night"] .score-value { color: #f5c451; }
+
+/* Profile: the registered email, shown in full and copyable */
+.prof-account { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+.prof-account-icon { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--gold-tint); color: var(--gold-text); }
+.prof-account-icon svg { width: 20px; height: 20px; }
+.prof-account-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.prof-account-label { font-size: 12px; color: var(--ink-soft); letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prof-account-email { font-size: 15px; color: var(--ink); overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.prof-copy { flex: none; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.prof-copy svg { width: 16px; height: 16px; }
+.prof-copy.is-done { color: #15803d; border-color: rgba(21,128,61,.35); }
+:root[data-theme="night"] .prof-copy.is-done { color: #4ade80; border-color: rgba(74,222,128,.35); }
+@media (max-width: 560px) { .prof-account { flex-wrap: wrap; row-gap: 10px; } .prof-account-text { flex-basis: calc(100% - 52px); } .prof-copy { margin-left: 52px; } }

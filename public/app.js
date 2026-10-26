@@ -6517,6 +6517,7 @@
    */
   const ICONS = {
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+    copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
     flame: '<path d="M12 22c4 0 7-3 7-7 0-5-5-7-5-12-3 2-6 6-6 9-1-1-2-2-2-4-1 2-1 4-1 7 0 4 3 7 7 7z"/>',
@@ -7408,8 +7409,51 @@
     writingResults: 'Writing natijalari',
     writingResultsSub: 'Writing mock va tekshiruvlar',
     skills: "Ko'nikmalarim",
-    signout: 'Chiqish'
+    signout: 'Chiqish',
+    emailLabel: "Ro'yxatdan o'tgan email",
+    copy: 'Nusxa olish',
+    copied: 'Nusxalandi'
   };
+
+  /** The address the account was registered with, shown in full and copyable. */
+  function accountCard() {
+    const email = state.user?.email || '';
+    if (!email) return '';
+    const copied = state.emailCopied;
+    return `<section class="card prof-account">
+      <span class="prof-account-icon">${icon('mail')}</span>
+      <div class="prof-account-text">
+        <span class="prof-account-label">${PROF_UZ.emailLabel}</span>
+        <strong class="prof-account-email" id="prof-email">${esc(email)}</strong>
+      </div>
+      <button class="btn btn-ghost btn-sm prof-copy ${copied ? 'is-done' : ''}" data-copy-email aria-live="polite">
+        ${icon(copied ? 'check' : 'copy')} ${copied ? PROF_UZ.copied : PROF_UZ.copy}
+      </button>
+    </section>`;
+  }
+
+  /** Copy the email; where the clipboard is refused, select it so a long-press copies it. */
+  async function copyEmail() {
+    const email = state.user?.email || '';
+    if (!email) return;
+    let ok = false;
+    try { await navigator.clipboard.writeText(email); ok = true; } catch { /* fall through */ }
+    if (!ok) {
+      const ta = document.createElement('textarea');
+      ta.value = email; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+      document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      ta.remove();
+    }
+    if (!ok) {
+      const el = document.getElementById('prof-email');
+      if (el) { const r = document.createRange(); r.selectNodeContents(el); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+      return;
+    }
+    clearTimeout(copyEmail.t);
+    setState({ emailCopied: true });
+    copyEmail.t = setTimeout(() => setState({ emailCopied: false }), 1800);
+  }
 
   async function openProfile() {
     go('profile');
@@ -7444,6 +7488,7 @@
 
     return `
       <div class="page-head"><h1>${PROF_UZ.title}</h1></div>
+      ${accountCard()}
       ${premiumStrip()}
       ${balance}
       <section class="card menu-card">
@@ -8605,6 +8650,9 @@
 
     root.querySelectorAll('[data-buy-pkg]').forEach(el =>
       el.addEventListener('click', () => buyPackage(el.dataset.buyPkg)));
+
+    root.querySelectorAll('[data-copy-email]').forEach(el =>
+      el.addEventListener('click', copyEmail));
 
     root.querySelectorAll('[data-copy-card]').forEach(el =>
       el.addEventListener('click', () => copyCardNumber(el.dataset.copyCard)));
