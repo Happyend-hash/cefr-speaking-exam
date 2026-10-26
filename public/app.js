@@ -6307,11 +6307,30 @@
       : `<div class="brand" aria-label="English Hub Family">${inner}</div>`;
   }
 
+  // ------------------------------------------------------------ day / night
+  //
+  // Kunduzi (Pearl) and Kechasi (Midnight Gold), 2026-10-26. theme-boot.js
+  // sets the starting theme before the page draws; this switch changes it and
+  // remembers the choice. Until a student chooses, the phone's own setting
+  // decides (and is followed if it changes).
+  const currentTheme = () => (document.documentElement.getAttribute('data-theme') === 'night' ? 'night' : 'day');
+  function applyTheme(theme, remember = true) {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'night' ? '#0a0d22' : '#f6f7fc');
+    if (remember) store.set('theme', theme);
+  }
+  window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', e => {
+    if (!store.get('theme')) { applyTheme(e.matches ? 'night' : 'day', false); render(); }
+  });
+  const themeSwitch = () => `<button type="button" class="theme-switch" data-theme-toggle aria-label="${currentTheme() === 'night' ? 'Kunduzgi rejimga o‘tish' : 'Tungi rejimga o‘tish'}" title="Kunduz / Kecha">
+      <span class="is-day">${icon('sun')}</span><span class="is-night">${icon('moon')}</span></button>`;
+
   function navMarkup() {
     if (!state.user) {
       return `<nav class="nav">
         ${brandMarkup()}
         <div class="nav-right">
+          ${themeSwitch()}
           <button class="btn btn-ghost btn-sm" data-go="login">Sign in</button>
         </div>
       </nav>`;
@@ -6348,6 +6367,7 @@
       ${pageTitle ? `<span class="nav-title">${pageTitle}</span>` : ''}
       <div class="nav-links nav-desktop">${links}</div>
       <div class="nav-right">
+        ${canLeave() ? themeSwitch() : ''}
         ${canLeave()
           ? `<button class="nav-inbox ${['inbox', 'support'].includes(state.screen) ? 'is-current' : ''}" data-go="inbox" aria-label="Xabarlar${state.unread ? ` — ${state.unread} ta yangi` : ''}">${icon('mail')}${state.unread ? `<span class="nav-badge">${state.unread > 9 ? '9+' : state.unread}</span>` : ''}</button>`
           : ''}
@@ -6497,6 +6517,11 @@
    */
   const ICONS = {
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+    flame: '<path d="M12 22c4 0 7-3 7-7 0-5-5-7-5-12-3 2-6 6-6 9-1-1-2-2-2-4-1 2-1 4-1 7 0 4 3 7 7 7z"/>',
+    book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M8 7h8"/>',
+    grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     mic: '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
     pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     trophy: '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
@@ -7173,7 +7198,17 @@
     rankNone: 'Reyting',
     rankNeed: n => `Reytingga chiqish uchun yana ${n} ta to'liq mock`,
     recent: "So'nggi natijalar",
-    all: 'Hammasi'
+    all: 'Hammasi',
+    details: 'Batafsil',
+    notYetShort: '—',
+    balanceLabel: 'Balans:',
+    speakingSub: '4 qism · 8 savol',
+    writingSub: '3 qism · 60 daqiqa',
+    partsSub: "Har bir qismni alohida",
+    vocabSub: "Lug'at mashqi va uyga vazifa",
+    rankShort: r => `Speaking #${r}`,
+    rankOpen: "O'rningizni ko'ring",
+    streak: 'ketma-ket faol'
   };
 
   function dashboardScreen() {
@@ -7181,96 +7216,109 @@
       return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">Loading…</p></div>`;
     }
 
+    // Home, redesigned 2026-10-26 (Kunduzi / Kechasi): greeting, best scores
+    // as two rings, the two mocks as big buttons, four shortcuts, latest results.
     const stats = state.stats || {};
     const max = stats.maxScore || MAX_SCORE;
     const best = typeof stats.bestScore === 'number' ? stats.bestScore : null;
-    const pos = best !== null ? cefrPosition(best) : null;
     const name = state.user?.nickname || state.user?.firstName || '';
-
-    // The best COMPLETE writing mock (a partial one has no 75-point score).
     const writingBest = (state.writingHistory || [])
       .filter(h => h.complete && typeof h.score === 'number')
       .reduce((top, h) => (!top || h.score > top.score ? h : top), null);
 
-    const skillRow = (label, iconName, tone, score, levelName, target) => {
-      const p = typeof score === 'number' ? cefrPosition(score) : null;
-      return `<button class="home-skill" ${target}>
-        <span class="home-skill-head">
-          <span class="home-skill-name"><span class="home-skill-icon ${tone}">${icon(iconName)}</span>${label}</span>
-          ${p ? `<span class="home-skill-score">${score}<span> / ${max}</span></span><span class="chip chip-speaking">${esc(levelName || p.current?.level || '')}</span>`
-              : `<span class="muted home-skill-none">${HOME_UZ.notYet}</span>`}
-        </span>
-        <span class="home-bar ${p ? '' : 'is-empty'}"><span style="width:${p ? p.percent.toFixed(1) : 0}%"></span></span>
-        ${p ? `<span class="home-level-foot"><span>${esc(p.current ? `${p.current.level} (${p.current.min}–${p.next ? p.next.min - 1 : max})` : '')}</span>
-          <span>${esc(p.next ? HOME_UZ.toNext(p.pointsToNext, p.next.level) : HOME_UZ.top)}</span></span>` : ''}
+    const WEEKDAYS = ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
+    const now = new Date();
+    const today = `${WEEKDAYS[now.getDay()]}, ${now.getDate()}-${UZ_MONTHS_LOWER[now.getMonth()]}`;
+
+    const ring = (kind, label, score, levelName, target) => {
+      const r = 46;
+      const c = 2 * Math.PI * r;
+      const has = typeof score === 'number';
+      const off = c * (1 - (has ? Math.max(0, Math.min(1, score / max)) : 0));
+      const lvl = has ? (levelName || cefrPosition(score)?.current?.level || '') : '';
+      return `<button class="hx-ring is-${kind}" ${target} aria-label="${esc(label)}: ${has ? `${score} / ${max} ${lvl}` : HOME_UZ.notYet}">
+        <svg viewBox="0 0 110 110" aria-hidden="true"><circle cx="55" cy="55" r="${r}" class="hx-ring-bg"/>${has ? `<circle cx="55" cy="55" r="${r}" class="hx-ring-fg" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 55 55)"/>` : ''}</svg>
+        <span class="hx-ring-in ${has ? '' : 'is-empty'}">${has ? `<b>${score}</b><span>/${max}</span>` : `<b>${HOME_UZ.notYetShort}</b>`}</span>
+        <span class="hx-ring-cap">${label}${lvl ? ` <span class="hx-lvl">${esc(lvl)}</span>` : ''}</span>
       </button>`;
     };
 
+    // One line under the rings: the nearest next level of either skill.
+    const nextOf = (label, score) => {
+      const p = typeof score === 'number' ? cefrPosition(score) : null;
+      return p?.next ? { label, text: HOME_UZ.toNext(p.pointsToNext, p.next.level), gap: p.pointsToNext } : null;
+    };
+    const nexts = [nextOf(HOME_UZ.speaking, best), nextOf(HOME_UZ.writing, writingBest?.score ?? null)].filter(Boolean).sort((a, b) => a.gap - b.gap);
+    const both = best !== null && writingBest && !nexts.length;
+
     const level = best !== null || writingBest
-      ? `<section class="card home-level">
-          <span class="home-label">${HOME_UZ.best}</span>
-          ${skillRow(HOME_UZ.speaking, 'mic', '', best, pos?.current?.level, 'data-folder="speaking"')}
-          ${skillRow(HOME_UZ.writing, 'pen', 'is-green', writingBest?.score ?? null, writingBest?.level, 'data-go="writing"')}
+      ? `<section class="card hx-rings">
+          <div class="hx-card-h"><h2>${HOME_UZ.best}</h2><button data-go="results">${HOME_UZ.details}</button></div>
+          <div class="hx-ring-row">
+            ${ring('speaking', HOME_UZ.speaking, best, null, 'data-folder="speaking"')}
+            ${ring('writing', HOME_UZ.writing, writingBest?.score ?? null, writingBest?.level, 'data-go="writing"')}
+          </div>
+          ${nexts.length ? `<p class="hx-ring-note">${esc(nexts[0].label)}: <b>${esc(nexts[0].text)}</b></p>` : both ? `<p class="hx-ring-note"><b>${HOME_UZ.top}</b></p>` : ''}
         </section>`
-      : `<section class="card home-level home-first">
+      : `<section class="card hx-first">
           <div class="icon-tile">${icon('tests')}</div>
           <div><h2>${HOME_UZ.first}</h2><p class="muted">${HOME_UZ.firstSub}</p></div>
         </section>`;
 
-    // The balance sits next to the button that spends it.
     const acc = state.access || {};
     const balance = typeof acc.remaining === 'number'
-      ? `<p class="home-balance">${
-          acc.blocked
-            ? esc(ACCESS_UZ.blockedTitle)
-            : `${esc(HOME_UZ.balance(acc.credits ?? acc.remaining, acc.writing?.credits ?? 0))} · <button class="link-more" data-go="topup">${HOME_UZ.buy}</button>`
-        }</p>`
+      ? `<p class="hx-balance">${acc.blocked
+          ? esc(ACCESS_UZ.blockedTitle)
+          : `${HOME_UZ.balanceLabel} <b>speaking ${esc(String(acc.credits ?? acc.remaining))}</b> · <b>writing ${esc(String(acc.writing?.credits ?? 0))}</b><button data-go="topup">${HOME_UZ.buy}</button>`}</p>`
       : '';
-
-    const tile = (target, iconName, label, extra = '', tone = '') =>
-      `<button class="home-tile" ${target}>
-        <span class="home-tile-icon ${tone}">${icon(iconName)}</span>
-        <span class="home-tile-label">${label}</span>${extra}
-      </button>`;
 
     const lb = state.leaderboard;
     const me = lb?.you || {};
-    const rankLine = lb && state.user?.role === 'student'
-      ? `<button class="card home-rank" data-go="rank">
-          <span class="home-rank-icon">${icon('trophy')}</span>
-          <span class="home-rank-text">
-            <strong>${me.rank ? esc(HOME_UZ.rank(me.rank)) : HOME_UZ.rankNone}</strong>
-            <span class="muted">${esc(me.rank ? HOME_UZ.rankSub(me.average.toFixed(1), me.mocks) : HOME_UZ.rankNeed(me.needed || lb.minMocks))}</span>
-          </span>
-          ${icon('chevron')}
-        </button>`
-      : '';
+    const rankSub = lb && me.rank ? HOME_UZ.rankShort(me.rank) : HOME_UZ.rankOpen;
 
-    const recent = homeRecent();
+    const tile = (n, target, iconName, label, sub) => `<button class="hx-tile t${n}" ${target}>
+        <span class="hx-tile-ic">${icon(iconName)}</span><b>${label}</b><small>${sub}</small></button>`;
+
+    const streak = stats.streak >= 2
+      ? `<div class="hx-streak">${icon('flame')}<span><b>${stats.streak} kun</b> ${HOME_UZ.streak}</span></div>` : '';
 
     return `
       ${accessNotice()}
       ${inboxBanner()}
-      <div class="home-hello">
-        <h1>${esc(HOME_UZ.hello(name))}</h1>
-        <p class="muted">${HOME_UZ.sub}</p>
-      </div>
-      ${level}
-      <div class="home-start">
-        <div class="home-start-buttons">
-          <button class="btn btn-lg" data-folder="speaking">${icon('mic')} ${HOME_UZ.startSpeaking}</button>
-          <button class="btn btn-lg btn-writing" data-go="writing">${icon('pen')} ${HOME_UZ.startWriting}</button>
+      <div class="hx">
+        <div class="hx-desk">
+          <div class="hx-col">
+            <section class="hx-hello">
+              <p class="hx-kicker">${esc(today)}</p>
+              <h1>${esc(HOME_UZ.hello(name))} <span aria-hidden="true">👋</span></h1>
+              <p>${HOME_UZ.sub}</p>
+            </section>
+            ${streak}
+            ${level}
+            ${homeRecent()}
+          </div>
+          <div class="hx-col">
+            <section class="hx-ctas">
+              <button class="hx-cta is-gold" data-folder="speaking">
+                <span class="hx-cta-ic">${icon('mic')}</span>
+                <span><b>${HOME_UZ.startSpeaking}</b><small>${HOME_UZ.speakingSub}</small></span>${icon('chevron')}
+              </button>
+              <button class="hx-cta is-navy" data-go="writing">
+                <span class="hx-cta-ic">${icon('pen')}</span>
+                <span><b>${HOME_UZ.startWriting}</b><small>${HOME_UZ.writingSub}</small></span>${icon('chevron')}
+              </button>
+            </section>
+            ${balance}
+            <section class="hx-tiles">
+              ${tile(0, 'data-go="tests"', 'grid', HOME_UZ.parts, HOME_UZ.partsSub)}
+              ${tile(1, 'data-home-vr="1"', 'book', 'Vocabulary test', HOME_UZ.vocabSub)}
+              ${tile(2, 'data-go="speak"', 'users', HOME_UZ.club, `<span class="hx-live"></span>${HOME_UZ.live}`)}
+              ${tile(3, 'data-go="rank"', 'trophy', HOME_UZ.rankNone, esc(rankSub))}
+            </section>
+            ${adSlot('home')}
+          </div>
         </div>
-        ${balance}
-      </div>
-      <div class="home-tiles is-three">
-        ${tile('data-go="tests"', 'tests', HOME_UZ.parts)}
-        ${tile('data-go="speak"', 'users', HOME_UZ.club, `<span class="home-tile-live"><span class="pulse"></span>${HOME_UZ.live}</span>`, 'is-gold')}
-        ${tile('data-gm-open="1"', 'target', "O'yinlar", '', 'is-rose')}
-      </div>
-      ${rankLine}
-      ${adSlot('home')}
-      ${recent}`;
+      </div>`;
   }
 
   /** The three latest attempts, as rows — pending ones say they are being marked. */
@@ -7286,29 +7334,26 @@
       .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0))
       .slice(0, 3);
     if (!recent.length) return '';
-    const writingRow = h => h.status === 'evaluating'
-      ? `<div class="home-result is-pending">
-          <span class="list-text"><strong>${esc(h.title)}</strong><span>${esc(fmtDate(h.date))} · writing</span></span>
-          <span class="chip chip-progress"><span class="pulse"></span> Tekshirilmoqda…</span>
-        </div>`
-      : `<button class="home-result" data-home-wr="${esc(h.id)}">
-          <span class="list-text"><strong>${esc(h.title)}</strong><span>${esc(fmtDate(h.date))} · writing${h.complete ? '' : ' · qism'}</span></span>
-          ${h.complete && typeof h.score === 'number' ? `<span class="home-result-score">${h.score}<span>/${max}</span></span>` : ''}
-          <span class="chip chip-writing">${esc(h.level || '—')}</span>
-        </button>`;
-    const row = h => h.kind === 'writing' ? writingRow(h) : h.status === 'completed'
-      ? `<button class="home-result" data-result="${esc(h.id)}">
-          <span class="list-text"><strong>${esc(h.examTitle)}</strong><span>${esc(fmtDate(h.completedAt))} · speaking${h.mode === 'practice' ? ' · qism' : ''}</span></span>
-          ${typeof h.overallScore === 'number' ? `<span class="home-result-score">${h.overallScore}<span>/${max}</span></span>` : ''}
-          <span class="chip chip-speaking">${esc(h.overallLevel || '—')}</span>
-        </button>`
-      : `<div class="home-result is-pending">
-          <span class="list-text"><strong>${esc(h.examTitle)}</strong><span>${esc(fmtDate(h.startedAt))}</span></span>
-          <span class="chip chip-progress"><span class="pulse"></span> Tekshirilmoqda…</span>
-        </div>`;
-    return `<section class="home-recent">
-      <div class="home-recent-head"><h2>${HOME_UZ.recent}</h2><button class="link-more" data-go="results">${HOME_UZ.all}</button></div>
-      <div class="card list-card">${recent.map(row).join('')}</div>
+    const pending = `<span class="hx-pending"><span class="pulse"></span> Tekshirilmoqda…</span>`;
+    const scoreOf = (score, levelName, kind) => `<span class="hx-row-score">${typeof score === 'number' ? `<b>${score}</b>` : ''}<span class="hx-lvl is-${kind}">${esc(levelName || '—')}</span></span>`;
+    const row = h => {
+      const kind = h.kind;
+      const iconName = kind === 'writing' ? 'pen' : 'mic';
+      if (kind === 'writing') {
+        if (h.status === 'evaluating') return `<li><div class="hx-row"><span class="hx-row-ic">${icon(iconName)}</span><span class="hx-row-main"><b>${esc(h.title)}</b><small>${esc(fmtDate(h.date))}</small></span>${pending}</div></li>`;
+        return `<li><button class="hx-row" data-home-wr="${esc(h.id)}"><span class="hx-row-ic">${icon(iconName)}</span>
+          <span class="hx-row-main"><b>${esc(h.title)}</b><small>${esc(fmtDate(h.date))}${h.complete ? '' : ' · qism'}</small></span>
+          ${scoreOf(h.complete ? h.score : null, h.level, 'writing')}</button></li>`;
+      }
+      if (h.status !== 'completed') return `<li><div class="hx-row"><span class="hx-row-ic">${icon(iconName)}</span><span class="hx-row-main"><b>${esc(h.examTitle)}</b><small>${esc(fmtDate(h.startedAt))}</small></span>${pending}</div></li>`;
+      return `<li><button class="hx-row" data-result="${esc(h.id)}"><span class="hx-row-ic">${icon(iconName)}</span>
+        <span class="hx-row-main"><b>${esc(h.examTitle)}</b><small>${esc(fmtDate(h.completedAt))}${h.mode === 'practice' ? ' · qism' : ''}</small></span>
+        ${scoreOf(h.overallScore, h.overallLevel, 'speaking')}</button></li>`;
+    };
+    void max;
+    return `<section class="card hx-recent">
+      <div class="hx-card-h"><h2>${HOME_UZ.recent}</h2><button data-go="results">${HOME_UZ.all}</button></div>
+      <ul>${recent.map(row).join('')}</ul>
     </section>`;
   }
 
@@ -8515,6 +8560,11 @@
 
   function wire() {
     resolveAuthedMedia();
+    root.querySelectorAll('[data-theme-toggle]').forEach(el => el.addEventListener('click', () => {
+      applyTheme(currentTheme() === 'night' ? 'day' : 'night');
+      render();
+    }));
+    root.querySelectorAll('[data-home-vr]').forEach(el => el.addEventListener('click', () => openVocabRace()));
     wireInbox();
     wireSupport();
     root.querySelectorAll('[data-expert-save]').forEach(el => el.addEventListener('click', () => saveExpertScore(el.dataset.expertSave)));

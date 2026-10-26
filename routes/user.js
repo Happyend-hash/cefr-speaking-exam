@@ -12,6 +12,8 @@ import { invalidate as invalidateLeaderboard, fallbackName } from '../services/L
 import ExamResult, { CEFR_BANDS, MAX_SCORE, BELOW_B1 } from '../models/ExamResult.js';
 import AuthService from '../services/AuthService.js';
 import { APIError } from '../middleware/errorHandler.js';
+import DailyActivity from '../models/DailyActivity.js';
+import { dayOf, addDays } from '../services/UsageStats.js';
 
 const router = express.Router();
 
@@ -78,11 +80,18 @@ router.get('/profile', async (req, res, next) => {
       ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
       : null;
 
+    // Days in a row on the site, ending today (or yesterday, before today's first visit counts).
+    const seenDays = new Set((await DailyActivity.find({ key: `u:${req.user.id}`, day: { $gte: addDays(dayOf(), -120) } })
+      .select('day').lean().catch(() => [])).map(d => d.day));
+    let streak = 0;
+    for (let d = seenDays.has(dayOf()) ? dayOf() : addDays(dayOf(), -1); seenDays.has(d); d = addDays(d, -1)) streak += 1;
+
     res.json({
       success: true,
       data: {
         user: user.getPublicProfile ? user.getPublicProfile() : user,
         stats: {
+          streak,
           examsCompleted: results.length,
           averageScore,
           currentLevel: results[0]?.overallLevel || null,
