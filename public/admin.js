@@ -60,6 +60,11 @@
     cs: null,                // { levels, skills, month, students, leaderboards }
     csNew: { name: '', level: 'A1', family: '', photo: '' },   // the "add student" form
     csSel: null,             // the student whose panel is open
+    csView: 'groups',        // course folder tab: 'groups' | 'month' (register) | 'archive'
+    csMonth: '',             // the register's month ("2026-10")
+    csReg: null,             // the register data for csMonth
+    csArch: null,            // archived students
+    csArchSel: null,         // the archived student whose months are open
     csTypes: new Set(),      // homework types ticked for today
     csVals: {},              // their percents, as typed
     csTitle: '',
@@ -1641,17 +1646,26 @@
    * One month of a student's payments, worked out from the full record (the
    * same rules as the server): voided payments never count; due by the 10th.
    */
+  /** The fee of the membership period a month falls in (the server's rule): later fee changes never rewrite it. */
+  const csFeeFor = (s, ym) => {
+    const p = (s.periods || []).find(x => x.from <= ym && (!x.to || ym <= x.to));
+    const fee = p ? p.fee : s.monthlyFee;
+    return fee > 0 ? fee : null;
+  };
+  /** The last month an archived student was in the course. */
+  const csLastMonth = s => (s.removedAt ? (s.periods || []).map(p => p.to).filter(Boolean).sort().pop() || null : null);
   const csMonthPay = (s, ym) => {
     const today = csToday();
     const thisMonth = today.slice(0, 7);
     const entries = (s.ledger || []).filter(p => p.month === ym);
     const live = entries.filter(p => !p.voidedAt);
     const paid = live.reduce((a, p) => a + p.amount, 0);
-    const fee = s.monthlyFee > 0 ? s.monthlyFee : null;
+    const fee = csFeeFor(s, ym);
     const future = ym > thisMonth;
     const pastDue = !future && (ym < thisMonth || Number(today.slice(8, 10)) > 10);
     let status = paid > 0 && (fee === null || paid >= fee) ? (future ? 'advance' : 'paid') : paid > 0 ? 'partial' : future ? 'upcoming' : pastDue ? 'overdue' : 'due';
     if (status === 'overdue' && ym < (s.joinedMonth || '')) status = 'before';
+    if (!paid && csLastMonth(s) && ym > csLastMonth(s)) status = 'gone';
     return { month: ym, paid, fee, left: fee !== null ? Math.max(0, fee - paid) : null, status, entries };
   };
   const csPayBadge = p => { const [cls, text] = CS_PAY[p?.status] || CS_PAY.due; return `<span class="cs-pay ${cls}">${text}</span>`; };
@@ -1774,6 +1788,8 @@
           <button class="btn btn-ghost btn-sm" data-action="cs-close">Close</button>
         </div>
       </div>
+      ${csTabs(data)}
+      ${state.csView === 'month' ? registerView() : state.csView === 'archive' ? archiveView() : `
       <p class="muted" style="margin-top:6px">Parents open <strong>${esc(location.host)}/ota-ona</strong> and type their family's code. Click a group to see its students, then click a student to enter today's homework.</p>
       ${state.csUnitsOpen ? `<form class="cs-units-set" id="cs-units-set">
         <strong>Vocabulary books and units per level</strong>
@@ -1793,8 +1809,183 @@
       ${tables || '<p class="muted" style="margin-top:12px">No students yet. Add the first one above.</p>'}
       ${boards ? `<h3 class="cs-board-title">Ranking — ${esc(csMonthName(data.month))}</h3>
         <p class="muted" style="font-size:13px">Average of every homework percent this month, per level. Parents see their child's level ranking.</p>
-        <div class="cs-boards">${boards}</div>` : ''}
+        <div class="cs-boards">${boards}</div>` : ''}`}
     </div>`;
+  }
+
+  // ---------------------------------------------------------- by month
+  //
+  // The course by month (Jamshid, 2026-10-27). Each student has membership
+  // periods — from a month, to a month, in one group at one fee — so any month
+  // can be read back as it was: the register shows every group of that month,
+  // including students who have since left, with fee, payment and attendance.
+  // Removed students move to the Archive with everything kept.
+
+  function csTabs(data) {
+    const tab = (id, label) => `<button type="button" class="seg-btn ${state.csView === id ? 'is-current' : ''}" data-cs-view="${id}" aria-pressed="${state.csView === id}">${label}</button>`;
+    const archived = state.csArch ? state.csArch.students.length : data.archived;
+    return `<div class="seg cs-views" role="group" aria-label="Course view">
+      ${tab('groups', `Groups <small>${data.students.length}</small>`)}
+      ${tab('month', 'By month')}
+      ${tab('archive', `Archive${archived ? ` <small>${archived}</small>` : ''}`)}
+    </div>`;
+  }
+
+  /** "In the course since Sep 2026", and each earlier group or fee when there were changes. */
+  function csPeriodsLine(s) {
+    const periods = s.periods || [];
+    if (!periods.length) return '';
+    const short = ym => `${CS_SHORT[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
+    const since = `<span class="muted cs-since">In the course since <strong>${esc(short(periods[0].from))}</strong></span>`;
+    if (periods.length < 2) return since;
+    return `${since}<ul class="cs-periods">${periods.map(p => `<li><span class="tag">${esc(p.level)}</span>
+      ${esc(short(p.from))} – ${p.to ? esc(short(p.to)) : 'now'} · ${p.fee ? esc(csMoney(p.fee)) : 'no fee set'}</li>`).join('')}</ul>`;
+  }
+
+  const csStatusWord = r => (r.status === 'paid' || r.status === 'advance') ? csPayBadge({ status: 'paid' })
+    : r.status === 'partial' ? csPayBadge({ status: 'partial' })
+    : r.status === 'upcoming' ? csPayBadge({ status: 'upcoming' })
+    : csPayBadge({ status: r.status });
+
+  /** What happened to a student in the register's month, as small labels. */
+  function csEvents(r) {
+    const out = [];
+    if (r.joined) out.push('<span class="cs-ev is-new">new</span>');
+    if (r.returned) out.push('<span class="cs-ev is-new">came back</span>');
+    if (r.movedFrom) out.push(`<span class="cs-ev">from ${esc(r.movedFrom)}</span>`);
+    if (r.feeChanged) out.push('<span class="cs-ev">new fee</span>');
+    if (r.movedTo) out.push(`<span class="cs-ev">→ ${esc(r.movedTo)}</span>`);
+    if (r.leftNow) out.push(`<span class="cs-ev is-left">left${r.leftReason ? `: ${esc(r.leftReason)}` : ''}</span>`);
+    else if (r.removed) out.push('<span class="cs-ev is-gone">in archive</span>');
+    if (r.paused) out.push('<span class="tag">paused</span>');
+    return out.join(' ');
+  }
+
+  function registerView() {
+    const month = state.csMonth || csToday().slice(0, 7);
+    const reg = state.csReg;
+    if (!reg || reg.month !== month) return '<p class="muted" style="margin-top:14px">Loading the register…</p>';
+    const months = reg.months || [month];
+    const i = months.indexOf(month);
+    const t = reg.totals;
+    const tile = (label, value, note = '', cls = '') => `<div class="cs-mtile ${cls}"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ''}</div>`;
+    const groups = reg.groups.map(g => `<div class="cs-mgroup">
+        <div class="cs-mgroup-head">
+          <span class="tag">${esc(g.level)}</span>
+          <strong>${g.totals.students} student${g.totals.students === 1 ? '' : 's'}</strong>
+          <span class="muted">${csMoney(g.totals.paid)}${g.totals.fees ? ` of ${csMoney(g.totals.fees)}` : ''} collected</span>
+          ${g.totals.owed ? `<span class="cs-miss">${csMoney(g.totals.owed)} owed</span>` : ''}
+          ${g.totals.attendance !== null ? `<span class="muted">attendance ${g.totals.attendance}%</span>` : ''}
+        </div>
+        <div class="cs-table-wrap"><table class="cs-table cs-mtable">
+          <thead><tr><th>Student</th><th class="cs-num">Fee</th><th class="cs-num">Paid</th><th>Payment</th><th class="cs-num">Came</th><th class="cs-num">Late</th><th class="cs-num">Missed</th><th class="cs-num">Homework</th></tr></thead>
+          <tbody>${g.rows.map(r => `<tr class="cs-tr ${r.removed && !r.leftNow ? 'is-gone' : ''}" data-cs-goto="${esc(r.id)}" data-removed="${r.removed ? '1' : ''}" tabindex="0" title="Open ${esc(r.name)}">
+              <td><strong>${esc(r.name)}</strong> ${csEvents(r)}</td>
+              <td class="cs-num">${r.fee ? esc(csMoney(r.fee).replace(' so‘m', '')) : '<span class="muted">—</span>'}</td>
+              <td class="cs-num">${r.paid ? esc(csMoney(r.paid).replace(' so‘m', '')) : '<span class="muted">—</span>'}</td>
+              <td>${csStatusWord(r)}${r.left && r.paid ? ` <span class="cs-miss">${esc(csMoney(r.left).replace(' so‘m', ''))} left</span>` : ''}</td>
+              <td class="cs-num">${r.lessons ? `${r.present + r.late}/${r.lessons}` : '<span class="muted">—</span>'}</td>
+              <td class="cs-num">${r.late || '<span class="muted">0</span>'}</td>
+              <td class="cs-num ${r.absent ? 'is-low' : ''}">${r.absent || '<span class="muted">0</span>'}</td>
+              <td class="cs-num ${csBand(r.homework)}">${csPct(r.homework)}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>
+      </div>`).join('');
+    return `<div class="cs-mreg">
+      <div class="cs-mreg-pick">
+        <button type="button" class="btn btn-ghost btn-sm" data-cs-mstep="1" ${i >= months.length - 1 ? 'disabled' : ''} aria-label="Previous month">‹</button>
+        <select id="cs-month-pick" aria-label="Month">${months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${esc(csMonthName(m))}</option>`).join('')}</select>
+        <button type="button" class="btn btn-ghost btn-sm" data-cs-mstep="-1" ${i <= 0 ? 'disabled' : ''} aria-label="Next month">›</button>
+        <span class="muted">Every group as it was in ${esc(csMonthName(month))} — including students who have left since. Tap a student to open them.</span>
+      </div>
+      <div class="cs-mtiles">
+        ${tile('Students', t.students, [t.joined ? `+${t.joined} new` : '', t.left ? `${t.left} left` : ''].filter(Boolean).join(' · '))}
+        ${tile('Collected', esc(csMoney(t.paid)), t.fees ? `of ${esc(csMoney(t.fees))} in fees` : 'no fees set')}
+        ${tile('Still owed', esc(csMoney(t.owed)), t.unpaid ? `${t.unpaid} student${t.unpaid === 1 ? '' : 's'} not fully paid` : 'everyone has paid', t.owed ? 'is-warn' : 'is-ok')}
+        ${tile('Attendance', t.attendance === null ? '—' : `${t.attendance}%`, t.attendance === null ? 'no attendance taken' : 'of all lessons')}
+      </div>
+      ${groups || `<p class="muted" style="margin-top:12px">Nobody was in the course in ${esc(csMonthName(month))}.</p>`}
+    </div>`;
+  }
+
+  function archiveView() {
+    const arch = state.csArch;
+    if (!arch) return '<p class="muted" style="margin-top:14px">Loading the archive…</p>';
+    if (!arch.students.length) return '<p class="muted" style="margin-top:14px">Nobody has left yet. When you remove a student, they come here with every month of payments and attendance kept.</p>';
+    const short = ym => (ym ? `${CS_SHORT[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}` : 'now');
+    return `<p class="muted" style="margin-top:10px">Students who have left, newest first. Everything is kept: open one to see each month, add a late payment, or bring them back to their group (same card and parent code).</p>
+      <div class="cs-arch">${arch.students.map(s => {
+        const open = state.csArchSel === s.id;
+        const first = s.periods?.[0]?.from;
+        const last = csLastMonth(s);
+        return `<div class="cs-arch-item ${open ? 'is-open' : ''}">
+          <div class="cs-arch-row">
+            ${csFace(s, 40)}
+            <div class="cs-arch-who">
+              <strong>${esc(s.name)}</strong> <span class="tag">${esc(s.lastLevel)}</span>
+              <span class="muted">${esc(short(first))} → ${esc(short(last))}${s.leftReason ? ` · ${esc(s.leftReason)}` : ''}</span>
+            </div>
+            <div class="cs-arch-money">
+              <span>${esc(csMoney(s.totalPaid))} paid</span>
+              ${s.owed ? `<span class="cs-miss">${esc(csMoney(s.owed))} owed</span>` : '<span class="muted">nothing owed</span>'}
+            </div>
+            <div class="row" style="gap:6px">
+              <button type="button" class="btn btn-ghost btn-sm" data-cs-archsel="${esc(s.id)}" aria-expanded="${open}">${open ? 'Close' : 'Open'}</button>
+              <button type="button" class="btn btn-sm" data-cs-restore="${esc(s.id)}" data-name="${esc(s.name)}">Bring back</button>
+            </div>
+          </div>
+          ${open ? `<div class="cs-arch-body">
+            ${csPeriodsLine(s)}
+            <div class="cs-table-wrap"><table class="cs-table cs-table-sm">
+              <thead><tr><th>Month</th><th>Group</th><th class="cs-num">Fee</th><th class="cs-num">Paid</th><th>Payment</th><th class="cs-num">Came</th><th class="cs-num">Missed</th><th class="cs-num">Homework</th></tr></thead>
+              <tbody>${s.months.map(m => `<tr>
+                <td>${esc(csMonthName(m.month))}</td><td><span class="tag">${esc(m.level)}</span></td>
+                <td class="cs-num">${m.fee ? esc(csMoney(m.fee).replace(' so‘m', '')) : '—'}</td>
+                <td class="cs-num">${m.paid ? esc(csMoney(m.paid).replace(' so‘m', '')) : '—'}</td>
+                <td>${csStatusWord(m)}</td>
+                <td class="cs-num">${m.lessons ? `${m.present + m.late}/${m.lessons}` : '—'}</td>
+                <td class="cs-num ${m.absent ? 'is-low' : ''}">${m.absent || 0}</td>
+                <td class="cs-num ${csBand(m.homework)}">${csPct(m.homework)}</td></tr>`).join('')}</tbody>
+            </table></div>
+            ${paymentYear(s)}
+          </div>` : ''}
+        </div>`;
+      }).join('')}</div>`;
+  }
+
+  async function loadRegister(month) {
+    const ym = month || state.csMonth || csToday().slice(0, 7);
+    state.csMonth = ym;
+    try {
+      const data = await api(`/admin/course-students/months/${ym}`);
+      if (state.csMonth === ym) setState({ csReg: data });
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  async function loadArchive() {
+    try {
+      setState({ csArch: await api('/admin/course-students/archive') });
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  /** Open a student from the register: the group panel for one still here, the archive for one who left. */
+  function csGoto(id, removed, month) {
+    if (removed) {
+      setState({ csView: 'archive', csArchSel: id, csPayMonth: month, csPayAmount: undefined });
+      if (!state.csArch) loadArchive();
+      return;
+    }
+    const st = state.cs?.students.find(x => x.id === id);
+    if (!st) return;
+    state.csGroups.add(st.level);
+    const y = Number(month.slice(0, 4)), m = Number(month.slice(5));
+    setState({ csView: 'groups', csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined,
+      csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: month, csPayYear: m >= 9 ? y : y - 1, csFee: undefined });
+    setTimeout(() => document.querySelector(`[data-cs-sel="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
   }
 
   /**
@@ -1947,7 +2138,7 @@
     const thisMonth = csToday().slice(0, 4) + '-' + csToday().slice(5, 7);
     const cells = months.map(ym => {
       const m = csMonthPay(s, ym);
-      const [cls, label] = m.status === 'before' ? ['is-upcoming', 'not joined'] : CS_PAY[m.status] || CS_PAY.due;
+      const [cls, label] = m.status === 'before' ? ['is-upcoming', 'not joined'] : m.status === 'gone' ? ['is-upcoming', 'left'] : CS_PAY[m.status] || CS_PAY.due;
       const voided = m.entries.some(e => e.voidedAt);
       return `<button type="button" class="cs-pm ${cls} ${ym === sel ? 'is-sel' : ''} ${ym === thisMonth ? 'is-now' : ''}" data-cs-pm="${ym}" aria-pressed="${ym === sel}">
         <span class="cs-pm-name">${CS_SHORT[Number(ym.slice(5)) - 1]} <small>${ym.slice(0, 4)}</small></span>
@@ -1991,14 +2182,14 @@
           <button type="button" class="btn btn-ghost btn-sm" data-cs-py="1" aria-label="Next school year">${year + 1} ›</button>
         </span>
       </div>
-      <p class="cs-att-line">This month: ${csPayBadge(s.payment)}${ahead.length ? ` · <span class="cs-ahead">Paid ahead: ${ahead.map(a => esc(csMonthName(a.month).split(' ')[0]) + (a.status === 'partial' ? ' (part)' : '')).join(', ')}</span>` : ''}</p>
+      ${s.removedAt ? '' : `<p class="cs-att-line">This month: ${csPayBadge(s.payment)}${ahead.length ? ` · <span class="cs-ahead">Paid ahead: ${ahead.map(a => esc(csMonthName(a.month).split(' ')[0]) + (a.status === 'partial' ? ' (part)' : '')).join(', ')}</span>` : ''}</p>`}
       <div class="cs-pm-grid">${cells}</div>
       ${form || '<p class="muted" style="font-size:13px">Tap a month to enter a payment for it — including months still to come.</p>'}
-      <form class="cs-fee-form" data-cs-fee="${esc(s.id)}">
+      ${s.removedAt ? '' : `<form class="cs-fee-form" data-cs-fee="${esc(s.id)}">
         <label>Monthly fee <span class="cs-sum"><input type="number" min="0" step="any" inputmode="numeric" id="cs-fee" value="${esc(state.csFee ?? (s.monthlyFee ?? ''))}" placeholder="e.g. 500000"><span>so‘m</span></span></label>
         <button class="btn btn-ghost btn-sm" type="submit">Save fee</button>
-      </form>
-      <p class="muted" style="font-size:12px;margin:0">Payments are never deleted. A wrong one is marked as a mistake and stays in the record.</p>
+      </form>`}
+      <p class="muted" style="font-size:12px;margin:0">A new fee counts from this month — earlier months keep the fee they had. Payments are never deleted: a wrong one is marked as a mistake and stays in the record.</p>
     </div>
       </div>`;
   }
@@ -2055,6 +2246,7 @@
 
       <div class="cs-details">
         <label>Level <select data-cs-level="${esc(s.id)}">${levelOptions(s.level)}</select></label>
+        ${csPeriodsLine(s)}
         <label>Family <select data-cs-family="${esc(s.id)}">${familyOptions(s.id, '')}</select></label>
         <div class="cs-code-box"><span class="muted">Parent code</span>${csCode(s, true)}</div>
         <form class="cs-account" data-cs-account="${esc(s.id)}">
@@ -2135,6 +2327,8 @@
       const data = await api(path, opts);
       setState({ cs: data, notice: notice || '', error: '', ...extra });
       loadCoursePhotos();
+      if (state.csView === 'archive') loadArchive();
+      if (state.csView === 'month') loadRegister(state.csMonth);
       return true;
     } catch (error) {
       setState({ error: error.message });
@@ -2146,6 +2340,33 @@
   function wireCourseAdmin() {
     if (!state.csOpen) return;
     const $ = id => document.getElementById(id);
+
+    // tabs: groups, monthly register, archive
+    root.querySelectorAll('[data-cs-view]').forEach(el => el.addEventListener('click', () => {
+      const view = el.dataset.csView;
+      setState({ csView: view, csSel: view === 'groups' ? state.csSel : null });
+      if (view === 'month') loadRegister(state.csMonth);
+      if (view === 'archive') loadArchive();
+    }));
+    $('cs-month-pick')?.addEventListener('change', e => { setState({ csMonth: e.target.value }); loadRegister(e.target.value); });
+    root.querySelectorAll('[data-cs-mstep]').forEach(el => el.addEventListener('click', () => {
+      const months = state.csReg?.months || [];
+      const next = months[months.indexOf(state.csMonth) + Number(el.dataset.csMstep)];
+      if (next) { setState({ csMonth: next }); loadRegister(next); }
+    }));
+    root.querySelectorAll('[data-cs-goto]').forEach(el => {
+      const go = () => csGoto(el.dataset.csGoto, Boolean(el.dataset.removed), state.csMonth);
+      el.addEventListener('click', go);
+      el.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    });
+    root.querySelectorAll('[data-cs-archsel]').forEach(el => el.addEventListener('click', () => {
+      const id = el.dataset.csArchsel;
+      setState(state.csArchSel === id ? { csArchSel: null } : { csArchSel: id, csPayMonth: null, csPayAmount: undefined, csPayDate: '', csPayNote: '' });
+    }));
+    root.querySelectorAll('[data-cs-restore]').forEach(el => el.addEventListener('click', async () => {
+      if (!confirm(`Bring ${el.dataset.name} back to their group from this month? Their old months, payments and parent code stay as they were.`)) return;
+      if (await csCall(`/admin/course-students/${el.dataset.csRestore}/restore`, { method: 'POST' }, `${el.dataset.name} is back in the group.`, { csArchSel: null })) loadArchive();
+    }));
 
     // adding a child (the typed name is kept in state so a re-draw never loses it)
     $('cs-add-name')?.addEventListener('input', e => { state.csNew.name = e.target.value; });
@@ -2345,8 +2566,9 @@
       csCall(`/admin/course-students/${el.dataset.csNewcode}/code`, { method: 'POST' }, 'New code made — send it to the parents.');
     }));
     root.querySelectorAll('[data-cs-delete]').forEach(el => el.addEventListener('click', () => {
-      if (!confirm(`Remove ${el.dataset.name} from the course list? They disappear from the lists, the parents' page and the ranking — their payment record is kept.`)) return;
-      csCall(`/admin/course-students/${el.dataset.csDelete}`, { method: 'DELETE' }, `${el.dataset.name} removed.`, { csSel: null });
+      const reason = prompt(`Remove ${el.dataset.name} from the group?\n\nThey move to the Archive with every month of payments and attendance kept, and still count in this month's register. You can bring them back later.\n\nWhy are they leaving? (optional — e.g. moved, finished the course)`, '');
+      if (reason === null) return;
+      csCall(`/admin/course-students/${el.dataset.csDelete}`, { method: 'DELETE', body: { reason } }, `${el.dataset.name} moved to the Archive.`, { csSel: null, csArch: null });
     }));
     root.querySelectorAll('[data-cs-copy]').forEach(el => el.addEventListener('click', async () => {
       const text = `Assalomu alaykum! Farzandingizning ingliz tilidagi natijalarini shu yerda kuzatishingiz mumkin: ${location.origin}/ota-ona\nKod: ${el.dataset.csCopy}`;

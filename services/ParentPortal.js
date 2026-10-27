@@ -452,6 +452,28 @@ export function attendanceHistory(student, months = 4, now = Date.now()) {
  *   overdue  — nothing (or only part) after the due day: the red message
  */
 const livePayments = student => (student.payments || []).filter(p => !p.voidedAt);
+
+/** The membership period a month falls in (see CourseStudent periods), or null. */
+export function periodAt(student, month) {
+  return (student.periods || []).find(p => p.from <= month && (!p.to || month <= p.to)) || null;
+}
+
+/**
+ * The fee for one month: the fee of the period that month falls in, so a fee
+ * changed later never rewrites earlier months. A month outside every period
+ * (or a student from before periods existed) uses the current fee.
+ */
+export function feeFor(student, month) {
+  const p = periodAt(student, month);
+  const fee = p ? p.fee : student.monthlyFee;
+  return typeof fee === 'number' && fee > 0 ? fee : null;
+}
+
+/** The first month the student was in the course. */
+export function joinedMonth(student) {
+  const first = (student.periods || [])[0];
+  return first ? first.from : monthOf(student.createdAt || Date.now());
+}
 const addMonths = (ym, n) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7); };
 
 /**
@@ -463,7 +485,7 @@ export function paymentStatus(student, month = monthOf(), now = Date.now()) {
   const all = (student.payments || []).filter(p => p.month === month);
   const list = all.filter(p => !p.voidedAt);
   const paid = list.reduce((sum, p) => sum + (p.amount || 0), 0);
-  const fee = typeof student.monthlyFee === 'number' && student.monthlyFee > 0 ? student.monthlyFee : null;
+  const fee = feeFor(student, month);
   const thisMonth = monthOf(now);
   const current = month === thisMonth;
   const future = month > thisMonth;
@@ -494,7 +516,7 @@ export const schoolYearOf = (when = Date.now()) => { const [y, m] = monthOf(when
 
 /** Twelve months of one school year (Sentabr → Avgust), each with its payment state. */
 export function paymentYear(student, startYear = schoolYearOf(), now = Date.now()) {
-  const since = student.createdAt ? monthOf(student.createdAt) : '0000-00';
+  const since = student.createdAt || student.periods?.length ? joinedMonth(student) : '0000-00';
   return Array.from({ length: 12 }, (_, i) => {
     const month = addMonths(`${startYear}-09`, i);
     const p = paymentStatus(student, month, now);
@@ -513,7 +535,7 @@ export function paidAhead(student, now = Date.now()) {
 export function paymentHistory(student, months = 6, now = Date.now()) {
   const out = [];
   const thisMonth = monthOf(now);
-  const since = student.createdAt ? monthOf(student.createdAt) : '0000-00';
+  const since = student.createdAt || student.periods?.length ? joinedMonth(student) : '0000-00';
   for (let i = 1; i <= months; i += 1) {
     const key = addMonths(thisMonth, -i);
     if (key < since) break;
@@ -551,5 +573,5 @@ export function readPhoto(dataUrl) {
 export default {
   newParentCode, isWeakCode, signInBlocked, noteWrongCode, noteRightCode, parentToken, parentAuth,
   familyChildren, familyOf, dashboard, mergeDays, paymentYear, paidAhead, schoolYearOf, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookView, bookChoices, childCard, leaderboard, monthAverage, monthOf, dayOf, readPhoto, bookOfResult,
-  attendanceSummary, attendanceHistory, paymentStatus, paymentHistory, PAYMENT_DUE_DAY
+  attendanceSummary, attendanceHistory, paymentStatus, paymentHistory, PAYMENT_DUE_DAY, periodAt, feeFor, joinedMonth
 };

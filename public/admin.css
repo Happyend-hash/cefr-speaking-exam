@@ -586,3 +586,52 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .admin-bar .btn-ghost { background: transparent; color: #e0e7ff; border-color: rgba(255,255,255,.22); text-decoration: none; }
 .admin-bar .btn-ghost:hover { background: rgba(255,255,255,.08); color: #fff; }
 .dash-hero > div:first-child { flex: 1 1 320px; }
+
+/* Course by month (2026-10-27): tabs, monthly register, archive */
+.cs-views { margin-top: 14px; max-width: 520px; }
+.cs-views small { font-weight: 700; opacity: .7; margin-left: 4px; }
+.cs-since { display: block; font-size: 13px; margin-top: 2px; }
+.cs-periods { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--ink-soft); }
+.cs-periods li { display: flex; gap: 6px; align-items: center; }
+.cs-ev { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 99px; background: #eef2ff; color: #4338ca; white-space: nowrap; }
+.cs-ev.is-new { background: #dcfce7; color: #15803d; }
+.cs-ev.is-left { background: #fee2e2; color: #b91c1c; white-space: normal; }
+.cs-ev.is-gone { background: #f1f5f9; color: #64748b; }
+
+.cs-mreg { margin-top: 14px; display: flex; flex-direction: column; gap: 14px; }
+.cs-mreg-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cs-mreg-pick select { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-weight: 700; background: #fff; }
+.cs-mreg-pick .muted { font-size: 13px; flex-basis: 100%; }
+.cs-mtiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 760px) { .cs-mtiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.cs-mtile { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cs-mtile span { font-size: 12px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; }
+.cs-mtile strong { font-size: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.cs-mtile small { font-size: 12px; color: var(--ink-soft); }
+.cs-mtile.is-warn { border-color: #fecaca; background: #fff7f7; }
+.cs-mtile.is-warn strong { color: #b91c1c; }
+.cs-mtile.is-ok strong { color: #15803d; }
+.cs-mgroup { border: 1px solid var(--line); border-radius: 14px; background: #fff; overflow: hidden; }
+.cs-mgroup-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; background: var(--ground, #f8fafc); border-bottom: 1px solid var(--line); font-size: 14px; }
+.cs-mtable td:first-child { white-space: normal; min-width: 180px; }
+.cs-tr.is-gone td { color: var(--ink-soft); }
+
+.cs-arch { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.cs-arch-item { border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.cs-arch-item.is-open { border-color: var(--indigo-200, #c7d2fe); }
+.cs-arch-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; flex-wrap: wrap; }
+.cs-arch-who { flex: 1 1 200px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cs-arch-who .muted { font-size: 13px; }
+.cs-arch-money { display: flex; flex-direction: column; align-items: flex-end; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cs-arch-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 12px; }
+.cs-views.seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cs-mtable { table-layout: fixed; min-width: 760px; }
+.cs-mtable th:nth-child(1) { width: 30%; }
+.cs-mtable th:nth-child(2), .cs-mtable th:nth-child(3) { width: 11%; }
+.cs-mtable th:nth-child(4) { width: 18%; }
+.cs-mtable th:nth-child(5), .cs-mtable th:nth-child(6), .cs-mtable th:nth-child(7) { width: 7%; }
+.cs-mtable th:nth-child(8) { width: 9%; }
+.cs-mtable td:first-child { min-width: 0; }
+.cs-mtable td:nth-child(4) { white-space: normal; }
+@media (max-width: 520px) { .cs-mtile strong { font-size: 17px; } }
+.cs-arch-who .tag { align-self: flex-start; }

@@ -97,6 +97,20 @@ const vocabTestSchema = new mongoose.Schema({
   via: { type: String, enum: ['teacher', 'online'], default: 'teacher' }
 }, { _id: true, timestamps: true });
 
+/**
+ * One stretch of a student's time in the course (Jamshid, 2026-10-27): from a
+ * month, to a month (null while it goes on), in one group at one fee. Moving
+ * group or changing the fee starts a new period from that month, so earlier
+ * months keep the group and fee they really had; leaving closes the last one.
+ * The monthly register is read from these.
+ */
+const periodSchema = new mongoose.Schema({
+  from: { type: String, required: true, match: /^\d{4}-\d{2}$/ },
+  to: { type: String, default: null, match: /^\d{4}-\d{2}$/ },
+  level: { type: String, enum: LEVELS, required: true },
+  fee: { type: Number, min: 0, default: null }
+});
+
 const courseStudentSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, maxlength: 80 },
   level: { type: String, enum: LEVELS, default: 'A1' },
@@ -128,6 +142,10 @@ const courseStudentSchema = new mongoose.Schema({
   accountEmail: { type: String, trim: true, lowercase: true, default: '', index: true },
   /** "Removed" in the admin panel: hidden everywhere, but kept so its payments are never lost. */
   removedAt: { type: Date, default: null },
+  /** Why they left, typed when removing (optional): shown in the archive. */
+  leftReason: { type: String, trim: true, maxlength: 120, default: '' },
+  /** Membership periods, oldest first (see periodSchema). */
+  periods: [periodSchema],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 

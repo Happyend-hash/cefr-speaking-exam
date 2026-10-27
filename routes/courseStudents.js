@@ -2,8 +2,9 @@ import express from 'express';
 import mongoose from 'mongoose';
 import CourseStudent, { LEVELS, SKILLS, ATTENDANCE } from '../models/CourseStudent.js';
 import {
-  newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookChoices, schoolYearOf, paidAhead, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory
+  newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookChoices, schoolYearOf, paidAhead, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory, joinedMonth
 } from '../services/ParentPortal.js';
+import { ensurePeriods, changeTerms, leave, restore, monthRegister, monthsOf } from '../services/CourseMonths.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { sendPaymentReport } from '../services/PaymentReport.js';
@@ -50,7 +51,11 @@ const row = (s, units = {}, books = {}, accounts = new Set()) => {
     payment: paymentStatus(s),
     paymentHistory: paymentHistory(s),
     paidAhead: paidAhead(s),
-    joinedMonth: monthOf(s.createdAt || Date.now()),
+    joinedMonth: joinedMonth(s),
+    // the student's time in the course: group and fee from month to month
+    periods: (s.periods || []).map(p => ({ from: p.from, to: p.to || null, level: p.level, fee: p.fee ?? null })),
+    removedAt: s.removedAt || null,
+    leftReason: s.leftReason || '',
     // every payment ever saved, including ones marked as a mistake — the panel draws the school year from these
     ledger: (s.payments || []).map(p => ({
       id: String(p._id), month: p.month, amount: p.amount, paidAt: p.paidAt, note: p.note || '',
@@ -66,8 +71,19 @@ const row = (s, units = {}, books = {}, accounts = new Set()) => {
 const cleanName = v => String(v || '').replace(/\s+/g, ' ').trim().slice(0, 80);
 const cleanLevel = v => (LEVELS.includes(v) ? v : null);
 
+/**
+ * Students saved before membership periods existed get theirs the first time
+ * they are read (from when they joined to when they were removed).
+ */
+async function withPeriods(list) {
+  for (const s of list) {
+    if (ensurePeriods(s)) await CourseStudent.updateOne({ _id: s._id }, { $set: { periods: s.periods } });
+  }
+  return list;
+}
+
 async function overview() {
-  const list = await CourseStudent.find({ removedAt: null }).select('-photo.data').sort({ name: 1 });
+  const list = await withPeriods(await CourseStudent.find({ removedAt: null }).select('-photo.data').sort({ name: 1 }));
   const month = monthOf();
   const units = await unitsPerLevel();
   const books = await booksPerLevel();
@@ -83,12 +99,61 @@ async function overview() {
     books: Object.fromEntries(Object.entries(books).map(([l, list]) => [l, list.map(b => ({ key: b.key, title: b.title, units: b.units.length }))])),
     bookChoices: bookChoices(),
     students: list.map(s => row(s, units, books, accounts)),
+    archived: await CourseStudent.countDocuments({ removedAt: { $ne: null } }),
     leaderboards: LEVELS.map(level => leaderboard(list, level, month)).filter(b => b.rows.length)
   };
 }
 
 router.get('/', async (req, res, next) => {
   try { res.json({ success: true, data: await overview() }); } catch (error) { next(error); }
+});
+
+/**
+ * The monthly register (Jamshid, 2026-10-27): every group as it was in one
+ * month — including students who have since left — with each one's fee,
+ * payment and attendance, and totals per group and overall.
+ */
+router.get('/months/:ym', async (req, res, next) => {
+  try {
+    const month = String(req.params.ym || '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new APIError('Choose a month', 400);
+    const all = await withPeriods(await CourseStudent.find({}).select('name level active monthlyFee payments attendance results periods removedAt leftReason createdAt'));
+    res.json({ success: true, data: monthRegister(all, month, { levels: LEVELS }) });
+  } catch (error) { next(error); }
+});
+
+/** Students who have left: everything kept, month by month, and a way back. */
+router.get('/archive', async (req, res, next) => {
+  try {
+    const list = await withPeriods(await CourseStudent.find({ removedAt: { $ne: null } }).select('-photo.data').sort({ removedAt: -1 }));
+    res.json({
+      success: true,
+      data: {
+        schoolYear: schoolYearOf(),
+        students: list.map(s => {
+          const months = monthsOf(s);
+          return {
+            ...row(s),
+            months,
+            totalPaid: months.reduce((a, m) => a + (m.paid || 0), 0),
+            owed: months.reduce((a, m) => a + (m.left || 0), 0),
+            lastLevel: (s.periods || []).slice(-1)[0]?.level || s.level
+          };
+        })
+      }
+    });
+  } catch (error) { next(error); }
+});
+
+/** Bring an archived student back: a new period from this month, same card, same parent code. */
+router.post('/:id/restore', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    if (!s.removedAt) throw new APIError('This student is already in the course', 400);
+    restore(s);
+    await s.save();
+    res.json({ success: true, data: await overview() });
+  } catch (error) { next(error); }
 });
 
 /**
@@ -100,7 +165,8 @@ router.post('/', async (req, res, next) => {
     const name = cleanName(req.body?.name);
     if (!name) throw new APIError('Enter the child’s name', 400);
     const _id = new mongoose.Types.ObjectId();
-    const doc = { _id, name, level: cleanLevel(req.body?.level) || 'A1', createdBy: req.user.id };
+    const level = cleanLevel(req.body?.level) || 'A1';
+    const doc = { _id, name, level, createdBy: req.user.id, periods: [{ from: monthOf(), to: null, level, fee: null }] };
 
     if (req.body?.sameFamilyAs) {
       const sibling = await load(req.body.sameFamilyAs);
@@ -128,7 +194,8 @@ router.patch('/:id', async (req, res, next) => {
     if (req.body?.level !== undefined) {
       const level = cleanLevel(req.body.level);
       if (!level) throw new APIError('Unknown level', 400);
-      s.level = level;
+      // a new group from this month; earlier months stay in the old one
+      changeTerms(s, { level });
     }
     if (req.body?.active !== undefined) s.active = Boolean(req.body.active);
     if (req.body?.accountEmail !== undefined) {
@@ -143,7 +210,8 @@ router.patch('/:id', async (req, res, next) => {
     if (req.body?.monthlyFee !== undefined) {
       const fee = req.body.monthlyFee === null || req.body.monthlyFee === '' ? null : Math.round(Number(req.body.monthlyFee));
       if (fee !== null && (!Number.isFinite(fee) || fee < 0 || fee > 100_000_000)) throw new APIError('Enter the monthly fee in so\u2019m', 400);
-      s.monthlyFee = fee;
+      // the new fee counts from this month; earlier months keep theirs
+      changeTerms(s, { fee });
     }
     await s.save();
     res.json({ success: true, data: await overview() });
@@ -491,14 +559,15 @@ router.post('/payments/report', async (req, res, next) => {
 });
 
 /**
- * "Remove student": hidden from the course list, the parents' page and the
- * ranking — but kept, so their payments are never lost.
+ * "Remove student": they leave the groups, the parents' page and the ranking
+ * and move to the archive — with every month of payments and attendance kept.
+ * Their last period ends this month, so they still count in it.
  */
 router.delete('/:id', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
-    s.removedAt = new Date();
-    s.active = false;
+    if (s.removedAt) throw new APIError('This student is already in the archive', 400);
+    leave(s, { reason: req.body?.reason ?? req.query?.reason ?? '' });
     await s.save();
     res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }

@@ -104,7 +104,7 @@ export async function reportRecipients() {
 export async function sendPaymentReport({ force = false, now = Date.now() } = {}) {
   const setting = await CourseSetting.findOne({ key: 'course' }).lean();
   const since = setting?.paymentReportAt || null;
-  const students = await CourseStudent.find({ removedAt: null }).select('name level monthlyFee payments createdAt').lean();
+  const students = await CourseStudent.find({ removedAt: null }).select('name level monthlyFee payments createdAt periods').lean();
   const changes = changesSince(students, since);
   if (!force && !changes.length) return { sent: false, reason: 'no payment changes since the last report' };
   const to = await reportRecipients();
