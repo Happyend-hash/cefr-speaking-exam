@@ -339,9 +339,18 @@ input[type="search"], input[type="number"], input[type="date"], select, textarea
 :root[data-theme="night"] img { opacity: .96; }
 
 /* Vocabulary test: the three choices carry a sentence each — title on top, sentence under it */
-.vr-unit-row[data-gm^="vr-mode"] { flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
-.vr-unit-row[data-gm^="vr-mode"] .vr-unit-title { white-space: normal; }
-.vr-unit-row[data-gm^="vr-mode"] .vr-unit-count { white-space: normal; }
+/* The three choices (Yakka mashq qilish / O'ynash / Uyga vazifani topshirish): title on top, description under it.
+   The title keeps its own height: with the row's "flex: 1" (a zero base size) Safari on iPhone — and the
+   in-app browsers built on it — worked its height out as 0 in a column, so only the description showed. */
+.vr-unit-row[data-gm^="vr-mode"] { flex-direction: column; align-items: stretch; gap: 3px; text-align: left; padding: 12px 14px; }
+.vr-unit-row[data-gm^="vr-mode"] .vr-unit-title {
+  flex: none; display: block; overflow: visible; white-space: normal; text-overflow: clip;
+  font-size: 16px; font-weight: 700; line-height: 1.3; color: var(--ink);
+}
+.vr-unit-row[data-gm^="vr-mode"] .vr-unit-count { flex: none; display: block; white-space: normal; font-size: 13px; line-height: 1.4; }
+/* Rows in a scrolling list are never squeezed: the list scrolls instead. */
+.vr-units > .vr-unit-row { flex-shrink: 0; }
+.vr-units:has(> .vr-unit-row[data-gm^="vr-mode"]) { max-height: none; overflow: visible; }
 :root[data-theme="night"] .vr-unit-row { background: rgba(255, 255, 255, .04); }
 :root[data-theme="night"] .score-value { color: #f5c451; }
 
