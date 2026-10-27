@@ -7,6 +7,7 @@ import { fallbackName } from '../services/Leaderboard.js';
 import { badgeOf, BADGE_FIELDS } from '../services/Premium.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { linkedCourseStudent, homeworkView, homeworkPlan } from '../services/CourseHomework.js';
+import { mistakeSummary, mistakeList, setLearnt, reviewWords } from '../services/VocabMistakes.js';
 
 /**
  * Games: Error Hunter, Word Duel and Taboo, and the games ranking.
@@ -160,6 +161,29 @@ router.post('/vocabrace/homework/start', handle(async (req, res) => {
   try { plan = await homeworkPlan(student, unit, req.body?.book ? String(req.body.book) : null); } catch (error) { throw new APIError(error.message, 400); }
   const out = vocabRace.solo(req.user.id, plan.packKey, plan.unitIds, req.body?.style, { homework: plan.homework, perUnit: plan.perUnit });
   reply(res, out.ok ? { ...out, homework: { kind: plan.homework.kind, label: plan.homework.label } } : out);
+}));
+/**
+ * "Xatolarim" (2026-10-28): every word the student got wrong, per book, until
+ * they learn it — by pressing O'rgandim, or by answering it right twice in a
+ * row in the revision test.
+ */
+router.get('/vocabrace/mistakes', handle(async (req, res) => {
+  res.json({ success: true, data: await mistakeSummary(req.user.id) });
+}));
+router.get('/vocabrace/mistakes/:pack', handle(async (req, res) => {
+  res.json({ success: true, data: await mistakeList(req.user.id, String(req.params.pack)) });
+}));
+router.post('/vocabrace/mistakes/:id/learnt', handle(async (req, res) => {
+  const pack = await setLearnt(req.user.id, String(req.params.id), req.body?.learnt !== false);
+  res.json({ success: true, data: await mistakeList(req.user.id, pack) });
+}));
+router.post('/vocabrace/mistakes/review', handle(async (req, res) => {
+  await player(req.user.id);
+  const packKey = String(req.body?.packKey || '');
+  const words = await reviewWords(req.user.id, packKey);
+  if (!words.length) throw new APIError('Bu kitobda takrorlash uchun so‘z qolmadi', 400);
+  const out = vocabRace.solo(req.user.id, packKey, [], req.body?.style, { review: words });
+  reply(res, out.ok ? { ...out, review: true } : out);
 }));
 router.post('/vocabrace/style', handle(async (req, res) => reply(res, vocabRace.setStyle(req.user.id, req.body?.style))));
 router.post('/vocabrace/join', handle(async (req, res) => {

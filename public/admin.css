@@ -635,3 +635,10 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .cs-mtable td:nth-child(4) { white-space: normal; }
 @media (max-width: 520px) { .cs-mtile strong { font-size: 17px; } }
 .cs-arch-who .tag { align-self: flex-start; }
+
+/* Xatolarim in the student panel (2026-10-28) */
+.cs-mist { margin-top: 12px; }
+.cs-mist-books { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-mist-book { font-size: 13px; padding: 4px 10px; border-radius: 99px; background: var(--ground, #f8fafc); border: 1px solid var(--line); }
+.cs-mist-hard { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); font-size: 13px; }
+.cs-mist-hard li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; border-radius: 8px; background: #fff7f7; }

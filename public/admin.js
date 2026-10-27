@@ -2194,6 +2194,27 @@
       </div>`;
   }
 
+  /**
+   * "Xatolarim" of the student's linked website account (2026-10-28): the
+   * words they got wrong in vocabulary tests and have not learnt yet, per
+   * book, and the ones they miss most.
+   */
+  function csMistakes(s) {
+    if (!s.accountEmail) return '';
+    const m = s.mistakes;
+    if (!m || (!m.open && !m.learnt)) {
+      return `<div class="cs-box cs-mist"><div class="cs-box-head"><strong>Mistaken words (Xatolarim)</strong></div>
+        <p class="muted" style="font-size:13px;margin:0">${s.accountFound ? 'No mistakes saved yet — they appear here as the student does vocabulary tests on the website.' : 'Shown once the student signs in with the linked account and does vocabulary tests.'}</p></div>`;
+    }
+    return `<div class="cs-box cs-mist">
+      <div class="cs-box-head"><strong>Mistaken words (Xatolarim)</strong>
+        <span class="cs-num">${m.open} to learn · ${m.learnt} learnt</span></div>
+      <div class="cs-mist-books">${m.books.map(b => `<span class="cs-mist-book">${esc(b.title)} <strong class="${b.open ? 'cs-miss' : ''}">${b.open}</strong><small> left · ${b.learnt} learnt</small></span>`).join('')}</div>
+      ${m.hardest.length ? `<p class="cs-att-line"><strong>Hardest words:</strong></p>
+        <ul class="cs-mist-hard">${m.hardest.map(w => `<li><span><strong>${esc(w.word)}</strong> — ${esc(w.uz)}</span><span class="cs-miss">×${w.misses}</span></li>`).join('')}</ul>` : '<p class="muted" style="font-size:13px;margin:0">Everything learnt.</p>'}
+    </div>`;
+  }
+
   /** The panel under a clicked student: today's homework, then details. */
   function studentPanel(s, { levelOptions, familyOptions }) {
     const types = state.csTypes;
@@ -2241,6 +2262,8 @@
       </form>
 
       ${vocabUnits(s)}
+
+      ${csMistakes(s)}
 
       ${moneyAndDays(s)}
 

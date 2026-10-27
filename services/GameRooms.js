@@ -3,6 +3,7 @@ import { DuelHub } from './DuelHub.js';
 import { TabooGame } from './TabooGame.js';
 import { VocabRaceHub } from './VocabRaceHub.js';
 import { saveHomeworkResult } from './CourseHomework.js';
+import { recordAnswer } from './VocabMistakes.js';
 import { voiceHub } from './VoiceRooms.js';
 import { award } from './Games.js';
 
@@ -41,6 +42,8 @@ export const vocabRace = new VocabRaceHub({
   // "Uyga vazifani topshirish": the result goes straight into the course
   // student's vocabulary units (see services/CourseHomework.js).
   onHomework: ({ homework }) => saveHomeworkResult(homework),
+  // "Xatolarim": every wrong answer is kept for the student to revise
+  onAnswer: answer => recordAnswer(answer),
   onFinish({ code, results }) {
     for (const r of results) {
       if (r.points > 0) {

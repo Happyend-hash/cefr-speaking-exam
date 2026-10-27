@@ -50,9 +50,11 @@ export class VocabRaceHub {
     clearTimer = t => clearTimeout(t),
     random = Math.random,
     onFinish = () => {},
-    onHomework = async () => {}
+    onHomework = async () => {},
+    // every answer of every player (for "Xatolarim": the words they got wrong)
+    onAnswer = () => {}
   } = {}) {
-    Object.assign(this, { packs, now, setTimer, clearTimer, random, onFinish, onHomework });
+    Object.assign(this, { packs, now, setTimer, clearTimer, random, onFinish, onHomework, onAnswer });
     this.clients = new Map(); // id -> { user, streams, roomCode, dropTimer }
     this.rooms = new Map();   // code -> room
   }
@@ -155,13 +157,21 @@ export class VocabRaceHub {
    * userId`) simply never matches a real user id, so a solo room can safely
    * reuse ask()/answer()/settle()/finishPlayer() unchanged.
    */
-  solo(userId, packKey, unitIds, style, { homework = null, perUnit = 0 } = {}) {
+  solo(userId, packKey, unitIds, style, { homework = null, perUnit = 0, review = null } = {}) {
     userId = String(userId);
     const pack = this.pack(packKey);
     if (!pack) return { ok: false, reason: 'Bu lug’at to’plami topilmadi' };
+    // A revision test ("Xatolarim"): only the words given, from whichever units they are in.
+    if (Array.isArray(review)) unitIds = [...new Set(review.map(r => String(r.unitId)))];
     const ids = [...new Set((unitIds || []).map(String))].filter(id => pack.units.some(u => String(u.id) === id));
-    if (!ids.length) return { ok: false, reason: 'Kamida bitta bo’lim tanlang' };
-    const pool = this.pool(pack, ids, perUnit);
+    if (!ids.length) return { ok: false, reason: Array.isArray(review) ? 'Takrorlash uchun so‘z qolmadi' : 'Kamida bitta bo’lim tanlang' };
+    let pool = this.pool(pack, ids, perUnit);
+    let optionPool = null;
+    if (Array.isArray(review)) {
+      const wanted = new Set(review.map(r => `${r.unitId}\u0000${r.word}`));
+      optionPool = pool;                     // wrong options still come from the whole units
+      pool = pool.filter(e => wanted.has(`${e.unitId}\u0000${e.word}`));
+    }
     if (!pool.length) return { ok: false, reason: 'Bu bo’limlarda so’z topilmadi' };
 
     this.sweep();
@@ -180,6 +190,8 @@ export class VocabRaceHub {
     };
     const room = {
       homework,   // { courseStudentId, kind: 'unit' | 'general', ... } — "Uyga vazifani topshirish"
+      review: Array.isArray(review),   // a revision test of the student's own mistakes
+      optionPool,
       code, hostId: null, solo: true, packKey: pack.key, packTitle: pack.title, unitIds: ids, pool,
       style: VOCAB_RACE_STYLES.includes(style) ? style : 'track',
       players: new Map([[userId, player]]),
@@ -274,8 +286,9 @@ export class VocabRaceHub {
       const correctText = entry[type.field];
       const promptText = entry[type.promptField];
       const seen = new Set([correctText]);
-      const sameUnit = shuffle(room.pool.filter(e => e.unitId === entry.unitId && e.word !== entry.word), this.random);
-      const others = shuffle(room.pool.filter(e => e.unitId !== entry.unitId && e.word !== entry.word), this.random);
+      const source = room.optionPool || room.pool;
+      const sameUnit = shuffle(source.filter(e => e.unitId === entry.unitId && e.word !== entry.word), this.random);
+      const others = shuffle(source.filter(e => e.unitId !== entry.unitId && e.word !== entry.word), this.random);
       const distractors = [];
       for (const src of [sameUnit, others]) {
         for (const cand of src) {
@@ -366,6 +379,12 @@ export class VocabRaceHub {
       player.missed.push({ word: q.word, uz: q.uz });
     }
     (player.results ||= []).push({ unitId: q.unitId, correct });
+    try {
+      Promise.resolve(this.onAnswer({
+        userId: player.user.id, packKey: room.packKey, packTitle: room.packTitle, unitId: q.unitId,
+        word: q.word, uz: q.uz, correct, review: Boolean(room.review)
+      })).catch(() => {});
+    } catch { /* never let saving a mistake break the test */ }
     this.send(player.user.id, 'reveal', { i: player.cursor, answer: q.answer, picked: pick, gained, score: player.score, streak: player.streak });
     const next = player.cursor + 1;
     // Broadcast (not just to the host) so every player's own screen can show

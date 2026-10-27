@@ -5022,6 +5022,27 @@
     vrYourScore: n => `Sizning ballingiz: ${n}`,
     vrCorrectOf: (c, t) => `${c} / ${t} to'g'ri`,
     vrMissed: "Xato ketgan so'zlar",
+    mistOption: 'Xatolarim',
+    mistOptionDesc: n => (n ? `${n} ta so‘zni o‘rganish kerak — takrorlang` : 'Testlarda xato qilgan so‘zlaringiz shu yerga yig‘iladi'),
+    mistTitle: 'Xatolarim',
+    mistIntro: 'Vocabulary testlarida xato qilgan so‘zlaringiz — kitob bo‘yicha. Takrorlash testida ketma-ket 2 marta to‘g‘ri topilgan so‘z o‘zi o‘rganilganga o‘tadi. Yoki «O‘rgandim»ni bosing.',
+    mistEmpty: 'Hozircha xato yo‘q. Vocabulary test ishlang — xato qilgan so‘zlaringiz shu yerga avtomatik tushadi.',
+    mistBookMeta: (open, learnt) => `${open} ta qoldi · ${learnt} ta o‘rganildi`,
+    mistLeft: n => `${n} ta so‘z`,
+    mistLeftSub: 'o‘rganish kerak',
+    mistAllDone: 'Barakalla! Bu kitobdagi hamma xato so‘zlarni o‘rgandingiz 🎉',
+    mistReview: n => `Takrorlash testi · ${n} ta so‘z`,
+    mistReviewHint: (size, streak) => `Test eng ko‘p xato qilingan ${size} ta so‘zdan tuziladi. Ketma-ket ${streak} marta to‘g‘ri topilsa — so‘z o‘rganildi.`,
+    mistMisses: n => `${n} marta xato`,
+    mistLearnt: 'O‘rgandim',
+    mistUndo: 'Qaytarish',
+    mistLearntList: n => `O‘rganilgan so‘zlar (${n})`,
+    mistBack: 'Barcha kitoblar',
+    mistAddedNote: n => `Bu ${n} ta so‘z «Xatolarim»ga qo‘shildi — keyin takrorlab oling.`,
+    mistOpen: 'Xatolarimni ochish',
+    mistReviewDone: 'Takrorlash tugadi',
+    mistReviewResult: (learnt, left) => (learnt ? `${learnt} ta so‘z o‘rganildi! ${left} ta qoldi.` : `${left} ta so‘z qoldi — yana bir bor takrorlang.`),
+    mistBackToList: 'Xatolarimga qaytish',
     vrPlayAgain: 'Yana xona ochish',
     vrRoomGone: 'Bu xona endi mavjud emas',
     vrStyleHeading: "Poyga uslubini tanlang",
@@ -5362,8 +5383,118 @@
     deadline: 0, timer: null, busy: false,
     hw: null,        // "Uyga vazifa": { linked, book, units, general, … } — null until loaded
     hwRun: null,     // the homework test running now: { kind, label }
-    hwResult: null   // after it: { percent, label, saved: null | true | false, reason }
+    hwResult: null,  // after it: { percent, label, saved: null | true | false, reason }
+    mist: null,      // "Xatolarim": { open, learnt, books: [{ packKey, title, open, learnt }] }
+    mistBook: null,  // the book open now: { packKey, title, open: [...], learnt: [...] }
+    mistRun: null    // a revision test running now: { packKey, before } (words left before it)
   };
+
+  // ------------------------------------------------- Xatolarim (2026-10-28)
+  // Every word a student gets wrong in a vocabulary test is kept per book;
+  // they revise it with a test of just those words, or press O'rgandim.
+
+  async function loadMistakes() {
+    try { vr.mist = await api('/games/vocabrace/mistakes'); }
+    catch { vr.mist = vr.mist || { open: 0, learnt: 0, books: [] }; }
+    if (state.screen === 'vr') render();
+  }
+
+  async function openMistakeBook(packKey) {
+    vr.phase = 'mist-book';
+    vr.mistBook = vr.mistBook?.packKey === packKey ? vr.mistBook : { packKey, title: (vr.mist?.books || []).find(b => b.packKey === packKey)?.title || '', open: null, learnt: [] };
+    render();
+    try { vr.mistBook = await api(`/games/vocabrace/mistakes/${encodeURIComponent(packKey)}`); }
+    catch (error) { state.error = error.message; }
+    if (state.screen === 'vr') render();
+  }
+
+  async function setMistakeLearnt(id, learnt) {
+    if (vr.busy) return;
+    vr.busy = true;
+    try {
+      vr.mistBook = await api(`/games/vocabrace/mistakes/${encodeURIComponent(id)}/learnt`, { method: 'POST', body: { learnt } });
+      loadMistakes();
+    } catch (error) { state.error = error.message; }
+    vr.busy = false; render();
+  }
+
+  async function vrStartReview(packKey) {
+    if (vr.busy) return;
+    vr.busy = true; render();
+    try {
+      const out = await api('/games/vocabrace/mistakes/review', { method: 'POST', body: { packKey, style: vr.style } });
+      vr.host = false; vr.solo = true; vr.code = null; vr.words = out.words;
+      vr.packKey = packKey; vr.packTitle = vr.mistBook?.title || ''; vr.unitIds = []; vr.roster = [];
+      vr.style = out.style || vr.style; vr.total = out.question.total; vr.correct = 0; vr.score = 0; vr.missed = [];
+      vr.hwRun = null; vr.hwResult = null;
+      vr.mistRun = { packKey, before: vr.mistBook?.open?.length ?? null, after: null };
+      vr.phase = 'question'; vr.q = out.question; vr.myPick = null; vr.reveal = null;
+      vr.deadline = Date.now() + out.question.seconds * 1000;
+    } catch (error) { state.error = error.message; }
+    vr.busy = false; render();
+  }
+
+  /** After a revision test: how many words are left now (the answers are saved as they are given). */
+  async function vrAfterReview() {
+    const run = vr.mistRun;
+    if (!run) return;
+    await new Promise(r => setTimeout(r, 600));   // the last answer's save
+    try {
+      const list = await api(`/games/vocabrace/mistakes/${encodeURIComponent(run.packKey)}`);
+      if (vr.mistRun === run) { run.after = list.open.length; vr.mistBook = list; }
+    } catch { /* the counts show on the list anyway */ }
+    loadMistakes();
+    if (state.screen === 'vr') render();
+  }
+
+  function vrMistakesScreen() {
+    const m = vr.mist;
+    if (!m) return '<div class="center-note"><span class="spinner"></span></div>';
+    const total = b => b.open + b.learnt;
+    const rows = m.books.map(b => `
+      <button class="vr-unit-row vr-mist-book" data-gm-mist="${esc(b.packKey)}">
+        <span class="vr-unit-title">📘 ${esc(b.title)}</span>
+        <span class="vr-mist-pill ${b.open ? '' : 'is-done'}">${b.open ? b.open : '✓'}</span>
+        <span class="vr-unit-count">${esc(GM_UZ.mistBookMeta(b.open, b.learnt))}</span>
+        <span class="vr-mist-bar"><i style="width:${total(b) ? Math.round((b.learnt / total(b)) * 100) : 0}%"></i></span>
+      </button>`).join('');
+    return `<section class="card gm-card">
+      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('flag')}</span><h2>${esc(GM_UZ.mistTitle)}</h2></div>
+      ${m.books.length ? `<div class="vr-mist-total"><strong>${m.open}</strong><span>${esc(GM_UZ.mistLeftSub)} · ${m.learnt} ta o‘rganildi</span></div>
+        <p class="muted">${esc(GM_UZ.mistIntro)}</p>
+        <div class="vr-mist-books">${rows}</div>` : `<p class="muted">${esc(GM_UZ.mistEmpty)}</p>`}
+    </section>`;
+  }
+
+  function vrMistakeBookScreen() {
+    const b = vr.mistBook;
+    if (!b || !b.open) return '<div class="center-note"><span class="spinner"></span></div>';
+    const streakOf = w => Array.from({ length: b.learnStreak || 2 }, (_, i) => `<i class="${i < w.streak ? 'is-on' : ''}"></i>`).join('');
+    const size = Math.min(b.open.length, vr.mist?.reviewSize || 20);
+    const all = b.open.length + b.learnt.length;
+    const words = b.open.map(w => `
+      <div class="vr-mist-word">
+        <div class="vr-mist-text"><strong>${esc(w.word)}</strong><span>${esc(w.uz)}</span></div>
+        <div class="vr-mist-side">
+          <span class="vr-mist-misses">${esc(GM_UZ.mistMisses(w.misses))}</span>
+          <span class="vr-mist-streak" title="Takrorlash testida ketma-ket to‘g‘ri">${streakOf(w)}</span>
+        </div>
+        <button class="btn btn-ghost btn-sm vr-mist-learnt" data-gm-learnt="${esc(w.id)}" ${vr.busy ? 'disabled' : ''}>✓ ${esc(GM_UZ.mistLearnt)}</button>
+      </div>`).join('');
+    const learnt = b.learnt.map(w => `<li><span><strong>${esc(w.word)}</strong> — ${esc(w.uz)}</span>
+        <button class="link-more vr-mist-undo" data-gm-unlearn="${esc(w.id)}">${esc(GM_UZ.mistUndo)}</button></li>`).join('');
+    return `<section class="card gm-card">
+      <button class="crumb" data-gm="vr-mist-back">${icon('left')} ${esc(GM_UZ.mistBack)}</button>
+      <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('book')}</span><h2>${esc(b.title)}</h2></div>
+      <div class="vr-mist-total"><strong>${b.open.length}</strong><span>${esc(GM_UZ.mistLeftSub)} · ${b.learnt.length} ta o‘rganildi</span></div>
+      <div class="vr-mist-bar is-big"><i style="width:${all ? Math.round((b.learnt.length / all) * 100) : 0}%"></i></div>
+      ${b.open.length ? `
+        <button class="btn btn-lg btn-block" data-gm-review="${esc(b.packKey)}" ${vr.busy ? 'disabled' : ''}>🔁 ${esc(GM_UZ.mistReview(size))}</button>
+        <p class="muted vr-mist-hint">${esc(GM_UZ.mistReviewHint(size, b.learnStreak || 2))}</p>
+        <div class="vr-mist-words">${words}</div>` : `<p class="vr-hw-saved">${esc(GM_UZ.mistAllDone)}</p>`}
+      ${b.learnt.length ? `<details class="vr-mist-learntlist"><summary>${esc(GM_UZ.mistLearntList(b.learnt.length))}</summary><ul>${learnt}</ul></details>` : ''}
+    </section>`;
+  }
 
   /** Is this account one of the teacher's course students? Only then "Uyga vazifani topshirish" shows. */
   async function loadVocabHomework() {
@@ -5420,10 +5551,10 @@
       host: staff, solo: false, phase: staff ? 'setup' : 'choose', pack: null, picked: [], style: 'track',
       code: null, words: 0, packKey: null, packTitle: '', unitIds: [], roster: [], podium: null,
       q: null, myPick: null, reveal: null, score: 0, correct: 0, total: 0, missed: [], busy: false,
-      hwRun: null, hwResult: null
+      hwRun: null, hwResult: null, mistRun: null, mistBook: null
     });
     go('vr');
-    if (!staff) loadVocabHomework();
+    if (!staff) { loadVocabHomework(); loadMistakes(); }
     if (staff && !vr.packsList) loadVocabRacePacks();
     if (!vr.active) {
       vr.active = true;
@@ -5466,7 +5597,7 @@
     // result they are reading) stay put when the stream reconnects.
     if (!vr.host && vr.solo && vr.phase === 'finished-you') return;
     if (!r) {
-      if (!vr.host && ['solo-setup', 'hw-units'].includes(vr.phase)) { vr.code = null; return; }
+      if (!vr.host && ['solo-setup', 'hw-units', 'mist', 'mist-book'].includes(vr.phase)) { vr.code = null; return; }
       vr.phase = vr.host ? 'setup' : 'choose'; vr.code = null; return;
     }
     vr.host = r.isHost; vr.solo = Boolean(r.solo); vr.code = r.code; vr.packKey = r.packKey; vr.packTitle = r.packTitle; vr.unitIds = r.unitIds;
@@ -5506,6 +5637,7 @@
         break;
       case 'finished-you':
         vr.phase = 'finished-you'; vr.score = data.score; vr.correct = data.correct; vr.total = data.total; vr.missed = data.missed || [];
+        if (vr.mistRun) vrAfterReview(); else if (!vr.host) setTimeout(loadMistakes, 800);
         vr.hwResult = data.homework ? { ...data.homework, saved: null } : null;
         if (vr.hwResult) setTimeout(vrCheckHomeworkSaved, 10000);
         break;
@@ -5681,6 +5813,10 @@
         <button class="vr-unit-row" data-gm="vr-mode-join">
           <span class="vr-unit-title">${esc(GM_UZ.vrJoinTile)}</span>
           <span class="vr-unit-count">${esc(GM_UZ.vrJoinOptionDesc)}</span>
+        </button>
+        <button class="vr-unit-row vr-mist-option" data-gm="vr-mode-mist">
+          <span class="vr-unit-title">🔁 ${esc(GM_UZ.mistOption)}${vr.mist?.open ? ` <span class="vr-mist-pill">${vr.mist.open}</span>` : ''}</span>
+          <span class="vr-unit-count">${esc(GM_UZ.mistOptionDesc(vr.mist?.open || 0))}</span>
         </button>
         ${vr.hw?.linked ? `<button class="vr-unit-row vr-hw-option" data-gm="vr-mode-hw">
           <span class="vr-unit-title">📘 ${esc(GM_UZ.vrHwOption)}</span>
@@ -5906,8 +6042,23 @@
   function vrFinishedScreen() {
     const missed = vr.missed.length
       ? `<h3 class="vr-missed-head">${esc(GM_UZ.vrMissed)}</h3>
-         <ul class="vr-missed">${vr.missed.map(m => `<li><span>${esc(m.word)}</span><span>${esc(m.uz)}</span></li>`).join('')}</ul>`
+         <ul class="vr-missed">${vr.missed.map(m => `<li><span>${esc(m.word)}</span><span>${esc(m.uz)}</span></li>`).join('')}</ul>
+         ${vr.host || vr.mistRun ? '' : `<p class="muted vr-mist-note">${esc(GM_UZ.mistAddedNote(vr.missed.length))}
+           <button class="link-more" data-gm="vr-mode-mist">${esc(GM_UZ.mistOpen)}</button></p>`}`
       : '';
+    const run = vr.mistRun;
+    if (run) {
+      const learntNow = run.after === null || run.before === null ? null : Math.max(0, run.before - run.after);
+      return `<section class="card gm-summary">
+        <h2>${esc(GM_UZ.mistReviewDone)}</h2>
+        <div class="gm-big">${vr.correct}<span> / ${vr.total}</span></div>
+        <p class="muted">${run.after === null ? '<span class="spinner"></span>' : esc(GM_UZ.mistReviewResult(learntNow, run.after))}</p>
+        ${missed}
+        <div class="gm-actions" style="margin-top:16px">
+          <button class="btn btn-lg" data-gm="vr-mist-return">${esc(GM_UZ.mistBackToList)}</button>
+        </div>
+      </section>`;
+    }
     const hw = vr.hwResult;
     if (hw) {
       const status = hw.saved === null ? `<p class="muted"><span class="spinner"></span> ${esc(GM_UZ.vrHwSaving)}</p>`
@@ -5995,6 +6146,8 @@
     if (vr.phase === 'choose') return `${back}${vrChooseScreen()}`;
     if (vr.phase === 'solo-setup') return `${back}${vrSetupScreen()}`;
     if (vr.phase === 'hw-units') return `${back}${vrHomeworkScreen()}`;
+    if (vr.phase === 'mist') return `${back}${vrMistakesScreen()}`;
+    if (vr.phase === 'mist-book') return `${back}${vrMistakeBookScreen()}`;
     if (vr.phase === 'waiting') return `${back}${vrWaitingScreen()}`;
     if (vr.phase === 'question' || vr.phase === 'reveal') return `${back}${vrQuestionScreen()}`;
     if (vr.phase === 'finished-you') return `${back}${vrFinishedScreen()}`;
@@ -6106,6 +6259,8 @@
       if (a === 'vr-create') return vrCreateRoom();
       if (a === 'vr-mode-solo') return vrChooseSolo();
       if (a === 'vr-mode-hw') return vrChooseHomework();
+      if (a === 'vr-mode-mist' || a === 'vr-mist-back') { vr.phase = 'mist'; vr.mistRun = null; loadMistakes(); return render(); }
+      if (a === 'vr-mist-return') { const key = vr.mistRun?.packKey; vr.mistRun = null; return key ? openMistakeBook(key) : (vr.phase = 'mist', render()); }
       if (a === 'vr-hw-back') { vr.hwResult = null; vr.hwRun = null; vr.phase = 'hw-units'; loadVocabHomework(); return render(); }
       if (a === 'vr-mode-join') return vrChooseJoin();
       if (a === 'vr-solo-start') return vrStartSolo();
@@ -6124,6 +6279,10 @@
         return beginEhItem();
       }
     }));
+    root.querySelectorAll('[data-gm-mist]').forEach(el => el.addEventListener('click', () => openMistakeBook(el.dataset.gmMist)));
+    root.querySelectorAll('[data-gm-learnt]').forEach(el => el.addEventListener('click', () => setMistakeLearnt(el.dataset.gmLearnt, true)));
+    root.querySelectorAll('[data-gm-unlearn]').forEach(el => el.addEventListener('click', () => setMistakeLearnt(el.dataset.gmUnlearn, false)));
+    root.querySelectorAll('[data-gm-review]').forEach(el => el.addEventListener('click', () => vrStartReview(el.dataset.gmReview)));
     root.querySelectorAll('[data-gm-hw]').forEach(el => el.addEventListener('click', () => {
       const raw = el.dataset.gmHw;
       vrStartHomework(raw === 'general' ? 'general' : Number(raw), el.dataset.gmBook || null);

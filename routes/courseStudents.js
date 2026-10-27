@@ -5,6 +5,7 @@ import {
   newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookChoices, schoolYearOf, paidAhead, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory, joinedMonth
 } from '../services/ParentPortal.js';
 import { ensurePeriods, changeTerms, leave, restore, monthRegister, monthsOf } from '../services/CourseMonths.js';
+import { mistakesForUsers } from '../services/VocabMistakes.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { sendPaymentReport } from '../services/PaymentReport.js';
@@ -28,7 +29,7 @@ async function load(id) {
 }
 
 /** What the admin list shows for one child (no photo bytes). */
-const row = (s, units = {}, books = {}, accounts = new Set()) => {
+const row = (s, units = {}, books = {}, accounts = new Set(), mistakes = new Map()) => {
   const d = dashboard(s);
   return {
     id: String(s._id),
@@ -64,6 +65,8 @@ const row = (s, units = {}, books = {}, accounts = new Set()) => {
     vocab: vocabSummary(s, units[s.level], s.level, books[s.level]),
     accountEmail: s.accountEmail || '',
     accountFound: Boolean(s.accountEmail && accounts.has(s.accountEmail)),
+    // "Xatolarim" of the linked account: words still to learn per book, and the hardest ones
+    mistakes: (s.accountEmail && mistakes.get(s.accountEmail)) || null,
     lastParentVisit: s.lastParentVisit || null
   };
 };
@@ -88,7 +91,10 @@ async function overview() {
   const units = await unitsPerLevel();
   const books = await booksPerLevel();
   const emails = list.map(s => s.accountEmail).filter(Boolean);
-  const accounts = new Set(emails.length ? (await User.find({ email: { $in: emails } }).select('email').lean()).map(u => u.email) : []);
+  const users = emails.length ? await User.find({ email: { $in: emails } }).select('email').lean() : [];
+  const accounts = new Set(users.map(u => u.email));
+  const byUser = await mistakesForUsers(users.map(u => String(u._id)));
+  const mistakes = new Map(users.filter(u => byUser.has(String(u._id))).map(u => [u.email, byUser.get(String(u._id))]));
   return {
     levels: LEVELS,
     skills: SKILLS,
@@ -98,7 +104,7 @@ async function overview() {
     // several books per level now: { B1: [{ key, title, units }], A1: [] }
     books: Object.fromEntries(Object.entries(books).map(([l, list]) => [l, list.map(b => ({ key: b.key, title: b.title, units: b.units.length }))])),
     bookChoices: bookChoices(),
-    students: list.map(s => row(s, units, books, accounts)),
+    students: list.map(s => row(s, units, books, accounts, mistakes)),
     archived: await CourseStudent.countDocuments({ removedAt: { $ne: null } }),
     leaderboards: LEVELS.map(level => leaderboard(list, level, month)).filter(b => b.rows.length)
   };

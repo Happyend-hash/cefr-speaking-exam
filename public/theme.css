@@ -435,3 +435,57 @@ input[type="search"], input[type="number"], input[type="date"], select, textarea
 .oa-close { border-color: transparent; }
 @media (prefers-reduced-motion: no-preference) { .oa-card { animation: oa-in .18s ease-out; } }
 @keyframes oa-in { from { transform: translateY(8px); opacity: .6; } to { transform: none; opacity: 1; } }
+
+/* Xatolarim (2026-10-28): the words a student got wrong, per book */
+.vr-mist-pill {
+  display: inline-grid; place-items: center; min-width: 26px; height: 22px; padding: 0 7px; border-radius: 99px;
+  background: #fee2e2; color: #b91c1c; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; vertical-align: 2px;
+}
+.vr-mist-pill.is-done { background: #dcfce7; color: #15803d; }
+:root[data-theme="night"] .vr-mist-pill { background: rgba(248, 113, 113, .16); color: #fca5a5; }
+:root[data-theme="night"] .vr-mist-pill.is-done { background: rgba(74, 222, 128, .14); color: #86efac; }
+
+.vr-mist-total { display: flex; align-items: baseline; gap: 8px; margin: 4px 0 2px; }
+.vr-mist-total strong { font-family: Sora, Manrope, sans-serif; font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; color: var(--ink); }
+.vr-mist-total span { color: var(--ink-soft); font-size: 14px; }
+.vr-mist-bar { display: block; height: 6px; border-radius: 99px; background: var(--ground-2); overflow: hidden; }
+.vr-mist-bar.is-big { height: 8px; margin: 4px 0 14px; }
+.vr-mist-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #22c55e, #16a34a); }
+
+.vr-mist-books { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.vr-unit-row.vr-mist-book {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px;
+  padding: 12px 14px; text-align: left;
+}
+.vr-mist-book .vr-unit-title { white-space: normal; font-weight: 700; color: var(--ink); }
+.vr-mist-book .vr-unit-count { white-space: normal; grid-column: 1 / -1; }
+.vr-mist-book .vr-mist-bar { grid-column: 1 / -1; }
+
+.vr-mist-hint { font-size: 13px; margin: 8px 0 12px; }
+.vr-mist-words { display: flex; flex-direction: column; gap: 8px; }
+.vr-mist-word {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+}
+.vr-mist-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vr-mist-text strong { font-size: 16px; color: var(--ink); overflow-wrap: anywhere; }
+.vr-mist-text span { font-size: 14px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.vr-mist-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.vr-mist-misses { font-size: 12px; font-weight: 700; color: #b91c1c; white-space: nowrap; }
+:root[data-theme="night"] .vr-mist-misses { color: #fca5a5; }
+.vr-mist-streak { display: flex; gap: 4px; }
+.vr-mist-streak i { width: 10px; height: 10px; border-radius: 50%; background: var(--ground-2); border: 1px solid var(--line); }
+.vr-mist-streak i.is-on { background: #22c55e; border-color: #16a34a; }
+.vr-mist-learnt { grid-column: 1 / -1; justify-self: start; color: #15803d; border-color: rgba(21, 128, 61, .35); }
+:root[data-theme="night"] .vr-mist-learnt { color: #86efac; border-color: rgba(134, 239, 172, .35); }
+@media (min-width: 560px) {
+  .vr-mist-word { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .vr-mist-learnt { grid-column: auto; }
+}
+.vr-mist-learntlist { margin-top: 14px; }
+.vr-mist-learntlist summary { cursor: pointer; font-weight: 700; color: var(--ink-soft); padding: 6px 0; }
+.vr-mist-learntlist ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.vr-mist-learntlist li { display: flex; justify-content: space-between; gap: 10px; align-items: center; color: var(--ink-soft); }
+.vr-mist-learntlist li strong { color: var(--ink); }
+.vr-mist-note { margin-top: 10px; font-size: 14px; }
+.vr-mist-learntlist .link-more, .vr-mist-note .link-more { margin-top: 0; }
