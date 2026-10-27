@@ -31,3 +31,15 @@ export async function removeResult(result) {
   await result.deleteOne();
   return { ok: true, recordingsDeleted: keys.length };
 }
+
+/**
+ * An attempt still open with not one answer recorded: opened, never spoken
+ * into. Removing it loses nothing, so it never stands in the way of the part
+ * or mock the student has just chosen. Never charged, never being marked.
+ */
+export function isEmptyAttempt(result) {
+  return Boolean(result)
+    && result.status === 'in_progress'
+    && !result.creditCharged
+    && (result.taskResults || []).length === 0;
+}

@@ -451,6 +451,7 @@
         mode: started.mode || mode,
         part: started.part || part,
         resultId: started.resultId,
+        attemptFresh: !started.resumed,
         taskIndex: 0,
         qIndex: 0,
         answered: {},
@@ -467,7 +468,7 @@
       // Another test is still open: offer to carry on with it or delete it,
       // rather than a sentence that leaves the student to find it themselves.
       if (error.code === 'attempt_in_progress' && error.extra) {
-        return setState({ loading: false, error: '', openAttempt: { ...error.extra, message: error.message } });
+        return setState({ loading: false, error: '', openAttempt: { ...error.extra, message: error.message, want: { examId, mode, part } } });
       }
       setState({ loading: false, error: error.message });
     }
@@ -6264,7 +6265,7 @@
 
   const TABS = [
     { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard'] },
-    { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'writing', 'writing-check', 'briefing'] },
+    { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'parts', 'writing', 'writing-check', 'briefing'] },
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
     { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install', 'inbox', 'support'] }
@@ -6390,16 +6391,7 @@
   function alerts() {
     let html = '';
     const open = state.openAttempt;
-    if (open) {
-      html += `<div class="alert alert-warn open-attempt">
-        <span>${esc(open.message)}</span>
-        <span class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
-          ${open.examId ? `<button class="btn btn-sm" data-open-attempt="resume">Davom ettirish</button>` : ''}
-          <button class="btn btn-ghost btn-sm" data-open-attempt="delete">O'chirish</button>
-          <button class="btn btn-ghost btn-sm" data-open-attempt="close">Yopish</button>
-        </span>
-      </div>`;
-    }
+    if (open) html += openAttemptDialog(open);
     if (state.error) html += `<div class="alert alert-error">${esc(state.error)}</div>`;
     if (state.notice) html += `<div class="alert alert-warn">${esc(state.notice)}</div>`;
     return html;
@@ -6412,6 +6404,7 @@
       login: () => authScreen('login'),
       dashboard: dashboardScreen,
       mocks: mocksScreen,
+      parts: partsScreen,
       results: resultsScreen,
       briefing: briefingScreen,
       topup: topupScreen,
@@ -7311,7 +7304,7 @@
             </section>
             ${balance}
             <section class="hx-tiles">
-              ${tile(0, 'data-go="tests"', 'grid', HOME_UZ.parts, HOME_UZ.partsSub)}
+              ${tile(0, 'data-parts=""', 'grid', HOME_UZ.parts, HOME_UZ.partsSub)}
               ${tile(1, 'data-home-vr="1"', 'book', 'Vocabulary test', HOME_UZ.vocabSub)}
               ${tile(2, 'data-go="speak"', 'users', HOME_UZ.club, `<span class="hx-live"></span>${HOME_UZ.live}`)}
               ${tile(3, 'data-go="rank"', 'trophy', HOME_UZ.rankNone, esc(rankSub))}
@@ -7593,6 +7586,163 @@
       </button>${extra}
     </div>`;
 
+  // ------------------------------------------------------- part practice
+  //
+  // One part of a speaking mock on its own (Jamshid, 2026-10-27): choose the
+  // part, then the mock to take it from. Each row says what has been done with
+  // that part of that mock already, so the student never has to guess.
+
+  const SPEAKING_PART_KEYS = ['1.1', '1.2', '2', '3'];
+
+  const PARTS_UZ = {
+    title: "Qismlar bo'yicha mashq",
+    entry: "Bitta qismni tanlang va istalgan mockdan mashq qiling. Har bir qism — ¼ mock.",
+    intro: "Avval qismni, keyin mockni tanlang. Har bir qism — ¼ mock.",
+    back: 'Testlar',
+    step1: 'Qaysi qism?',
+    step2: 'Qaysi mockdan?',
+    start: 'Boshlash',
+    again: 'Qayta',
+    resume: 'Davom ettirish',
+    notYet: 'Hali bajarilmagan',
+    done: level => `Bajarilgan${level ? ` · ${level}` : ''}`,
+    open: n => `Tugallanmagan${n ? ` · ${n} ta javob` : ''}`,
+    have: c => `Sizda ${c} speaking mock bor`,
+    unfinished: "Tugallanmagan mashq",
+    drop: "O'chirish",
+    none: "Hozircha mock yo'q — ustoz qo'shishi bilan shu yerda paydo bo'ladi."
+  };
+
+  const attemptLabel = (mode, part) => (mode === 'practice' && part ? `Part ${part}` : "to'liq mock");
+
+  function openParts(part = null) {
+    const keep = SPEAKING_PART_KEYS.includes(part) ? part : (SPEAKING_PART_KEYS.includes(state.partsPart) ? state.partsPart : '1.1');
+    go('parts', { partsPart: keep });
+    // What has been done changes as parts are taken, so read it fresh.
+    Promise.all([
+      state.exams?.length ? null : api('/exam').then(exams => { state.exams = exams; }),
+      api('/exam/results').then(history => { state.history = history; })
+    ]).then(() => { if (state.screen === 'parts') render(); }).catch(() => {});
+  }
+
+  /** This part of this mock: done (with the latest level), open, or not yet. */
+  function partStatus(examId, part) {
+    let latest = null, open = null;
+    for (const h of state.history || []) {
+      if (h.examId !== examId || h.mode !== 'practice' || h.part !== part) continue;
+      if (h.status === 'in_progress') { open = open || h; continue; }
+      if (h.status === 'completed' && !latest) latest = h;   // newest first
+    }
+    return { latest, open };
+  }
+
+  function partsScreen() {
+    const part = state.partsPart || '1.1';
+    const byNumber = (a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+    const list = (state.exams || [])
+      .filter(e => (e.module || 'speaking') === 'speaking' && (!(e.parts || []).length || e.parts.includes(part)))
+      .sort(byNumber);
+    const acc = state.access || {};
+
+    // Practice already started on another part or mock, with answers in it.
+    const unfinished = (state.history || []).filter(h => h.status === 'in_progress' && h.mode === 'practice' && h.answers > 0);
+    const banner = unfinished.map(h => `<div class="card pp-open">
+        <div class="pp-open-text">
+          <span class="pp-open-kicker">${PARTS_UZ.unfinished}</span>
+          <strong>${esc(h.examTitle)} · Part ${esc(h.part || '')}</strong>
+          <span class="muted">${esc(PARTS_UZ.open(h.answers))}</span>
+        </div>
+        <div class="pp-open-actions">
+          <button class="btn btn-sm" data-start="${esc(h.examId)}" data-mode="practice" data-part="${esc(h.part || '')}">${PARTS_UZ.resume}</button>
+          <button class="btn btn-ghost btn-sm" data-pp-drop="${esc(h.id)}">${PARTS_UZ.drop}</button>
+        </div>
+      </div>`).join('');
+
+    const partButtons = SPEAKING_PART_KEYS.map(p => {
+      const [name, desc] = TESTS_UZ.partNames[p];
+      const on = p === part;
+      return `<button class="pp-part ${on ? 'is-current' : ''}" data-pp-part="${p}" role="radio" aria-checked="${on}">
+        <span class="pp-part-num">${p}</span>
+        <span class="pp-part-text"><strong>${esc(name)}</strong><span>${esc(desc)}</span></span>
+      </button>`;
+    }).join('');
+
+    const rows = list.map((e, i) => {
+      const { latest, open } = partStatus(e.id, part);
+      const num = (e.title.match(/\d+/) || [String(i + 1)])[0];
+      const sub = open ? PARTS_UZ.open(open.answers) : latest ? PARTS_UZ.done(latest.overallLevel) : PARTS_UZ.notYet;
+      const action = open ? PARTS_UZ.resume : latest ? PARTS_UZ.again : PARTS_UZ.start;
+      return `<div class="list-row">
+        <button class="list-main pp-row" data-start="${esc(e.id)}" data-mode="practice" data-part="${esc(part)}">
+          <span class="list-badge ${latest ? 'is-done' : ''}">M${esc(num)}</span>
+          <span class="list-text"><strong>${esc(e.title)}</strong><span>Part ${esc(part)} · ${esc(sub)}</span></span>
+          <span class="pp-go ${open ? 'is-open' : ''}">${action}</span>
+        </button>
+        ${latest ? `<button class="list-side" data-result="${esc(latest.id)}">${TESTS_UZ.result}</button>` : ''}
+      </div>`;
+    }).join('');
+
+    return `
+      <button class="crumb" data-tests="speaking">${icon('left')} ${PARTS_UZ.back}</button>
+      <div class="page-head"><h1>${PARTS_UZ.title}</h1><p class="muted">${PARTS_UZ.intro}</p></div>
+      ${banner}
+      <section class="card pp-step">
+        <h2><span class="pp-step-num">1</span>${PARTS_UZ.step1}</h2>
+        <div class="pp-parts" role="radiogroup" aria-label="${PARTS_UZ.step1}">${partButtons}</div>
+      </section>
+      <section class="card list-card pp-step">
+        <h2><span class="pp-step-num">2</span>${PARTS_UZ.step2} <span class="pp-step-tag">Part ${esc(part)}</span></h2>
+        ${typeof acc.remaining === 'number' ? `<p class="muted pp-have">${esc(PARTS_UZ.have(acc.credits ?? acc.remaining))} · ${TESTS_UZ.quarter}</p>` : ''}
+        ${rows || `<p class="muted" style="padding:16px">${PARTS_UZ.none}</p>`}
+      </section>
+      ${adSlot('tests')}`;
+  }
+
+  /** Delete an unfinished practice from the parts screen, staying on it. */
+  async function dropPractice(resultId) {
+    setState({ error: '', notice: '' });
+    try {
+      await api(`/exam/results/${resultId}`, { method: 'DELETE' });
+      state.history = (state.history || []).filter(h => h.id !== resultId);
+      render();
+    } catch (error) {
+      setState({ error: error.message });
+    }
+  }
+
+  /** Another attempt is open: say which, and offer the way out. */
+  function openAttemptDialog(open) {
+    const have = `${esc(open.examTitle || 'Mock')} · ${esc(attemptLabel(open.mode, open.part))}`;
+    const want = open.want ? attemptLabel(open.want.mode, open.want.part) : '';
+    const same = open.want && open.want.examId === open.examId && open.want.mode === open.mode && (open.want.part || null) === (open.part || null);
+    return `<div class="oa-overlay" role="dialog" aria-modal="true" aria-labelledby="oa-title">
+      <div class="card oa-card">
+        <h2 id="oa-title">Sizda tugallanmagan test bor</h2>
+        <p><strong>${have}</strong> hali tugallanmagan${open.answers ? ` — ${esc(String(open.answers))} ta javob yozib olingan` : ''}.</p>
+        <p class="muted">Bir vaqtda faqat bitta test ochiq bo'lishi mumkin. Uni davom ettiring yoki o'chirib, yangisini boshlang.</p>
+        <div class="oa-actions">
+          ${open.examId ? `<button class="btn btn-block" data-open-attempt="resume">Davom ettirish — ${esc(attemptLabel(open.mode, open.part))}</button>` : ''}
+          ${open.want && !same
+            ? `<button class="btn btn-ghost btn-block" data-open-attempt="replace">O'chirib, yangisini boshlash — ${esc(want)}</button>`
+            : `<button class="btn btn-ghost btn-block" data-open-attempt="delete">O'chirish</button>`}
+          <button class="btn btn-ghost btn-block oa-close" data-open-attempt="close">Yopish</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /** Delete the attempt in the way, then start the one the student chose. */
+  async function replaceAttempt(open) {
+    setState({ loading: true, error: '' });
+    try {
+      await api(`/exam/results/${open.resultId}`, { method: 'DELETE' });
+      state.history = (state.history || []).filter(h => h.id !== open.resultId);
+    } catch (error) {
+      return setState({ loading: false, error: error.message });
+    }
+    return startExam(open.want.examId, open.want.mode, open.want.part);
+  }
+
   function mocksScreen() {
     const attempts = attemptsByExam();
     const byNumber = (a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
@@ -7616,28 +7766,17 @@
       ${typeof acc.remaining === 'number' ? `<span class="tests-have">${esc(TESTS_UZ.have(acc.credits ?? acc.remaining))}</span>` : ''}
     </section>`;
 
-    // Part practice isn't tied to the featured mock: the student can practise
-    // parts from any mock in the list, not just the recommended "next" one.
-    const partsExam = list.find(e => e.id === state.partsMockId) || next;
-    const parts = (partsExam.parts || []).length ? partsExam.parts : ['1.1', '1.2', '2', '3'];
-    const partsPicker = list.length > 1
-      ? `<label class="field" style="margin-bottom:10px">
-          <span class="muted" style="font-size:13px">${TESTS_UZ.chooseMock}</span>
-          <select id="parts-mock-select">
-            ${list.map(e => `<option value="${esc(e.id)}" ${e.id === partsExam.id ? 'selected' : ''}>${esc(e.title)}</option>`).join('')}
-          </select>
-        </label>`
-      : '';
-    const partList = `<section class="card list-card">
-      <h2>${TESTS_UZ.parts}</h2>
-      ${partsPicker}
-      ${parts.map(p => {
-        const [name, desc] = TESTS_UZ.partNames[p] || [`Part ${p}`, ''];
-        return listRow({
-          attrs: `data-start="${esc(partsExam.id)}" data-mode="practice" data-part="${esc(p)}"`,
-          badge: esc(p), title: esc(name), sub: esc(desc), end: TESTS_UZ.quarter
-        });
-      }).join('')}
+    // Part practice has its own screen: choose the part, then the mock.
+    const partList = `<section class="card pp-entry">
+      <div class="pp-entry-head">
+        <h2>${PARTS_UZ.title}</h2>
+        <p class="muted">${PARTS_UZ.entry}</p>
+      </div>
+      <div class="pp-chips">
+        ${SPEAKING_PART_KEYS.map(p => `<button class="pp-chip" data-parts="${p}">
+          <strong>Part ${p}</strong><span>${esc(TESTS_UZ.partNames[p][1])}</span>
+        </button>`).join('')}
+      </div>
     </section>`;
 
     const mockRows = list.map((e, i) => {
@@ -8620,8 +8759,16 @@
         state.openAttempt = null;
         if (!open || el.dataset.openAttempt === 'close') return render();
         if (el.dataset.openAttempt === 'resume') return startExam(open.examId, open.mode, open.part);
+        if (el.dataset.openAttempt === 'replace' && open.want) return replaceAttempt(open);
         deleteResult(open.resultId);
       }));
+
+    root.querySelectorAll('[data-parts]').forEach(el =>
+      el.addEventListener('click', () => openParts(el.dataset.parts || null)));
+    root.querySelectorAll('[data-pp-part]').forEach(el =>
+      el.addEventListener('click', () => setState({ partsPart: el.dataset.ppPart })));
+    root.querySelectorAll('[data-pp-drop]').forEach(el =>
+      el.addEventListener('click', () => dropPractice(el.dataset.ppDrop)));
 
     // The watcher belongs to the dashboard and nothing else. Deciding here,
     // once per render, means it can never be left running behind a screen that
@@ -8790,9 +8937,18 @@
         // which question to attempt.
         if (state.mode === 'mock') beginPrep();
         return;
-      case 'leave-briefing':
+      case 'leave-briefing': {
         stopMicCheck();
-        return go('mocks');
+        // Opened and left before a single answer: nothing to keep, and left
+        // open it would stand in the way of the next part the student picks.
+        const id = state.resultId;
+        if (id && state.attemptFresh && !Object.keys(state.answered || {}).length) {
+          state.history = (state.history || []).filter(h => h.id !== id);
+          api(`/exam/results/${id}`, { method: 'DELETE' }).catch(() => {});
+        }
+        state.resultId = null;
+        return state.mode === 'practice' ? openParts(state.part) : go('mocks');
+      }
       case 'save': return submitTask();
       case 'save-writing': return submitWriting();
       case 'begin': return beginPrep();

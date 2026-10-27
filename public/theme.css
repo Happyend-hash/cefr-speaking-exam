@@ -357,3 +357,72 @@ input[type="search"], input[type="number"], input[type="date"], select, textarea
 .prof-copy.is-done { color: #15803d; border-color: rgba(21,128,61,.35); }
 :root[data-theme="night"] .prof-copy.is-done { color: #4ade80; border-color: rgba(74,222,128,.35); }
 @media (max-width: 560px) { .prof-account { flex-wrap: wrap; row-gap: 10px; } .prof-account-text { flex-basis: calc(100% - 52px); } .prof-copy { margin-left: 52px; } }
+
+/* Part practice (Qismlar): choose the part, then the mock */
+.pp-entry { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
+.pp-entry-head h2 { font-size: 17px; }
+.pp-entry-head p { font-size: 13.5px; margin-top: 4px; line-height: 1.45; }
+.pp-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (min-width: 700px) { .pp-chips { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.pp-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--ground);
+  color: var(--ink); cursor: pointer; min-height: 64px;
+}
+.pp-chip strong { font-size: 15px; font-family: Sora, Manrope, sans-serif; }
+.pp-chip span { font-size: 12.5px; color: var(--ink-soft); line-height: 1.3; }
+.pp-chip:hover, .pp-chip:focus-visible { border-color: var(--gold-line); background: var(--gold-tint); outline: none; }
+
+.pp-step > h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 16px; }
+.pp-step:not(.list-card) { padding: 16px; }
+.pp-step:not(.list-card) > h2 { margin-bottom: 12px; }
+.pp-step-num {
+  display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--btn-bg, var(--indigo-600)); color: var(--btn-ink, #fff); font-size: 13px; font-weight: 800;
+}
+.pp-step-tag { margin-left: auto; font-size: 12.5px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: var(--gold-tint); color: var(--gold-text); }
+.pp-have { font-size: 13px; padding: 0 16px 10px; }
+
+.pp-parts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 760px) { .pp-parts { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.pp-part {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left;
+  padding: 14px 12px; border-radius: 16px; border: 1.5px solid var(--line); background: var(--surface);
+  color: var(--ink); cursor: pointer; transition: border-color .15s, background .15s, transform .1s;
+}
+.pp-part:active { transform: scale(.98); }
+.pp-part-num {
+  font-family: Sora, Manrope, sans-serif; font-size: 20px; font-weight: 800; line-height: 1;
+  padding: 6px 10px; border-radius: 10px; background: var(--ground-2); color: var(--ink);
+}
+.pp-part-text { display: flex; flex-direction: column; gap: 2px; }
+.pp-part-text strong { font-size: 14px; }
+.pp-part-text span { font-size: 12.5px; color: var(--ink-soft); line-height: 1.3; }
+.pp-part.is-current { border-color: var(--gold); background: var(--gold-tint); box-shadow: 0 0 0 3px var(--gold-tint); }
+.pp-part.is-current .pp-part-num { background: var(--btn-bg, var(--gold)); color: var(--btn-ink, #1a1300); }
+.pp-part:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.pp-row .list-text strong { white-space: normal; }
+.pp-go {
+  flex: none; font-size: 13px; font-weight: 800; padding: 8px 12px; border-radius: 999px;
+  background: var(--btn-bg, var(--indigo-600)); color: var(--btn-ink, #fff); white-space: nowrap;
+}
+.pp-go.is-open { background: var(--ground-2); color: var(--ink); }
+
+.pp-open { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--gold-line); }
+.pp-open-text { flex: 1 1 200px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pp-open-kicker { font-size: 11.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--gold-text); }
+.pp-open-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Another attempt is open: a dialog the student cannot miss */
+.oa-overlay {
+  position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 16px;
+  background: rgba(10, 13, 34, .55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+}
+.oa-card { width: min(440px, 100%); padding: 22px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
+.oa-card h2 { font-size: 19px; }
+.oa-card p { font-size: 14.5px; line-height: 1.5; }
+.oa-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.oa-close { border-color: transparent; }
+@media (prefers-reduced-motion: no-preference) { .oa-card { animation: oa-in .18s ease-out; } }
+@keyframes oa-in { from { transform: translateY(8px); opacity: .6; } to { transform: none; opacity: 1; } }

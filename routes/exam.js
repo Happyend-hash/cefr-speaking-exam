@@ -16,7 +16,7 @@ import User, { UNITS_PER_MOCK, PART_COST } from '../models/User.js';
 import PronunciationService from '../services/PronunciationService.js';
 import FluencyService from '../services/FluencyService.js';
 import { recordScore } from '../services/Leaderboard.js';
-import { removeResult } from '../services/AttemptCleanup.js';
+import { removeResult, isEmptyAttempt } from '../services/AttemptCleanup.js';
 import { SPEAKING_RAW_MAX } from '../services/ScoreConversion.js';
 import {
   SPEAKING_PARTS,
@@ -204,6 +204,10 @@ router.get('/results', async (req, res, next) => {
         examTitle: r.exam?.title || 'Exam',
         examLevel: r.examLevel,
         status: r.status,
+        // Which kind of attempt: a whole mock, or one part practised alone.
+        mode: r.mode || 'mock',
+        part: r.part || null,
+        answers: (r.taskResults || []).length,
         overallScore: r.overallScore ?? null,
         overallLevel: r.overallLevel,
         isPassed: r.isPassed,
@@ -640,11 +644,19 @@ router.post('/:id/start', async (req, res, next) => {
     // time closes that gap; finishing, submitting or deleting it frees the
     // student to start a different one.
     if (gate.code !== 'staff') {
-      const openElsewhere = await ExamResult.findOne({
+      let openElsewhere = await ExamResult.findOne({
         student: req.user.id,
         status: 'in_progress',
         creditCharged: false
       }).populate('exam', 'title').lean();
+      // An attempt with no answer recorded is nothing to lose: the student
+      // opened a part, looked at the briefing and went back. It used to block
+      // every other part, and "Davom ettirish" then opened that old part
+      // instead of the one chosen (Jamshid, 2026-10-27). It goes quietly.
+      if (openElsewhere && isEmptyAttempt(openElsewhere)) {
+        const gone = await ExamResult.deleteOne({ _id: openElsewhere._id, status: 'in_progress', creditCharged: false });
+        if (gone.deletedCount) openElsewhere = null;
+      }
       if (openElsewhere) {
         const title = openElsewhere.exam?.title || 'mock';
         const blocked = new APIError(
@@ -658,7 +670,8 @@ router.post('/:id/start', async (req, res, next) => {
           examId: openElsewhere.exam?._id ? String(openElsewhere.exam._id) : null,
           examTitle: title,
           mode: openElsewhere.mode || 'mock',
-          part: openElsewhere.part || null
+          part: openElsewhere.part || null,
+          answers: (openElsewhere.taskResults || []).length
         };
         throw blocked;
       }
