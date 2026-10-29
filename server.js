@@ -73,6 +73,7 @@ import assistantRoutes from './routes/assistant.js';
 import parentRoutes from './routes/parent.js';
 import CourseStudent from './models/CourseStudent.js';
 import { startPaymentReports } from './services/PaymentReport.js';
+import { startMoveSync } from './services/CourseMoveSync.js';
 import courseStudentRoutes from './routes/courseStudents.js';
 import messageRoutes from './routes/messages.js';
 import adminMessageRoutes from './routes/adminMessages.js';
@@ -271,6 +272,8 @@ mongoose.connect(MONGODB_URI)
     // The daily payment email (only on days a payment changed), so who paid
     // can be seen in Gmail even when the site is down.
     startPaymentReports();
+    // Course students moved to another group "from next month" switch on the 1st.
+    startMoveSync();
 
     resumeStuckMarking().catch(err => console.error('Startup marking-resume failed:', err.message));
     setInterval(() => {

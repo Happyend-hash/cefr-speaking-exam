@@ -4,7 +4,7 @@ import CourseStudent, { LEVELS, SKILLS, ATTENDANCE } from '../models/CourseStude
 import {
   newParentCode, readPhoto, dashboard, mergeDays, vocabSummary, unitsPerLevel, saveUnitsPerLevel, booksPerLevel, bookChoices, schoolYearOf, paidAhead, leaderboard, monthOf, dayOf, familyOf, attendanceSummary, paymentStatus, paymentHistory, joinedMonth
 } from '../services/ParentPortal.js';
-import { ensurePeriods, changeTerms, leave, restore, monthRegister, monthsOf } from '../services/CourseMonths.js';
+import { ensurePeriods, changeTerms, leave, restore, monthRegister, monthsOf, moveStudent, plannedMove, cancelPlannedMove, syncLevel } from '../services/CourseMonths.js';
 import { mistakesForUsers } from '../services/VocabMistakes.js';
 import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
@@ -57,6 +57,12 @@ const row = (s, units = {}, books = {}, accounts = new Set(), mistakes = new Map
     periods: (s.periods || []).map(p => ({ from: p.from, to: p.to || null, level: p.level, fee: p.fee ?? null })),
     removedAt: s.removedAt || null,
     leftReason: s.leftReason || '',
+    // a move to another group planned for next month: { level, from } or null
+    plannedMove: plannedMove(s),
+    // vocabulary results of the groups (levels) the student was in before — kept, shown apart
+    vocabHistory: [...new Set([...(s.vocab || []).map(r => r.level), ...(s.vocabTests || []).map(t => t.level)])]
+      .filter(l => l && l !== s.level)
+      .map(l => { const v = vocabSummary(s, units[l], l, books[l]); return { level: l, done: v.overall.done, units: v.overall.units, average: v.overall.average, tracks: v.tracks.map(t => ({ book: t.book?.title || '', done: t.list.filter(u => u.percent !== null).length, units: t.units, average: t.average ?? null })) }; }),
     // every payment ever saved, including ones marked as a mistake — the panel draws the school year from these
     ledger: (s.payments || []).map(p => ({
       id: String(p._id), month: p.month, amount: p.amount, paidAt: p.paidAt, note: p.note || '',
@@ -80,7 +86,10 @@ const cleanLevel = v => (LEVELS.includes(v) ? v : null);
  */
 async function withPeriods(list) {
   for (const s of list) {
-    if (ensurePeriods(s)) await CourseStudent.updateOne({ _id: s._id }, { $set: { periods: s.periods } });
+    const added = ensurePeriods(s);
+    // a move planned "from next month" whose month has come
+    const moved = syncLevel(s);
+    if (added || moved) await CourseStudent.updateOne({ _id: s._id }, { $set: { periods: s.periods, level: s.level, monthlyFee: s.monthlyFee ?? null } });
   }
   return list;
 }
@@ -148,6 +157,30 @@ router.get('/archive', async (req, res, next) => {
         })
       }
     });
+  } catch (error) { next(error); }
+});
+
+/**
+ * Upgrade / downgrade (2026-10-29): move a student to another group (level)
+ * from this month or next month. Payments, attendance, homework and
+ * vocabulary results all stay on the card; the register keeps earlier months
+ * in the old group. `{ cancel: true }` drops a move planned for next month.
+ */
+router.post('/:id/move', async (req, res, next) => {
+  try {
+    const s = await load(req.params.id);
+    if (req.body?.cancel) {
+      if (!cancelPlannedMove(s)) throw new APIError('No move is planned for this student', 400);
+    } else {
+      const level = cleanLevel(req.body?.level);
+      if (!level) throw new APIError('Choose the group to move to', 400);
+      const month = String(req.body?.month || monthOf());
+      if (level === s.level && !plannedMove(s)) throw new APIError(`${s.name} is already in ${level}`, 400);
+      try { moveStudent(s, { level, month }); } catch (e) { throw new APIError(e.message, e.statusCode || 400); }
+    }
+    s.markModified('periods');
+    await s.save();
+    res.json({ success: true, data: await overview() });
   } catch (error) { next(error); }
 });
 

@@ -112,6 +112,60 @@ export function restore(student, { month = monthOf() } = {}) {
 }
 
 /**
+ * Upgrade / downgrade (Jamshid, 2026-10-29): move a student to another group
+ * (level) from this month or from next month.
+ *
+ *  - From this month: the same as changing the group — a new period starts now.
+ *  - From next month: this month stays in the current group; the new period
+ *    starts on the 1st and `level` switches by itself then (see syncLevel).
+ *  - A move planned for next month replaces any earlier plan; moving back to
+ *    the current group cancels it.
+ * Everything else — payments, attendance, homework and vocabulary results —
+ * stays on the student's card.
+ */
+export function plannedMove(student, now = Date.now()) {
+  const thisMonth = monthOf(now);
+  const future = (student.periods || []).find(p => p.from > thisMonth);
+  return future ? { level: future.level, from: future.from } : null;
+}
+
+export function cancelPlannedMove(student, now = Date.now()) {
+  const thisMonth = monthOf(now);
+  const periods = student.periods || [];
+  const keep = periods.filter(p => p.from <= thisMonth);
+  if (keep.length === periods.length) return false;
+  student.periods = keep;
+  const last = student.periods[student.periods.length - 1];
+  if (last && !student.removedAt) last.to = null;
+  return true;
+}
+
+export function moveStudent(student, { level, month }, now = Date.now()) {
+  const thisMonth = monthOf(now);
+  const nextMonth = addMonths(thisMonth, 1);
+  if (month !== thisMonth && month !== nextMonth) throw Object.assign(new Error('Choose this month or next month'), { statusCode: 400 });
+  if (student.removedAt) throw Object.assign(new Error('Bring the student back from the archive first'), { statusCode: 400 });
+  ensurePeriods(student);
+  cancelPlannedMove(student, now);
+  if (month === thisMonth) return changeTerms(student, { level }, thisMonth);
+  const cur = openPeriod(student);
+  if (!cur || cur.level === level) return student;      // same group: nothing planned
+  cur.to = thisMonth;
+  student.periods.push({ from: nextMonth, to: null, level, fee: cur.fee ?? null });
+  return student;                                         // student.level stays until the 1st
+}
+
+/** On (or after) the 1st: a planned move takes effect. Returns true when `level` changed. */
+export function syncLevel(student, now = Date.now()) {
+  if (student.removedAt) return false;
+  const p = periodAt(student, monthOf(now));
+  if (!p || p.level === student.level) return false;
+  student.level = p.level;
+  if (typeof p.fee === 'number') student.monthlyFee = p.fee;
+  return true;
+}
+
+/**
  * One student in one month, as the register shows them. Null when they were
  * not in the course that month.
  */
@@ -212,4 +266,4 @@ export function monthsOf(student, now = Date.now()) {
   return out.sort((a, b) => b.month.localeCompare(a.month));
 }
 
-export default { ensurePeriods, openPeriod, changeTerms, leave, restore, monthRow, monthRegister, registerMonths, monthsOf, addMonths };
+export default { ensurePeriods, openPeriod, changeTerms, leave, restore, monthRow, monthRegister, registerMonths, monthsOf, addMonths, moveStudent, plannedMove, cancelPlannedMove, syncLevel };

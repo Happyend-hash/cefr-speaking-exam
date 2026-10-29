@@ -65,6 +65,7 @@
     csReg: null,             // the register data for csMonth
     csArch: null,            // archived students
     csArchSel: null,         // the archived student whose months are open
+    csMove: null,            // upgrade/downgrade being chosen: { id, level, month }
     csTypes: new Set(),      // homework types ticked for today
     csVals: {},              // their percents, as typed
     csTitle: '',
@@ -1852,9 +1853,11 @@
     const out = [];
     if (r.joined) out.push('<span class="cs-ev is-new">new</span>');
     if (r.returned) out.push('<span class="cs-ev is-new">came back</span>');
-    if (r.movedFrom) out.push(`<span class="cs-ev">from ${esc(r.movedFrom)}</span>`);
+    const lv = state.cs?.levels || ['A1', 'A2', 'B1', 'B2', 'C1'];
+    const arrow = (a, b) => (lv.indexOf(b) > lv.indexOf(a) ? '⬆' : '⬇');
+    if (r.movedFrom) out.push(`<span class="cs-ev">${arrow(r.movedFrom, r.level)} from ${esc(r.movedFrom)}</span>`);
     if (r.feeChanged) out.push('<span class="cs-ev">new fee</span>');
-    if (r.movedTo) out.push(`<span class="cs-ev">→ ${esc(r.movedTo)}</span>`);
+    if (r.movedTo) out.push(`<span class="cs-ev">${arrow(r.level, r.movedTo)} to ${esc(r.movedTo)}</span>`);
     if (r.leftNow) out.push(`<span class="cs-ev is-left">left${r.leftReason ? `: ${esc(r.leftReason)}` : ''}</span>`);
     else if (r.removed) out.push('<span class="cs-ev is-gone">in archive</span>');
     if (r.paused) out.push('<span class="tag">paused</span>');
@@ -2215,6 +2218,53 @@
     </div>`;
   }
 
+  /**
+   * Upgrade / downgrade (2026-10-29): the student's group (level), with a move
+   * up or down from this month or next month. Everything on the card stays;
+   * the register keeps earlier months in the old group.
+   */
+  function csGroupBox(s) {
+    const levels = state.cs?.levels || ['A1', 'A2', 'B1', 'B2', 'C1'];
+    const i = levels.indexOf(s.level);
+    const up = levels[i + 1], down = levels[i - 1];
+    const thisMonth = csToday().slice(0, 7);
+    const nextMonth = csAddMonths(thisMonth, 1);
+    const mon = ym => csMonthName(ym).split(' ')[0];
+    const mv = state.csMove?.id === s.id ? state.csMove : null;
+    const planned = s.plannedMove;
+    const dir = l => (levels.indexOf(l) > i ? 'up' : 'down');
+    const form = mv ? `<div class="cs-move-form">
+        <strong>${dir(mv.level) === 'up' ? '⬆ Upgrade' : '⬇ Downgrade'} ${esc(s.name)}: ${esc(s.level)} → ${esc(mv.level)}</strong>
+        <div class="cs-move-when" role="radiogroup" aria-label="From which month">
+          <label><input type="radio" name="cs-move-month" value="${thisMonth}" ${mv.month === thisMonth ? 'checked' : ''}> From this month (${esc(mon(thisMonth))})</label>
+          <label><input type="radio" name="cs-move-month" value="${nextMonth}" ${mv.month === nextMonth ? 'checked' : ''}> From next month (${esc(mon(nextMonth))})</label>
+        </div>
+        <p class="muted">${mv.month === thisMonth
+          ? `${esc(mon(thisMonth))} and everything after it counts in ${esc(mv.level)}. Earlier months stay in ${esc(s.level)} in the register.`
+          : `${esc(s.name)} stays in ${esc(s.level)} until the end of ${esc(mon(thisMonth))} and moves to ${esc(mv.level)} on 1 ${esc(mon(nextMonth))} by themselves.`}
+          Payments, attendance, homework and vocabulary results all stay with the student.</p>
+        <div class="row" style="gap:8px">
+          <button type="button" class="btn btn-sm" data-cs-moveok="${esc(s.id)}">Move to ${esc(mv.level)}</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-cs-movecancel>Cancel</button>
+        </div>
+      </div>` : '';
+    return `<div class="cs-group-box">
+      <div class="cs-group-now">
+        <span class="muted">Group</span> <span class="tag cs-group-tag">${esc(s.level)}</span>
+        ${planned ? `<span class="cs-planned">→ ${esc(planned.level)} from 1 ${esc(mon(planned.from))}
+          <button type="button" class="cs-link" data-cs-moveundo="${esc(s.id)}">cancel</button></span>` : ''}
+      </div>
+      ${csPeriodsLine(s)}
+      ${mv ? form : `<div class="cs-move-btns">
+        ${up ? `<button type="button" class="btn btn-ghost btn-sm" data-cs-move="${esc(s.id)}:${up}">⬆ Upgrade to ${up}</button>` : ''}
+        ${down ? `<button type="button" class="btn btn-ghost btn-sm" data-cs-move="${esc(s.id)}:${down}">⬇ Downgrade to ${down}</button>` : ''}
+        <select data-cs-moveto="${esc(s.id)}" aria-label="Move to another group"><option value="">Move to…</option>${levels.filter(l => l !== s.level).map(l => `<option value="${l}">${l}</option>`).join('')}</select>
+      </div>`}
+      ${(s.vocabHistory || []).length ? `<div class="cs-prev-vocab"><span class="muted">Vocabulary in earlier groups:</span>
+        ${s.vocabHistory.map(v => `<span class="cs-prev-chip"><span class="tag">${esc(v.level)}</span> ${v.done}/${v.units} units${v.average !== null && v.average !== undefined ? ` · avg ${v.average}%` : ''}</span>`).join('')}</div>` : ''}
+    </div>`;
+  }
+
   /** The panel under a clicked student: today's homework, then details. */
   function studentPanel(s, { levelOptions, familyOptions }) {
     const types = state.csTypes;
@@ -2268,8 +2318,7 @@
       ${moneyAndDays(s)}
 
       <div class="cs-details">
-        <label>Level <select data-cs-level="${esc(s.id)}">${levelOptions(s.level)}</select></label>
-        ${csPeriodsLine(s)}
+        ${csGroupBox(s)}
         <label>Family <select data-cs-family="${esc(s.id)}">${familyOptions(s.id, '')}</select></label>
         <div class="cs-code-box"><span class="muted">Parent code</span>${csCode(s, true)}</div>
         <form class="cs-account" data-cs-account="${esc(s.id)}">
@@ -2533,7 +2582,7 @@
       const open = () => {
         const id = el.dataset.csSel;
         const st = state.cs?.students.find(x => x.id === id);
-        setState(state.csSel === id ? { csSel: null } : { csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined });
+        setState(state.csSel === id ? { csSel: null, csMove: null } : { csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined, csMove: null });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
@@ -2572,8 +2621,29 @@
     });
 
     // details
-    root.querySelectorAll('[data-cs-level]').forEach(el => el.addEventListener('change', () =>
-      csCall(`/admin/course-students/${el.dataset.csLevel}`, { method: 'PATCH', body: { level: el.value } }, 'Level changed.')));
+    // upgrade / downgrade: choose the group, then the month, then confirm
+    const openMove = (id, level) => setState({ csMove: { id, level, month: csToday().slice(0, 7) } });
+    root.querySelectorAll('[data-cs-move]').forEach(el => el.addEventListener('click', () => {
+      const [id, level] = el.dataset.csMove.split(':');
+      openMove(id, level);
+    }));
+    root.querySelectorAll('[data-cs-moveto]').forEach(el => el.addEventListener('change', () => { if (el.value) openMove(el.dataset.csMoveto, el.value); }));
+    root.querySelectorAll('input[name="cs-move-month"]').forEach(el => el.addEventListener('change', () => setState({ csMove: { ...state.csMove, month: el.value } })));
+    root.querySelectorAll('[data-cs-movecancel]').forEach(el => el.addEventListener('click', () => setState({ csMove: null })));
+    root.querySelectorAll('[data-cs-moveok]').forEach(el => el.addEventListener('click', async () => {
+      const mv = state.csMove;
+      const st = state.cs.students.find(x => x.id === el.dataset.csMoveok);
+      if (!mv || !st) return;
+      const now = mv.month === csToday().slice(0, 7);
+      const ok = await csCall(`/admin/course-students/${st.id}/move`, { method: 'POST', body: { level: mv.level, month: mv.month } },
+        now ? `${st.name} moved to ${mv.level}.` : `${st.name} moves to ${mv.level} on 1 ${csMonthName(mv.month).split(' ')[0]}.`, { csMove: null });
+      // a move from this month takes the student to their new group's table: keep their panel open there
+      if (ok && now) { state.csGroups.add(mv.level); setState({ csSel: st.id }); }
+    }));
+    root.querySelectorAll('[data-cs-moveundo]').forEach(el => el.addEventListener('click', () => {
+      const st = state.cs.students.find(x => x.id === el.dataset.csMoveundo);
+      csCall(`/admin/course-students/${el.dataset.csMoveundo}/move`, { method: 'POST', body: { cancel: true } }, `${st?.name || 'The'} planned move cancelled.`);
+    }));
     root.querySelectorAll('[data-cs-family]').forEach(el => el.addEventListener('change', () => {
       const sib = el.value ? state.cs.students.find(s => s.id === el.value) : null;
       const me = state.cs.students.find(s => s.id === el.dataset.csFamily);
