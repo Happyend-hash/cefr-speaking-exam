@@ -489,3 +489,6 @@ input[type="search"], input[type="number"], input[type="date"], select, textarea
 .vr-mist-learntlist li strong { color: var(--ink); }
 .vr-mist-note { margin-top: 10px; font-size: 14px; }
 .vr-mist-learntlist .link-more, .vr-mist-note .link-more { margin-top: 0; }
+.vr-mist-done { color: #15803d; font-weight: 800; }
+:root[data-theme="night"] .vr-mist-done { color: #86efac; }
+.vr-mist-word { grid-template-columns: minmax(0, 1fr) auto; }

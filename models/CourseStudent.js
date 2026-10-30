@@ -85,7 +85,12 @@ const vocabResultSchema = new mongoose.Schema({
   source: { type: String, enum: ['unit', 'general'], default: 'unit' },
   // 'online' = the student took it on the website ("Uyga vazifani topshirish"); 'teacher' = typed in by the teacher
   via: { type: String, enum: ['teacher', 'online'], default: 'teacher' },
-  test: { type: mongoose.Schema.Types.ObjectId }     // the general test it came from
+  test: { type: mongoose.Schema.Types.ObjectId },    // the general test it came from
+  // an online test: how many words it asked, which were missed, and which of
+  // those the student has since learnt in "Xatolarim" (each one raises percent)
+  total: { type: Number, default: undefined },
+  missed: { type: [String], default: undefined },
+  recovered: { type: [String], default: undefined }
 }, { _id: true, timestamps: true });
 
 const vocabTestSchema = new mongoose.Schema({
@@ -94,7 +99,12 @@ const vocabTestSchema = new mongoose.Schema({
   date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
   percent: { type: Number, required: true, min: 0, max: 100 },
   perUnit: { type: Boolean, default: false },         // a result per unit, or one overall result for all
-  via: { type: String, enum: ['teacher', 'online'], default: 'teacher' }
+  via: { type: String, enum: ['teacher', 'online'], default: 'teacher' },
+  // an online test: how many words it asked, which were missed, and which of
+  // those the student has since learnt in "Xatolarim" (each one raises percent)
+  total: { type: Number, default: undefined },
+  missed: { type: [String], default: undefined },
+  recovered: { type: [String], default: undefined }
 }, { _id: true, timestamps: true });
 
 /**

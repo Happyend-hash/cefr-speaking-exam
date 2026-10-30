@@ -2,7 +2,7 @@ import { ErrorHunt } from './ErrorHunt.js';
 import { DuelHub } from './DuelHub.js';
 import { TabooGame } from './TabooGame.js';
 import { VocabRaceHub } from './VocabRaceHub.js';
-import { saveHomeworkResult } from './CourseHomework.js';
+import { saveHomeworkResult, raiseHomeworkForLearntWord } from './CourseHomework.js';
 import { recordAnswer } from './VocabMistakes.js';
 import { voiceHub } from './VoiceRooms.js';
 import { award } from './Games.js';
@@ -43,7 +43,10 @@ export const vocabRace = new VocabRaceHub({
   // student's vocabulary units (see services/CourseHomework.js).
   onHomework: ({ homework }) => saveHomeworkResult(homework),
   // "Xatolarim": every wrong answer is kept for the student to revise
-  onAnswer: answer => recordAnswer(answer),
+  // — and a word learnt there raises the homework results it was missed in.
+  onAnswer: answer => recordAnswer(answer).then(r => (r?.learnt
+    ? raiseHomeworkForLearntWord(answer.userId, answer).catch(error => console.error('Homework result not raised:', error.message))
+    : null)),
   onFinish({ code, results }) {
     for (const r of results) {
       if (r.points > 0) {

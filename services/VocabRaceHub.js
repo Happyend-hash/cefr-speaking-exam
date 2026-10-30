@@ -378,7 +378,7 @@ export class VocabRaceHub {
       player.streak = 0;
       player.missed.push({ word: q.word, uz: q.uz });
     }
-    (player.results ||= []).push({ unitId: q.unitId, correct });
+    (player.results ||= []).push({ unitId: q.unitId, word: q.word, correct });
     try {
       Promise.resolve(this.onAnswer({
         userId: player.user.id, packKey: room.packKey, packTitle: room.packTitle, unitId: q.unitId,
@@ -407,15 +407,18 @@ export class VocabRaceHub {
   homeworkResult(player) {
     const byUnit = {};
     for (const r of player.results || []) {
-      const u = (byUnit[r.unitId] ||= { correct: 0, total: 0 });
+      const u = (byUnit[r.unitId] ||= { correct: 0, total: 0, missed: [] });
       u.total += 1;
       if (r.correct) u.correct += 1;
+      else if (r.word) u.missed.push(r.word);
     }
     const total = player.qs.length;
     return {
       percent: total ? Math.round((player.correct / total) * 100) : 0,
       correct: player.correct, total,
-      perUnit: Object.fromEntries(Object.entries(byUnit).map(([id, u]) => [id, Math.round((u.correct / u.total) * 100)]))
+      perUnit: Object.fromEntries(Object.entries(byUnit).map(([id, u]) => [id, Math.round((u.correct / u.total) * 100)])),
+      // which words were missed in each unit, out of how many: learning them in "Xatolarim" raises the result
+      wordsByUnit: Object.fromEntries(Object.entries(byUnit).map(([id, u]) => [id, { total: u.total, missed: [...new Set(u.missed)] }]))
     };
   }
 

@@ -1,7 +1,7 @@
 import CourseStudent from '../models/CourseStudent.js';
 import User from '../models/User.js';
 import { booksPerLevel, vocabSummary, dayOf } from './ParentPortal.js';
-import { recordUnitResult, recordGeneralTest } from './CourseVocab.js';
+import { recordUnitResult, recordGeneralTest, raiseForLearntWord } from './CourseVocab.js';
 
 /**
  * "Uyga vazifani topshirish" (Jamshid, 2026-10-23): a website account the
@@ -84,18 +84,37 @@ export async function saveHomeworkResult(homework) {
   if (student.level !== homework.level) throw new Error('Darajangiz o‘zgargan — testni qaytadan boshlang');
   const date = dayOf();
   const where = { book: homework.bookKey || null, firstBook: homework.firstBook || homework.bookKey || null };
+  const words = homework.wordsByUnit || {};
   if (homework.kind === 'unit') {
-    recordUnitResult(student, { unit: homework.unit, percent: homework.percent, date, via: 'online', ...where });
+    const only = Object.values(words)[0] || null;
+    recordUnitResult(student, { unit: homework.unit, percent: homework.percent, date, via: 'online', ...where, words: only });
   } else {
     const perUnit = {};
+    const wordsByUnit = {};
     for (const [unitId, p] of Object.entries(homework.perUnit || {})) {
       const n = homework.unitNumbers?.[unitId];
-      if (n) perUnit[n] = p;
+      if (n) { perUnit[n] = p; if (words[unitId]) wordsByUnit[n] = words[unitId]; }
     }
-    recordGeneralTest(student, { date, perUnit, percent: homework.percent, via: 'online', ...where });
+    recordGeneralTest(student, { date, perUnit, percent: homework.percent, via: 'online', ...where, wordsByUnit });
   }
   await student.save();
   return true;
 }
 
-export default { linkedCourseStudent, homeworkView, homeworkPlan, saveHomeworkResult };
+/**
+ * A word learnt in "Xatolarim" (right twice in a row in the revision test):
+ * the homework results it was missed in go up (see raiseForLearntWord).
+ */
+export async function raiseHomeworkForLearntWord(userId, { packKey, word }) {
+  const student = await linkedCourseStudent(userId);
+  if (!student) return 0;
+  const raised = raiseForLearntWord(student, { book: packKey, word });
+  if (raised) {
+    student.markModified('vocab');
+    student.markModified('vocabTests');
+    await student.save();
+  }
+  return raised;
+}
+
+export default { linkedCourseStudent, homeworkView, homeworkPlan, saveHomeworkResult, raiseHomeworkForLearntWord };

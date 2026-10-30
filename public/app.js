@@ -5025,23 +5025,21 @@
     mistOption: 'Xatolarim',
     mistOptionDesc: n => (n ? `${n} ta so‘zni o‘rganish kerak — takrorlang` : 'Testlarda xato qilgan so‘zlaringiz shu yerga yig‘iladi'),
     mistTitle: 'Xatolarim',
-    mistIntro: 'Vocabulary testlarida xato qilgan so‘zlaringiz — kitob bo‘yicha. Takrorlash testida ketma-ket 2 marta to‘g‘ri topilgan so‘z o‘zi o‘rganilganga o‘tadi. Yoki «O‘rgandim»ni bosing.',
+    mistIntro: 'Vocabulary testlarida xato qilgan so‘zlaringiz — kitob bo‘yicha. Takrorlash testida ketma-ket 2 marta to‘g‘ri topilgan so‘z o‘rganilganga o‘tadi va uy vazifasi natijangiz (masalan 78%) shu so‘z hisobiga oshadi — 100% gacha.',
     mistEmpty: 'Hozircha xato yo‘q. Vocabulary test ishlang — xato qilgan so‘zlaringiz shu yerga avtomatik tushadi.',
     mistBookMeta: (open, learnt) => `${open} ta qoldi · ${learnt} ta o‘rganildi`,
     mistLeft: n => `${n} ta so‘z`,
     mistLeftSub: 'o‘rganish kerak',
     mistAllDone: 'Barakalla! Bu kitobdagi hamma xato so‘zlarni o‘rgandingiz 🎉',
     mistReview: n => `Takrorlash testi · ${n} ta so‘z`,
-    mistReviewHint: (size, streak) => `Test eng ko‘p xato qilingan ${size} ta so‘zdan tuziladi. Ketma-ket ${streak} marta to‘g‘ri topilsa — so‘z o‘rganildi.`,
+    mistReviewHint: (size, streak) => `Test eng ko‘p xato qilingan ${size} ta so‘zdan tuziladi. Ketma-ket ${streak} marta to‘g‘ri topilgan so‘z o‘rganiladi — va uy vazifasidagi natijangiz oshadi.`,
     mistMisses: n => `${n} marta xato`,
-    mistLearnt: 'O‘rgandim',
-    mistUndo: 'Qaytarish',
     mistLearntList: n => `O‘rganilgan so‘zlar (${n})`,
     mistBack: 'Barcha kitoblar',
     mistAddedNote: n => `Bu ${n} ta so‘z «Xatolarim»ga qo‘shildi — keyin takrorlab oling.`,
     mistOpen: 'Xatolarimni ochish',
     mistReviewDone: 'Takrorlash tugadi',
-    mistReviewResult: (learnt, left) => (learnt ? `${learnt} ta so‘z o‘rganildi! ${left} ta qoldi.` : `${left} ta so‘z qoldi — yana bir bor takrorlang.`),
+    mistReviewResult: (learnt, left) => (learnt ? `${learnt} ta so‘z o‘rganildi — uy vazifasi natijangiz oshdi! ${left} ta qoldi.` : `${left} ta so‘z qoldi — yana bir bor takrorlang.`),
     mistBackToList: 'Xatolarimga qaytish',
     vrPlayAgain: 'Yana xona ochish',
     vrRoomGone: 'Bu xona endi mavjud emas',
@@ -5408,16 +5406,6 @@
     if (state.screen === 'vr') render();
   }
 
-  async function setMistakeLearnt(id, learnt) {
-    if (vr.busy) return;
-    vr.busy = true;
-    try {
-      vr.mistBook = await api(`/games/vocabrace/mistakes/${encodeURIComponent(id)}/learnt`, { method: 'POST', body: { learnt } });
-      loadMistakes();
-    } catch (error) { state.error = error.message; }
-    vr.busy = false; render();
-  }
-
   async function vrStartReview(packKey) {
     if (vr.busy) return;
     vr.busy = true; render();
@@ -5479,10 +5467,8 @@
           <span class="vr-mist-misses">${esc(GM_UZ.mistMisses(w.misses))}</span>
           <span class="vr-mist-streak" title="Takrorlash testida ketma-ket to‘g‘ri">${streakOf(w)}</span>
         </div>
-        <button class="btn btn-ghost btn-sm vr-mist-learnt" data-gm-learnt="${esc(w.id)}" ${vr.busy ? 'disabled' : ''}>✓ ${esc(GM_UZ.mistLearnt)}</button>
       </div>`).join('');
-    const learnt = b.learnt.map(w => `<li><span><strong>${esc(w.word)}</strong> — ${esc(w.uz)}</span>
-        <button class="link-more vr-mist-undo" data-gm-unlearn="${esc(w.id)}">${esc(GM_UZ.mistUndo)}</button></li>`).join('');
+    const learnt = b.learnt.map(w => `<li><span><strong>${esc(w.word)}</strong> — ${esc(w.uz)}</span><span class="vr-mist-done">✓</span></li>`).join('');
     return `<section class="card gm-card">
       <button class="crumb" data-gm="vr-mist-back">${icon('left')} ${esc(GM_UZ.mistBack)}</button>
       <div class="gm-card-head"><span class="gm-icon is-indigo">${icon('book')}</span><h2>${esc(b.title)}</h2></div>
@@ -6280,8 +6266,6 @@
       }
     }));
     root.querySelectorAll('[data-gm-mist]').forEach(el => el.addEventListener('click', () => openMistakeBook(el.dataset.gmMist)));
-    root.querySelectorAll('[data-gm-learnt]').forEach(el => el.addEventListener('click', () => setMistakeLearnt(el.dataset.gmLearnt, true)));
-    root.querySelectorAll('[data-gm-unlearn]').forEach(el => el.addEventListener('click', () => setMistakeLearnt(el.dataset.gmUnlearn, false)));
     root.querySelectorAll('[data-gm-review]').forEach(el => el.addEventListener('click', () => vrStartReview(el.dataset.gmReview)));
     root.querySelectorAll('[data-gm-hw]').forEach(el => el.addEventListener('click', () => {
       const raw = el.dataset.gmHw;

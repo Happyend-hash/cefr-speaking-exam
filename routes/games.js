@@ -7,7 +7,7 @@ import { fallbackName } from '../services/Leaderboard.js';
 import { badgeOf, BADGE_FIELDS } from '../services/Premium.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { linkedCourseStudent, homeworkView, homeworkPlan } from '../services/CourseHomework.js';
-import { mistakeSummary, mistakeList, setLearnt, reviewWords } from '../services/VocabMistakes.js';
+import { mistakeSummary, mistakeList, reviewWords } from '../services/VocabMistakes.js';
 
 /**
  * Games: Error Hunter, Word Duel and Taboo, and the games ranking.
@@ -164,18 +164,15 @@ router.post('/vocabrace/homework/start', handle(async (req, res) => {
 }));
 /**
  * "Xatolarim" (2026-10-28): every word the student got wrong, per book, until
- * they learn it — by pressing O'rgandim, or by answering it right twice in a
- * row in the revision test.
+ * they learn it by answering it right twice in a row in the revision test
+ * (2026-10-30: no O'rgandim button; learning a word raises the homework
+ * results it was missed in).
  */
 router.get('/vocabrace/mistakes', handle(async (req, res) => {
   res.json({ success: true, data: await mistakeSummary(req.user.id) });
 }));
 router.get('/vocabrace/mistakes/:pack', handle(async (req, res) => {
   res.json({ success: true, data: await mistakeList(req.user.id, String(req.params.pack)) });
-}));
-router.post('/vocabrace/mistakes/:id/learnt', handle(async (req, res) => {
-  const pack = await setLearnt(req.user.id, String(req.params.id), req.body?.learnt !== false);
-  res.json({ success: true, data: await mistakeList(req.user.id, pack) });
 }));
 router.post('/vocabrace/mistakes/review', handle(async (req, res) => {
   await player(req.user.id);

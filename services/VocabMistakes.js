@@ -10,7 +10,9 @@ import VocabMistake from '../models/VocabMistake.js';
  *    list if it had been learnt.
  *  - A right answer in a revision test moves it one step on; two in a row and
  *    it is learnt. A right answer in an ordinary test changes nothing.
- *  - The student can also press O'rgandim on any word (and undo it).
+ *  - Only the test makes a word learnt (Jamshid, 2026-10-30: no O'rgandim
+ *    button), and a learnt word raises the homework results it was missed in
+ *    (services/CourseVocab.js raiseForLearntWord), up to 100%.
  */
 
 export const LEARN_STREAK = 2;      // right answers in a row in revision tests to count as learnt
@@ -43,19 +45,25 @@ export function applyAnswer(entry, { correct, review, packTitle = '', unitId = '
 
 const FIELDS = ['packTitle', 'unitId', 'uz', 'misses', 'firstMissedAt', 'lastMissedAt', 'reviewStreak', 'lastReviewedAt', 'learntAt', 'learntBy'];
 
-/** One answer from the test engine, saved. Never throws (a failed save must not break the test). */
+/**
+ * One answer from the test engine, saved. Never throws (a failed save must not
+ * break the test). Returns { learnt: true } when this answer made the word learnt.
+ */
 export async function recordAnswer(answer, now = new Date()) {
   try {
-    if (!mongoose.isValidObjectId(answer.userId) || !answer.packKey || !answer.word) return;
+    if (!mongoose.isValidObjectId(answer.userId) || !answer.packKey || !answer.word) return null;
     const key = { user: answer.userId, packKey: answer.packKey, word: answer.word };
-    if (answer.correct && !answer.review) return;          // the common case: nothing to look up
+    if (answer.correct && !answer.review) return null;     // the common case: nothing to look up
     const doc = await VocabMistake.findOne(key);
-    const next = applyAnswer(doc ? doc.toObject() : null, answer, now);
-    if (!next) return;
+    const before = doc ? doc.toObject() : null;
+    const next = applyAnswer(before, answer, now);
+    if (!next) return null;
     const set = Object.fromEntries(FIELDS.map(f => [f, next[f] ?? null]));
     await VocabMistake.updateOne(key, { $set: set }, { upsert: true });
+    return { learnt: Boolean(next.learntAt && !before?.learntAt) };
   } catch (error) {
     console.error('Vocabulary mistake not saved:', error.message);
+    return null;
   }
 }
 
