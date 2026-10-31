@@ -55,8 +55,26 @@ export class VocabRaceHub {
     onAnswer = () => {}
   } = {}) {
     Object.assign(this, { packs, now, setTimer, clearTimer, random, onFinish, onHomework, onAnswer });
-    this.clients = new Map(); // id -> { user, streams, roomCode, dropTimer }
+    this.clients = new Map(); // id -> { user, streams, dropTimer }
     this.rooms = new Map();   // code -> room
+    // id -> the code of the room this person is in. Kept apart from `clients`
+    // on purpose (2026-10-31): a client entry only exists while the live
+    // stream is connected, and a phone drops that stream whenever it locks or
+    // the network blinks. When the room was stored on the client, a dropped
+    // stream (or a test started before the stream had connected) lost the
+    // link, every answer was refused as "poyga topilmadi", each word timed
+    // out and the homework was saved as 0%.
+    this.roomOf = new Map();
+  }
+
+  linkRoom(id, code) {
+    if (code) this.roomOf.set(String(id), code);
+    else this.roomOf.delete(String(id));
+  }
+
+  roomOfUser(id) {
+    const code = this.roomOf.get(String(id));
+    return code ? this.rooms.get(code) || null : null;
   }
 
   pack(key) {
@@ -79,12 +97,12 @@ export class VocabRaceHub {
 
   connect(user, stream) {
     const id = String(user.id);
-    const c = this.clients.get(id) || { user: { ...user, id }, streams: new Set(), roomCode: null, dropTimer: null };
+    const c = this.clients.get(id) || { user: { ...user, id }, streams: new Set(), dropTimer: null };
     c.user = { ...c.user, ...user, id };
     c.streams.add(stream);
     if (c.dropTimer) { this.clearTimer(c.dropTimer); c.dropTimer = null; }
     this.clients.set(id, c);
-    const room = c.roomCode ? this.rooms.get(c.roomCode) : null;
+    const room = this.roomOfUser(id);
     this.send(id, 'hello', { you: id, room: room ? this.view(room, id) : null });
   }
 
@@ -143,8 +161,7 @@ export class VocabRaceHub {
       started: false, over: false, createdAt: this.now()
     };
     this.rooms.set(code, room);
-    const c = this.clients.get(hostId);
-    if (c) c.roomCode = code;
+    this.linkRoom(hostId, code);
     return { ok: true, code, words: pool.length, style: room.style };
   }
 
@@ -179,7 +196,7 @@ export class VocabRaceHub {
     // A second solo practice started while an earlier one of this student's
     // own is still open (e.g. a double-click) -- there's no teacher who'll
     // ever end that one, so close it out now instead of leaking it.
-    const prev = c?.roomCode ? this.rooms.get(c.roomCode) : null;
+    const prev = this.roomOfUser(userId);
     if (prev && prev.solo && !prev.over) this.finish(prev);
 
     const code = this.makeCode();
@@ -198,7 +215,7 @@ export class VocabRaceHub {
       started: true, over: false, createdAt: this.now(), startedAt: this.now()
     };
     this.rooms.set(code, room);
-    if (c) c.roomCode = code;
+    this.linkRoom(userId, code);
     player.qs = this.buildQuestions(room);
     this.send(userId, 'start', { total: player.qs.length });
     this.ask(room, player, 0);
@@ -208,8 +225,7 @@ export class VocabRaceHub {
   /** The teacher picking a visual race style, any time before the race starts. */
   setStyle(hostId, style) {
     hostId = String(hostId);
-    const c = this.clients.get(hostId);
-    const room = c?.roomCode ? this.rooms.get(c.roomCode) : null;
+    const room = this.roomOfUser(hostId);
     if (!room || room.hostId !== hostId) return { ok: false, reason: 'Xona topilmadi' };
     if (room.started) return { ok: false, reason: 'Poyga allaqachon boshlangan' };
     if (!VOCAB_RACE_STYLES.includes(style)) return { ok: false, reason: 'Noma’lum uslub' };
@@ -270,8 +286,7 @@ export class VocabRaceHub {
       };
       room.players.set(userId, player);
     }
-    const c = this.clients.get(userId);
-    if (c) c.roomCode = room.code;
+    this.linkRoom(userId, room.code);
     this.broadcast(room, 'roster', this.roomSummary(room));
     return { ok: true, code: room.code };
   }
@@ -311,8 +326,7 @@ export class VocabRaceHub {
 
   start(hostId) {
     hostId = String(hostId);
-    const c = this.clients.get(hostId);
-    const room = c?.roomCode ? this.rooms.get(c.roomCode) : null;
+    const room = this.roomOfUser(hostId);
     if (!room || room.hostId !== hostId) return { ok: false, reason: 'Xona topilmadi' };
     if (room.started) return { ok: false, reason: 'Poyga allaqachon boshlangan' };
     if (!room.players.size) return { ok: false, reason: 'Hali hech kim qo’shilmadi' };
@@ -349,8 +363,7 @@ export class VocabRaceHub {
 
   answer(userId, i, choice) {
     userId = String(userId);
-    const c = this.clients.get(userId);
-    const room = c?.roomCode ? this.rooms.get(c.roomCode) : null;
+    const room = this.roomOfUser(userId);
     const player = room?.players.get(userId);
     if (!room || !player || player.finished) return { ok: false, reason: 'poyga topilmadi' };
     if (Number(i) !== player.cursor) return { ok: false, reason: 'kech qoldingiz' };
@@ -360,8 +373,10 @@ export class VocabRaceHub {
     const pick = Number(choice);
     const q = player.qs[i];
     if (!Number.isInteger(pick) || pick < 0 || pick >= q.options.length) return { ok: false, reason: 'noto’g’ri tanlov' };
-    this.settle(room, player, pick, ms);
-    return { ok: true };
+    const reveal = this.settle(room, player, pick, ms);
+    // The reveal comes back in the reply as well as over the stream, so a
+    // phone whose stream is reconnecting still sees whether it was right.
+    return { ok: true, reveal };
   }
 
   settle(room, player, pick, ms) {
@@ -385,7 +400,8 @@ export class VocabRaceHub {
         word: q.word, uz: q.uz, correct, review: Boolean(room.review)
       })).catch(() => {});
     } catch { /* never let saving a mistake break the test */ }
-    this.send(player.user.id, 'reveal', { i: player.cursor, answer: q.answer, picked: pick, gained, score: player.score, streak: player.streak });
+    const reveal = { i: player.cursor, answer: q.answer, picked: pick, gained, score: player.score, streak: player.streak };
+    this.send(player.user.id, 'reveal', reveal);
     const next = player.cursor + 1;
     // Broadcast (not just to the host) so every player's own screen can show
     // a live race track too, not only the teacher's. `cursor` is words
@@ -401,6 +417,7 @@ export class VocabRaceHub {
       if (next >= player.qs.length) this.finishPlayer(room, player);
       else this.ask(room, player, next);
     }, NEXT_MS);
+    return reveal;
   }
 
   /** A homework test's result: overall percent and a percent per unit (by unit id). */
@@ -464,18 +481,19 @@ export class VocabRaceHub {
     // and let them stay on that recap instead of flashing to a 1-name podium.
     if (!room.solo) this.broadcast(room, 'over', this.roomSummary(room));
     for (const id of room.players.keys()) {
-      const c = this.clients.get(id);
-      if (c) c.roomCode = null;
+      if (this.roomOf.get(id) === room.code) this.linkRoom(id, null);
     }
     this.onFinish({ code: room.code, results: podium.map(r => ({ id: r.id, points: r.points, rank: r.rank })) });
-    this.setTimer(() => this.rooms.delete(room.code), ROOM_TTL_MS);
+    this.setTimer(() => {
+      this.rooms.delete(room.code);
+      for (const [id, code] of this.roomOf) if (code === room.code) this.roomOf.delete(id);
+    }, ROOM_TTL_MS);
   }
 
   /** The teacher ending the race early. */
   end(hostId) {
     hostId = String(hostId);
-    const c = this.clients.get(hostId);
-    const room = c?.roomCode ? this.rooms.get(c.roomCode) : null;
+    const room = this.roomOfUser(hostId);
     if (!room || room.hostId !== hostId) return { ok: false, reason: 'Xona topilmadi' };
     this.finish(room);
     return { ok: true };
@@ -484,10 +502,8 @@ export class VocabRaceHub {
   /** A student leaving before the race is over: their spot just stops progressing. */
   leave(userId) {
     userId = String(userId);
-    const c = this.clients.get(userId);
-    if (!c || !c.roomCode) return;
-    const room = this.rooms.get(c.roomCode);
-    c.roomCode = null;
+    const room = this.roomOfUser(userId);
+    this.linkRoom(userId, null);
     if (!room) return;
     // No teacher will ever end a solo room, so leaving it early is the only
     // signal that it's abandoned -- close it out (awarding whatever score

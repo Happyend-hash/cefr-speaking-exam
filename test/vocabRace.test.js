@@ -352,3 +352,38 @@ test('Word Sprint: finishers carry a finishedAt so a live "kelish tartibi" (fini
   const lastProgressForB = [...b.events].reverse().find(e => e.event === 'progress' && e.data.id === 'b' && e.data.finished);
   assert.equal(typeof lastProgressForB.data.finishedAt, 'number');
 });
+
+// Quvonbek's homework (2026-10-31): every answer refused and the homework
+// saved as 0%, because the room was remembered on the live-stream connection,
+// and his phone's stream was not connected when the test started / dropped
+// for longer than the grace period during it.
+test('a solo homework accepts answers even when the live stream is not connected', async () => {
+  const c = clock();
+  const saved = [];
+  const hub = new VocabRaceHub({ packs: PACKS, random: () => 0, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, onHomework: async h => saved.push(h) });
+  const out = hub.solo('kid', 'bare-pack', ['1'], 'track', { homework: { kind: 'unit', courseStudentId: 'x' } });
+  assert.equal(out.ok, true);
+  const q = hub.rooms.get(out.code).players.get('kid').qs;
+
+  // No stream at all: the first answer still counts and comes back with its reveal.
+  const first = hub.answer('kid', 0, q[0].answer);
+  assert.equal(first.ok, true);
+  assert.equal(first.reveal.picked, q[0].answer);
+  c.advance(NEXT_MS);
+
+  // A stream connects, then drops for longer than the grace period.
+  const s = stream();
+  hub.connect({ id: 'kid' }, s);
+  assert.equal(s.last('hello').room?.code, out.code, 'a late stream finds the running test');
+  hub.disconnect('kid', s);
+  c.advance(30_000 - NEXT_MS * 0);
+  // The word asked meanwhile timed out; the test carried on to the next one.
+  const player = hub.rooms.get(out.code).players.get('kid');
+  if (!player.finished) {
+    const r = hub.answer('kid', player.cursor, q[player.cursor].answer);
+    assert.equal(r.ok, true, 'answers after a long drop are still accepted');
+  }
+  c.advance(60_000);
+  assert.equal(saved.length, 1);
+  assert.ok(saved[0].homework.percent > 0, 'the right answers count — not 0%');
+});

@@ -5739,7 +5739,23 @@
     if (vr.myPick !== null || !vr.q) return;
     vr.myPick = i;
     render();
-    try { await api('/games/vocabrace/answer', { method: 'POST', body: { i: vr.q.i, choice: i } }); } catch { /* server timeout settles it */ }
+    const asked = vr.q.i;
+    try {
+      const out = await api('/games/vocabrace/answer', { method: 'POST', body: { i: asked, choice: i } });
+      // Same reveal as the stream sends: shown even if the stream is reconnecting.
+      if (out?.reveal && vr.q?.i === asked && vr.phase === 'question') {
+        vr.phase = 'reveal'; vr.reveal = out.reveal; vr.score = out.reveal.score;
+        if (state.screen === 'vr') render();
+      }
+    } catch (error) {
+      // Too late for this word: the server's timer settles it. Anything else
+      // was a refused answer, which used to fail silently (2026-10-31).
+      if (!/kech qoldingiz|vaqt tugadi/.test(error.message || '') && vr.q?.i === asked) {
+        vr.myPick = null;
+        state.error = `Javob qabul qilinmadi: ${error.message}. Qaytadan bosing.`;
+        if (state.screen === 'vr') render();
+      }
+    }
   }
 
   function vrPackListScreen() {
