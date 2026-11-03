@@ -284,6 +284,8 @@
   }
 
   function signOut() {
+    stopSocialStream();
+    Object.assign(so, { chats: null, requests: [], people: null, friends: null, friendReq: null, feed: null, stories: null, profile: null, thread: null, withId: null, unread: { messages: 0, requests: 0, friendRequests: 0, total: 0 } });
     stopMicCheck();
     stopVoice();
     stopChat();
@@ -1830,6 +1832,7 @@
 
   async function loadUnread() {
     if (!state.user || !isStudentShell()) return;
+    loadSocialUnread();
     try {
       const d = await api('/messages/unread');
       if (d.unread !== state.unread || d.support !== state.supportUnread) setState({ unread: d.unread, supportUnread: d.support || 0 });
@@ -2199,6 +2202,1200 @@
     root.querySelectorAll('[data-sp-zoom]').forEach(el => el.addEventListener('click', () => { sp.zoom = el.dataset.spZoom; renderKeepingComposer(); }));
     root.querySelector('[data-sp-unzoom]')?.addEventListener('click', () => { sp.zoom = null; renderKeepingComposer(); });
   }
+
+  // =============================================================== DO'STLAR
+  //
+  // Friends, private chats (text, photos, voice messages), photo posts and
+  // 24-hour stories — HelloTalk-style (Jamshid, 2026-11-03). The server
+  // decides who may see what (services/Social.js); this draws it.
+  //
+  //   social   — three tabs: Suhbatlar (chats), Lenta (posts + stories), Odamlar (people)
+  //   dm       — one private chat, full screen
+  //   person   — a profile: everyone sees the card, friends see the rest
+
+  const SO_UZ = {
+    title: "Do'stlar",
+    tabs: { chats: 'Suhbatlar', feed: 'Lenta', people: 'Odamlar' },
+    search: 'Ism bo‘yicha qidirish…',
+    requestsTitle: n => `So‘rovlar · ${n}`,
+    requestsSub: 'Sizga yozgan, lekin hali do‘stingiz bo‘lmaganlar',
+    friendReqTitle: n => `Do‘stlik so‘rovlari · ${n}`,
+    myFriends: 'Do‘stlarim',
+    everyone: 'Hamma o‘quvchilar',
+    noChats: 'Hali suhbat yo‘q',
+    noChatsSub: 'Odamlar bo‘limidan do‘st toping va ingliz tilida yozishing.',
+    findPeople: 'Odam topish',
+    noPeople: 'Hech kim topilmadi',
+    add: 'Do‘st qo‘shish',
+    addShort: 'Qo‘shish',
+    sent: 'So‘rov yuborildi',
+    accept: 'Qabul qilish',
+    decline: 'Rad etish',
+    friends: 'Do‘stlar',
+    message: 'Xabar yozish',
+    online: 'online',
+    lastSeen: at => `oxirgi marta ${soAgo(at, true)}`,
+    you: 'Siz: ',
+    photo: '📷 Rasm',
+    voice: '🎤 Ovozli xabar',
+    placeholder: 'Type in English…',
+    firstNote: 'Bu birinchi xabaringiz so‘rov bo‘lib boradi. U qabul qilmaguncha faqat bitta matnli xabar yuborish mumkin.',
+    waiting: 'So‘rov yuborildi — javobini kuting. Qabul qilinganda yozishda davom etasiz.',
+    incomingNote: name => `${name} sizga birinchi marta yozdi. Suhbatni qabul qilasizmi?`,
+    youBlocked: 'Siz bu foydalanuvchini bloklagansiz.',
+    cantWrite: 'Bu suhbatga yozib bo‘lmaydi.',
+    unblock: 'Blokdan chiqarish',
+    block: 'Bloklash',
+    blockAsk: name => `${name}ni bloklaysizmi? U sizga yoza olmaydi, do‘stlikdan chiqadi va sizni ko‘rmaydi.`,
+    removeFriend: 'Do‘stlikdan chiqarish',
+    cancelRequest: 'So‘rovni bekor qilish',
+    clearChat: 'Suhbatni o‘chirish',
+    clearAsk: 'Suhbat faqat sizdan o‘chadi. Davom etasizmi?',
+    report: 'Shikoyat qilish',
+    reportAsk: 'Nima bo‘ldi? (ixtiyoriy)',
+    reported: 'Rahmat — ustoz tekshiradi.',
+    profile: 'Profil',
+    yes: 'Ha',
+    no: 'Yo‘q',
+    cancel: 'Bekor qilish',
+    send: 'Yuborish',
+    recording: 'Yozilmoqda…',
+    voiceLimit: '1 daqiqagacha',
+    sending: 'Yuborilmoqda…',
+    seen: '✓✓',
+    delivered: '✓',
+    removed: 'Bu xabar ustoz tomonidan olib tashlandi',
+    loadOlder: 'Avvalgi xabarlar',
+    today: 'Bugun',
+    yesterday: 'Kecha',
+    locked: 'Postlari va hikoyalarini faqat do‘stlari ko‘radi',
+    lockedSub: 'Do‘st bo‘ling — keyin uning kundalik hayotini ko‘rasiz.',
+    posts: 'Postlar',
+    noPosts: 'Hali post yo‘q',
+    friendsCount: 'do‘st',
+    postsCount: 'post',
+    editProfile: 'Profilni tahrirlash',
+    bio: 'O‘zim haqimda (inglizcha)',
+    bioPh: 'e.g. I love football and want to reach C1 🚀',
+    myLevel: 'Darajam',
+    save: 'Saqlash',
+    blockedList: 'Bloklanganlar',
+    whatsNew: 'Bugun nima qildingiz? Do‘stlaringizga ko‘rsating…',
+    newPost: 'Yangi post',
+    newStory: 'Yangi hikoya',
+    story24: 'Hikoya 24 soatdan keyin o‘chadi',
+    kindPost: 'Post',
+    kindStory: 'Hikoya · 24 soat',
+    choosePhoto: 'Rasm tanlash',
+    caption: 'Izoh yozing (inglizcha)…',
+    share: 'Ulashish',
+    yourStory: 'Hikoyangiz',
+    addStory: 'Hikoya',
+    feedEmpty: 'Lenta hozircha bo‘sh',
+    feedEmptySub: 'Do‘stlar qo‘shing yoki birinchi postingizni ulashing.',
+    deletePost: 'O‘chirish',
+    deleteAsk: 'Bu post o‘chirilsinmi?',
+    likes: n => `${n} ta yoqtirish`,
+    privacy: 'Faqat do‘stlaringiz ko‘radi',
+    noFriendsYet: 'Hali do‘stingiz yo‘q',
+    bigImage: 'Rasm ochilmadi — boshqasini tanlang',
+    noMic: 'Mikrofonga ruxsat bering',
+    noRecorder: 'Bu brauzer ovoz yozolmaydi',
+    tooShort: 'Juda qisqa — tugmani bosib, gapiring'
+  };
+
+  const so = {
+    tab: 'chats', chats: null, requests: [], people: null, q: '', friends: null, friendReq: null,
+    feed: null, feedMore: false, stories: null, profile: null, personId: null,
+    withId: null, thread: null, draft: '', photo: '', busy: false, error: '', notice: '',
+    unread: { messages: 0, requests: 0, friendRequests: 0, total: 0 },
+    menu: null, msgMenu: null, confirm: null, compose: null, edit: null, viewer: null, zoom: null,
+    active: false, abort: null, connected: false, searchTimer: null
+  };
+
+  const SO_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+
+  function soAgo(at, long = false) {
+    const s = Math.max(0, (Date.now() - new Date(at).getTime()) / 1000);
+    if (s < 60) return 'hozir';
+    if (s < 3600) return `${Math.floor(s / 60)} daq${long ? ' oldin' : ''}`;
+    if (s < 86400) return `${Math.floor(s / 3600)} soat${long ? ' oldin' : ''}`;
+    if (s < 172800) return 'kecha';
+    return new Date(at).toLocaleDateString('uz-UZ', { day: 'numeric', month: 'short' });
+  }
+
+  /** A soft colour of its own for each person, so initials-only faces still look alive. */
+  const soHue = id => { let h = 2166136261; for (const c of String(id || '')) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0; return h % 360; };
+
+  function soAvatar(p, size = 'md', { ring = false } = {}) {
+    if (!p) return '';
+    return `<span class="so-av is-${size}${premiumClass(p)}${ring ? ' has-ring' : ''}" style="--h:${soHue(p.id)}">
+      <span class="so-av-in">${picInner(p)}</span>${p.online ? '<i class="so-dot" title="online"></i>' : ''}</span>`;
+  }
+
+  const soLevel = level => (level ? `<span class="so-lvl lvl-${esc(level.toLowerCase())}">${esc(level)}</span>` : '');
+  const soStatusLine = p => (p.online ? `<span class="so-online">● ${SO_UZ.online}</span>` : (p.lastSeenAt ? `<span>${esc(SO_UZ.lastSeen(p.lastSeenAt))}</span>` : ''));
+
+  // ------------------------------------------------------------- data
+
+  async function loadSocialUnread() {
+    if (!isStudentShell()) return;
+    try {
+      const u = await api('/social/unread');
+      const changed = u.total !== so.unread.total || u.requests !== so.unread.requests || u.friendRequests !== so.unread.friendRequests;
+      so.unread = u;
+      if (changed) render();
+    } catch { /* the badge stays as it was */ }
+    startSocialStream();
+  }
+
+  function startSocialStream() {
+    if (so.active || !state.token || !isStudentShell()) return;
+    so.active = true;
+    (async () => {
+      while (so.active && state.token) {
+        try { await readEvents('/social/stream', so, onSocialEvent); }
+        catch (error) { if (error.fatal) { so.active = false; return; } }
+        so.connected = false;
+        if (!so.active) return;
+        await new Promise(r => setTimeout(r, 4000));
+      }
+    })();
+  }
+
+  function stopSocialStream() {
+    so.active = false;
+    so.abort?.abort();
+  }
+
+  function onSocialEvent(event, data) {
+    if (event === 'message') {
+      const here = state.screen === 'dm' && so.withId === data.with && so.thread;
+      if (here) {
+        if (!so.thread.messages.some(m => m.id === data.message.id)) so.thread.messages.push(data.message);
+        if (so.thread.chat) so.thread.chat.status = data.status;
+        if (!data.message.mine) markThreadRead();
+        renderDm(true);
+      } else {
+        if (so.chats && state.screen === 'social') loadChats();
+        loadSocialUnread();
+      }
+      return;
+    }
+    if (event === 'read') {
+      if (state.screen === 'dm' && so.withId === data.by && so.thread) {
+        so.thread.messages.forEach(m => { if (m.mine) m.read = true; });
+        renderDm(false);
+      }
+      return;
+    }
+    if (event === 'friend' || event === 'chat') {
+      loadSocialUnread();
+      if (state.screen === 'social') loadSocialTab(so.tab, true);
+      if (state.screen === 'person' && so.personId === data.from) loadPerson(so.personId, true);
+      if (state.screen === 'dm' && so.withId === data.from) loadThread(so.withId, true);
+    }
+  }
+
+  async function openSocial(tab = so.tab) {
+    so.tab = tab;
+    so.menu = null;
+    go('social');
+    startSocialStream();
+    loadSocialTab(tab);
+    loadSocialUnread();
+  }
+
+  function loadSocialTab(tab, quiet = false) {
+    if (tab === 'chats') return loadChats(quiet);
+    if (tab === 'feed') return loadFeed(quiet);
+    return loadPeople(quiet);
+  }
+
+  async function loadChats() {
+    try {
+      const d = await api('/social/chats');
+      so.chats = d.chats; so.requests = d.requests;
+    } catch (error) { so.error = error.message; }
+    if (state.screen === 'social') render();
+  }
+
+  async function loadPeople() {
+    try {
+      const [p, f] = await Promise.all([api(`/social/people${so.q ? `?q=${encodeURIComponent(so.q)}` : ''}`), api('/social/friends')]);
+      so.people = p.people; so.friends = f.friends; so.friendReq = f.requests;
+    } catch (error) { so.error = error.message; }
+    if (state.screen === 'social') render();
+  }
+
+  async function loadFeed() {
+    try {
+      const [f, s] = await Promise.all([api('/social/feed'), api('/social/stories')]);
+      so.feed = f.posts; so.feedMore = f.more; so.stories = s.stories;
+    } catch (error) { so.error = error.message; }
+    if (state.screen === 'social') render();
+  }
+
+  async function loadMoreFeed() {
+    const last = so.feed?.[so.feed.length - 1];
+    if (!last) return;
+    try {
+      const f = await api(`/social/feed?before=${encodeURIComponent(last.at)}`);
+      so.feed = [...so.feed, ...f.posts]; so.feedMore = f.more;
+    } catch (error) { so.error = error.message; }
+    render();
+  }
+
+  async function openPerson(id) {
+    so.personId = id;
+    so.profile = null;
+    so.menu = null;
+    go('person');
+    loadPerson(id);
+  }
+
+  async function loadPerson(id) {
+    try {
+      const d = await api(id === 'me' ? '/social/me' : `/social/people/${encodeURIComponent(id)}`);
+      if (so.personId === id) so.profile = d.profile;
+    } catch (error) { so.error = error.message; so.profile = { missing: true }; }
+    if (state.screen === 'person') render();
+  }
+
+  async function openDm(id) {
+    so.withId = id;
+    so.thread = null;
+    so.draft = ''; so.photo = ''; so.menu = null; so.msgMenu = null; so.error = '';
+    go('dm');
+    startSocialStream();
+    await loadThread(id);
+  }
+
+  async function loadThread(id, quiet = false) {
+    try {
+      const d = await api(`/social/chats/${encodeURIComponent(id)}`);
+      if (so.withId === id) so.thread = d;
+      loadSocialUnread();
+    } catch (error) {
+      so.error = error.message;
+      if (!so.thread) so.thread = { missing: true, messages: [] };
+    }
+    if (state.screen === 'dm') renderDm(!quiet);
+  }
+
+  let readTimer = null;
+  function markThreadRead() {
+    clearTimeout(readTimer);
+    readTimer = setTimeout(() => { if (state.screen === 'dm' && so.withId) api(`/social/chats/${encodeURIComponent(so.withId)}`).catch(() => {}); }, 600);
+  }
+
+  async function loadOlder() {
+    const first = so.thread?.messages?.[0];
+    if (!first) return;
+    const box = document.getElementById('so-msgs');
+    const before = box ? box.scrollHeight - box.scrollTop : 0;
+    try {
+      const d = await api(`/social/chats/${encodeURIComponent(so.withId)}?before=${encodeURIComponent(first.at)}`);
+      so.thread.messages = [...d.messages, ...so.thread.messages];
+      so.thread.more = d.more;
+    } catch (error) { so.error = error.message; }
+    render();
+    const again = document.getElementById('so-msgs');
+    if (again) again.scrollTop = again.scrollHeight - before;
+  }
+
+  /** Redraw the chat; stick to the newest message when we were already at the bottom (or asked to). */
+  function renderDm(toEnd) {
+    const box = document.getElementById('so-msgs');
+    const atEnd = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    const field = document.getElementById('so-draft');
+    const focused = field && document.activeElement === field;
+    render();
+    const again = document.getElementById('so-msgs');
+    if (again && (toEnd || atEnd)) { again.scrollTop = again.scrollHeight; so.stickUntil = Date.now() + 4000; }
+    if (focused) document.getElementById('so-draft')?.focus({ preventScroll: true });
+  }
+
+  // ------------------------------------------------------------- actions
+
+  async function soDo(fn, after) {
+    if (so.busy) return;
+    so.busy = true; so.error = '';
+    render();
+    try { const out = await fn(); so.busy = false; if (after) await after(out); }
+    catch (error) { so.busy = false; so.error = error.message; }
+    render();
+  }
+
+  const friendAct = (id, act) => soDo(() => {
+    if (act === 'add') return api(`/social/people/${id}/friend`, { method: 'POST' });
+    if (act === 'accept') return api(`/social/people/${id}/accept`, { method: 'POST' });
+    return api(`/social/people/${id}/friend`, { method: 'DELETE' });
+  }, async () => {
+    loadSocialUnread();
+    if (state.screen === 'person') await loadPerson(so.personId);
+    else await loadPeople();
+  });
+
+  function blockPerson(id, name) {
+    so.confirm = {
+      text: SO_UZ.blockAsk(name), yes: SO_UZ.block, danger: true,
+      run: () => soDo(() => api(`/social/people/${id}/block`, { method: 'POST' }), async () => {
+        so.menu = null;
+        loadSocialUnread();
+        if (state.screen === 'dm') await loadThread(id);
+        else if (state.screen === 'person') await loadPerson(id);
+        else await loadSocialTab(so.tab);
+      })
+    };
+    render();
+  }
+
+  const unblockPerson = id => soDo(() => api(`/social/people/${id}/block`, { method: 'DELETE' }), async () => {
+    so.menu = null;
+    if (state.screen === 'dm') await loadThread(id);
+    else if (state.screen === 'person') await loadPerson(id);
+    else if (so.edit) { const b = await api('/social/blocked'); so.edit.blocked = b.blocked; }
+  });
+
+  function reportThing(kind, id) {
+    const reason = window.prompt(SO_UZ.reportAsk, '');
+    if (reason === null) return;
+    soDo(() => api('/social/report', { method: 'POST', body: { kind, id, reason } }), () => {
+      so.menu = null; so.msgMenu = null;
+      so.notice = SO_UZ.reported;
+      setTimeout(() => { so.notice = ''; render(); }, 3500);
+    });
+  }
+
+  async function sendDm() {
+    const text = so.draft.trim();
+    if ((!text && !so.photo) || so.busy) return;
+    so.busy = true; so.error = '';
+    renderDm(true);
+    try {
+      const out = await api(`/social/chats/${encodeURIComponent(so.withId)}`, { method: 'POST', body: so.photo ? { photo: so.photo, text } : { text } });
+      if (!so.thread.messages.some(m => m.id === out.message.id)) so.thread.messages.push(out.message);
+      if (!so.thread.chat) await loadThread(so.withId, true);
+      else so.thread.chat.status = out.status;
+      so.draft = ''; so.photo = '';
+      const field = document.getElementById('so-draft');
+      if (field) field.value = '';
+    } catch (error) { so.error = error.message; }
+    so.busy = false;
+    renderDm(true);
+  }
+
+  // Voice messages in a private chat: tap the mic, speak (up to a minute), send.
+  const dmRec = { rec: null, stream: null, chunks: [], start: 0, timer: null };
+  const dmRecSeconds = () => (dmRec.start ? Math.min(60, (Date.now() - dmRec.start) / 1000) : 0);
+
+  async function startDmVoice() {
+    if (dmRec.rec || so.busy) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { so.error = SO_UZ.noRecorder; return render(); }
+    stopVoicePlayback();
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+    catch { so.error = SO_UZ.noMic; return render(); }
+    const type = recorderType();
+    let rec;
+    try { rec = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: 32000 }); }
+    catch { stream.getTracks().forEach(t => t.stop()); so.error = SO_UZ.noRecorder; return render(); }
+    Object.assign(dmRec, { rec, stream, chunks: [], start: Date.now() });
+    rec.ondataavailable = e => { if (e.data?.size) dmRec.chunks.push(e.data); };
+    rec.start(250);
+    clearInterval(dmRec.timer);
+    dmRec.timer = setInterval(() => {
+      const el = document.getElementById('so-rec-time');
+      if (el) el.textContent = mmss(dmRecSeconds());
+      if (dmRecSeconds() >= 60) finishDmVoice(true);
+    }, 250);
+    so.error = '';
+    renderDm(true);
+  }
+
+  function releaseDmMic() {
+    clearInterval(dmRec.timer);
+    dmRec.timer = null;
+    dmRec.stream?.getTracks().forEach(t => t.stop());
+    dmRec.stream = null;
+  }
+
+  function cancelDmVoice() {
+    const rec = dmRec.rec;
+    dmRec.rec = null; dmRec.start = 0;
+    if (rec && rec.state !== 'inactive') { rec.ondataavailable = null; rec.onstop = null; try { rec.stop(); } catch { /* stopped */ } }
+    releaseDmMic();
+  }
+
+  async function finishDmVoice(sendIt) {
+    const rec = dmRec.rec;
+    if (!rec) return;
+    if (!sendIt) { cancelDmVoice(); return renderDm(false); }
+    const seconds = dmRecSeconds();
+    dmRec.rec = null;
+    clearInterval(dmRec.timer);
+    so.busy = true;
+    renderDm(true);
+    const blob = await new Promise(resolve => {
+      rec.onstop = () => resolve(new Blob(dmRec.chunks, { type: rec.mimeType || 'audio/webm' }));
+      try { rec.stop(); } catch { resolve(new Blob(dmRec.chunks, { type: rec.mimeType || 'audio/webm' })); }
+    });
+    releaseDmMic();
+    dmRec.start = 0;
+    try {
+      if (seconds < 1 || blob.size < 500) throw new Error(SO_UZ.tooShort);
+      const form = new FormData();
+      form.append('seconds', String(Math.round(seconds)));
+      form.append('audio', blob, `voice.${blob.type.includes('mp4') ? 'm4a' : 'webm'}`);
+      const out = await api(`/social/chats/${encodeURIComponent(so.withId)}/voice`, { method: 'POST', form });
+      if (!so.thread.messages.some(m => m.id === out.message.id)) so.thread.messages.push(out.message);
+      if (so.thread.chat) so.thread.chat.status = out.status;
+    } catch (error) { so.error = error.message; }
+    so.busy = false;
+    if (state.screen === 'dm') renderDm(true);
+  }
+
+  async function sharePost() {
+    const c = so.compose;
+    if (!c || so.busy) return;
+    const text = (document.getElementById('so-caption')?.value || c.text || '').trim();
+    c.text = text;
+    await soDo(() => api('/social/posts', { method: 'POST', body: { kind: c.kind, text, photo: c.photo || undefined } }), async () => {
+      so.compose = null;
+      so.tab = 'feed';
+      await loadFeed();
+    });
+  }
+
+  async function likePost(id) {
+    const all = [...(so.feed || []), ...(so.profile?.posts || [])].filter(p => p.id === id);
+    if (!all.length) return;
+    const was = all[0].liked;
+    all.forEach(p => { p.liked = !was; p.likes += was ? -1 : 1; });
+    render();
+    try { await api(`/social/posts/${id}/like`, { method: 'POST' }); }
+    catch (error) { all.forEach(p => { p.liked = was; p.likes += was ? 1 : -1; }); so.error = error.message; render(); }
+  }
+
+  function deletePost(id) {
+    so.confirm = {
+      text: SO_UZ.deleteAsk, yes: SO_UZ.deletePost, danger: true,
+      run: () => soDo(() => api(`/social/posts/${id}`, { method: 'DELETE' }), async () => {
+        so.menu = null; so.viewer = null;
+        if (state.screen === 'person') await loadPerson(so.personId); else await loadFeed();
+      })
+    };
+    render();
+  }
+
+  async function saveProfile() {
+    const bio = document.getElementById('so-bio')?.value ?? so.edit?.bio ?? '';
+    const level = document.getElementById('so-level')?.value ?? '';
+    await soDo(() => api('/social/me', { method: 'PATCH', body: { bio, level } }), out => {
+      so.edit = null;
+      if (state.screen === 'person' && so.personId === 'me') so.profile = out.profile;
+    });
+  }
+
+  // Stories: full-screen, one after another, 5 seconds each; seen ones lose their ring.
+  const seenStories = new Set((() => { try { return JSON.parse(store.get('so-seen') || '[]'); } catch { return []; } })());
+  const groupSeen = g => g.items.every(i => seenStories.has(i.id));
+  let storyTimer = null;
+
+  function openStories(groups, gi) {
+    so.viewer = { groups, gi, ii: Math.max(0, groups[gi].items.findIndex(i => !seenStories.has(i.id))) };
+    showStory();
+  }
+
+  function showStory() {
+    clearTimeout(storyTimer);
+    const v = so.viewer;
+    if (!v) return render();
+    const item = v.groups[v.gi]?.items[v.ii];
+    if (!item) { so.viewer = null; return render(); }
+    seenStories.add(item.id);
+    try { store.set('so-seen', JSON.stringify([...seenStories].slice(-400))); } catch { /* fine */ }
+    render();
+    storyTimer = setTimeout(() => stepStory(1), 5000);
+  }
+
+  function stepStory(dir) {
+    const v = so.viewer;
+    if (!v) return;
+    v.ii += dir;
+    if (v.ii < 0) { v.gi -= 1; v.ii = v.gi >= 0 ? v.groups[v.gi].items.length - 1 : 0; }
+    if (v.gi >= 0 && v.ii >= v.groups[v.gi].items.length) { v.gi += 1; v.ii = 0; }
+    if (v.gi < 0 || v.gi >= v.groups.length) { so.viewer = null; clearTimeout(storyTimer); return render(); }
+    showStory();
+  }
+
+  // ------------------------------------------------------------- markup
+
+  function socialTabs() {
+    const badge = n => (n ? `<span class="so-badge">${n > 99 ? '99+' : n}</span>` : '');
+    const counts = { chats: so.unread.messages + so.unread.requests, feed: 0, people: so.unread.friendRequests };
+    return `<div class="so-seg" role="tablist">${Object.entries(SO_UZ.tabs).map(([k, label]) => `
+      <button role="tab" class="so-seg-btn ${so.tab === k ? 'is-on' : ''}" data-so="tab" data-tab="${k}" aria-selected="${so.tab === k}">${label}${badge(counts[k])}</button>`).join('')}</div>`;
+  }
+
+  function socialScreen() {
+    const body = so.tab === 'chats' ? chatsView() : so.tab === 'feed' ? feedView() : peopleView();
+    return `<section class="so-page">
+      <header class="so-head">
+        <div><h1>${SO_UZ.title}</h1><p>${esc(SO_UZ.privacy)}</p></div>
+        <button class="so-me" data-so="me" aria-label="${SO_UZ.profile}">${soAvatar({ id: state.user?.id || state.user?._id || 'me', name: pr.state?.name || state.user?.firstName || '', avatar: pr.state?.avatar, premium: pr.state?.active }, 'sm')}</button>
+      </header>
+      ${socialTabs()}
+      ${so.error ? `<div class="so-error" role="alert">${esc(so.error)}</div>` : ''}
+      ${so.notice ? `<div class="so-toast" role="status">${esc(so.notice)}</div>` : ''}
+      ${body}
+    </section>${soOverlays()}`;
+  }
+
+  const soSpinner = () => '<div class="center-note"><span class="spinner"></span></div>';
+
+  function chatRow(c, { request = false } = {}) {
+    const p = c.with;
+    const last = c.last ? `${c.last.mine ? SO_UZ.you : ''}${esc(c.last.text)}` : '';
+    return `<div class="so-row ${c.unread ? 'is-unread' : ''}">
+      <button class="so-row-main" data-so="dm" data-id="${esc(p.id)}">
+        ${soAvatar(p, 'md')}
+        <span class="so-row-text">
+          <span class="so-row-top"><strong>${nameMarkup(p)}</strong>${soLevel(p.level)}<time>${esc(soAgo(c.lastAt))}</time></span>
+          <span class="so-row-sub">${c.waiting ? `<em>${SO_UZ.sent}</em> · ` : ''}${last}</span>
+        </span>
+        ${c.unread && !request ? `<span class="so-pill">${c.unread}</span>` : ''}
+      </button>
+      ${request ? `<div class="so-row-acts">
+        <button class="btn btn-sm" data-so="chat-accept" data-id="${esc(p.id)}">${SO_UZ.accept}</button>
+        <button class="btn btn-ghost btn-sm" data-so="chat-decline" data-id="${esc(p.id)}">${SO_UZ.decline}</button>
+        <button class="so-icon-btn" data-so="block" data-id="${esc(p.id)}" data-name="${esc(p.name)}" title="${SO_UZ.block}" aria-label="${SO_UZ.block}">⛔</button>
+      </div>` : ''}
+    </div>`;
+  }
+
+  function chatsView() {
+    if (!so.chats) return soSpinner();
+    const req = so.requests.length ? `<details class="so-card so-requests" ${so.requestsOpen !== false ? 'open' : ''}>
+        <summary><span>${SO_UZ.requestsTitle(so.requests.length)}</span><small>${SO_UZ.requestsSub}</small></summary>
+        ${so.requests.map(c => chatRow(c, { request: true })).join('')}
+      </details>` : '';
+    const list = so.chats.length
+      ? `<div class="so-card so-list">${so.chats.map(c => chatRow(c)).join('')}</div>`
+      : `<div class="so-empty"><div class="so-empty-art">💬</div><h3>${SO_UZ.noChats}</h3><p>${SO_UZ.noChatsSub}</p>
+          <button class="btn" data-so="tab" data-tab="people">${SO_UZ.findPeople}</button></div>`;
+    return `${req}${list}`;
+  }
+
+  function relationButton(p, { big = false } = {}) {
+    const cls = big ? 'btn' : 'btn btn-sm';
+    if (p.relation === 'friends') return `<button class="${cls} btn-ghost so-is-friend" data-so="menu" data-menu="friend-${esc(p.id)}">✓ ${SO_UZ.friends}</button>`;
+    if (p.relation === 'sent') return `<button class="${cls} btn-ghost" data-so="friend" data-act="remove" data-id="${esc(p.id)}" title="${SO_UZ.cancelRequest}">${SO_UZ.sent}</button>`;
+    if (p.relation === 'incoming') return `<button class="${cls}" data-so="friend" data-act="accept" data-id="${esc(p.id)}">${SO_UZ.accept}</button>`;
+    return `<button class="${cls} so-add" data-so="friend" data-act="add" data-id="${esc(p.id)}">＋ ${big ? SO_UZ.add : SO_UZ.addShort}</button>`;
+  }
+
+  function personCard(p) {
+    return `<div class="so-person">
+      <button class="so-person-main" data-so="person" data-id="${esc(p.id)}">
+        ${soAvatar(p, 'lg')}
+        <strong>${nameMarkup(p)}</strong>
+        <span class="so-person-meta">${soLevel(p.level)}${p.online ? `<span class="so-online">● ${SO_UZ.online}</span>` : ''}</span>
+      </button>
+      <div class="so-person-acts">${relationButton(p)}
+        <button class="so-icon-btn" data-so="dm" data-id="${esc(p.id)}" title="${SO_UZ.message}" aria-label="${SO_UZ.message}">${icon('message')}</button></div>
+    </div>`;
+  }
+
+  function peopleView() {
+    const reqs = so.friendReq?.incoming || [];
+    const reqBlock = reqs.length ? `<div class="so-card"><h3 class="so-h3">${SO_UZ.friendReqTitle(reqs.length)}</h3>
+      ${reqs.map(p => `<div class="so-row"><button class="so-row-main" data-so="person" data-id="${esc(p.id)}">${soAvatar(p, 'md')}
+        <span class="so-row-text"><span class="so-row-top"><strong>${nameMarkup(p)}</strong>${soLevel(p.level)}</span></span></button>
+        <div class="so-row-acts"><button class="btn btn-sm" data-so="friend" data-act="accept" data-id="${esc(p.id)}">${SO_UZ.accept}</button>
+        <button class="btn btn-ghost btn-sm" data-so="friend" data-act="remove" data-id="${esc(p.id)}">${SO_UZ.decline}</button></div></div>`).join('')}</div>` : '';
+    const friendsRow = so.friends?.length ? `<div class="so-friends-row"><h3 class="so-h3">${SO_UZ.myFriends} · ${so.friends.length}</h3>
+      <div class="so-hscroll">${so.friends.map(p => `<button class="so-mini" data-so="person" data-id="${esc(p.id)}">${soAvatar(p, 'md')}<span>${esc(p.name.split(' ')[0])}</span></button>`).join('')}</div></div>` : '';
+    const list = !so.people ? soSpinner()
+      : so.people.length ? `<div class="so-grid">${so.people.map(personCard).join('')}</div>`
+        : `<p class="so-muted-center">${SO_UZ.noPeople}</p>`;
+    return `<label class="so-search">${icon('search')}<input id="so-q" type="search" data-keep placeholder="${esc(SO_UZ.search)}" value="${esc(so.q)}" autocomplete="off"></label>
+      ${reqBlock}${so.q ? '' : friendsRow}
+      <h3 class="so-h3">${SO_UZ.everyone}</h3>${list}`;
+  }
+
+  function storiesBar() {
+    const groups = so.stories || [];
+    const mine = groups.find(g => g.mine);
+    const me = { id: state.user?.id || state.user?._id || 'me', name: pr.state?.name || state.user?.firstName || '', avatar: pr.state?.avatar, premium: pr.state?.active };
+    const first = `<div class="so-story-me">
+      <button class="so-story" data-so="${mine ? 'story-open' : 'compose'}" data-kind="story" data-gi="${mine ? groups.indexOf(mine) : ''}">
+        ${soAvatar(me, 'lg', { ring: Boolean(mine) })}<span>${mine ? SO_UZ.yourStory : SO_UZ.addStory}</span></button>
+      <button class="so-story-plus" data-so="compose" data-kind="story" aria-label="${SO_UZ.newStory}">＋</button></div>`;
+    const others = groups.filter(g => !g.mine).map(g => `<button class="so-story ${groupSeen(g) ? 'is-seen' : ''}" data-so="story-open" data-gi="${groups.indexOf(g)}">
+      ${soAvatar(g.user, 'lg', { ring: true })}<span>${esc(g.user.name.split(' ')[0])}</span></button>`).join('');
+    return `<div class="so-stories so-hscroll">${first}${others}</div>`;
+  }
+
+  function postCard(p) {
+    const u = p.user || {};
+    return `<article class="so-post">
+      <header><button class="so-post-who" data-so="person" data-id="${esc(u.id)}">${soAvatar(u, 'sm')}
+        <span><strong>${nameMarkup(u)}</strong>${soLevel(u.level)}<time>${esc(soAgo(p.at, true))}</time></span></button>
+        <button class="so-icon-btn" data-so="menu" data-menu="post-${esc(p.id)}" aria-label="…">⋯</button>
+        ${so.menu === `post-${p.id}` ? `<div class="so-pop">${p.mine
+          ? `<button data-so="post-delete" data-id="${esc(p.id)}">🗑 ${SO_UZ.deletePost}</button>`
+          : `<button data-so="report" data-kind="post" data-id="${esc(p.id)}">🚩 ${SO_UZ.report}</button>`}</div>` : ''}
+      </header>
+      ${p.photo ? `<button class="so-post-photo" data-so="zoom" data-src="${esc(p.photo)}"><img data-authsrc="${esc(p.photo)}" data-quiet alt="" loading="lazy"></button>` : ''}
+      ${p.text ? `<p class="so-post-text ${p.photo ? '' : 'is-big'}">${esc(p.text)}</p>` : ''}
+      <footer><button class="so-like ${p.liked ? 'is-on' : ''}" data-so="like" data-id="${esc(p.id)}" aria-pressed="${p.liked}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 4.5 6.8 4.5c2.1 0 3.6 1.1 5.2 3 1.6-1.9 3.1-3 5.2-3 3.8 0 5.9 3.9 4.4 7.3C19.5 16.4 12 21 12 21z"/></svg>
+        <span>${p.likes ? SO_UZ.likes(p.likes) : ''}</span></button></footer>
+    </article>`;
+  }
+
+  function feedView() {
+    if (!so.feed) return soSpinner();
+    const composeCard = `<button class="so-card so-compose-card" data-so="compose" data-kind="post">
+      ${soAvatar({ id: state.user?.id || state.user?._id || 'me', name: pr.state?.name || state.user?.firstName || '', avatar: pr.state?.avatar }, 'sm')}
+      <span>${SO_UZ.whatsNew}</span><span class="so-compose-ic">${icon('image')}</span></button>`;
+    const posts = so.feed.length ? so.feed.map(postCard).join('')
+      : `<div class="so-empty"><div class="so-empty-art">📸</div><h3>${SO_UZ.feedEmpty}</h3><p>${SO_UZ.feedEmptySub}</p>
+          <button class="btn btn-ghost" data-so="tab" data-tab="people">${SO_UZ.findPeople}</button></div>`;
+    return `${storiesBar()}${composeCard}<div class="so-feed">${posts}</div>
+      ${so.feedMore ? `<button class="btn btn-ghost btn-block" data-so="more-feed">${SO_UZ.loadOlder}</button>` : ''}`;
+  }
+
+  function personScreen() {
+    const p = so.profile;
+    const back = `<button class="crumb" data-so="back-social">${icon('left')} ${SO_UZ.title}</button>`;
+    if (!p) return `${back}${soSpinner()}`;
+    if (p.missing) return `${back}<div class="so-empty"><h3>${SO_UZ.noPeople}</h3></div>`;
+    const hasStories = p.open && p.stories?.length;
+    const actions = p.self
+      ? `<button class="btn btn-ghost" data-so="edit">${icon('pen')} ${SO_UZ.editProfile}</button>`
+      : `${relationButton(p, { big: true })}<button class="btn" data-so="dm" data-id="${esc(p.id)}">${icon('message')} ${SO_UZ.message}</button>
+         <button class="so-icon-btn is-big" data-so="menu" data-menu="person" aria-label="…">⋯</button>
+         ${so.menu === 'person' ? `<div class="so-pop is-right">
+            ${p.relation === 'friends' ? `<button data-so="friend" data-act="remove" data-id="${esc(p.id)}">${SO_UZ.removeFriend}</button>` : ''}
+            <button data-so="report" data-kind="user" data-id="${esc(p.id)}">🚩 ${SO_UZ.report}</button>
+            <button class="is-danger" data-so="block" data-id="${esc(p.id)}" data-name="${esc(p.name)}">⛔ ${SO_UZ.block}</button></div>` : ''}`;
+    const friendMenu = so.menu === `friend-${p.id}` ? `<div class="so-pop"><button data-so="friend" data-act="remove" data-id="${esc(p.id)}">${SO_UZ.removeFriend}</button></div>` : '';
+    const head = `<section class="so-card so-profile" style="--h:${soHue(p.id)}">
+      <div class="so-profile-cover"></div>
+      <button class="so-profile-av" ${hasStories ? 'data-so="profile-stories"' : 'disabled'}>${soAvatar(p, 'xl', { ring: Boolean(hasStories) })}</button>
+      <h2>${nameMarkup(p)}</h2>
+      <div class="so-profile-meta">${soLevel(p.level)}${soStatusLine(p)}</div>
+      ${p.open && p.bio ? `<p class="so-bio">${esc(p.bio)}</p>` : ''}
+      ${p.open ? `<div class="so-stats"><span><b>${p.friendCount ?? 0}</b> ${SO_UZ.friendsCount}</span><span><b>${p.posts?.length ?? 0}</b> ${SO_UZ.postsCount}</span></div>` : ''}
+      <div class="so-profile-acts">${actions}${friendMenu}</div>
+    </section>`;
+    if (!p.open) {
+      return `${back}${head}<div class="so-card so-locked"><div class="so-lock">${icon('lock')}</div><h3>${SO_UZ.locked}</h3><p>${SO_UZ.lockedSub}</p></div>${soOverlays()}`;
+    }
+    const posts = p.posts?.length ? `<div class="so-feed">${p.posts.map(x => postCard({ ...x, user: x.user || p })).join('')}</div>`
+      : `<p class="so-muted-center">${SO_UZ.noPosts}</p>`;
+    return `${back}${so.error ? `<div class="so-error">${esc(so.error)}</div>` : ''}${so.notice ? `<div class="so-toast">${esc(so.notice)}</div>` : ''}
+      ${head}<h3 class="so-h3">${SO_UZ.posts}</h3>${posts}${soOverlays()}`;
+  }
+
+  function dmDay(at) {
+    const d = new Date(at); const t = new Date();
+    if (d.toDateString() === t.toDateString()) return SO_UZ.today;
+    const y = new Date(t); y.setDate(t.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return SO_UZ.yesterday;
+    return d.toLocaleDateString('uz-UZ', { day: 'numeric', month: 'long' });
+  }
+
+  function dmBubble(m, prev) {
+    const cont = prev && prev.from === m.from && (new Date(m.at) - new Date(prev.at)) < 3 * 60e3;
+    const body = m.removed ? `<em class="so-removed">${SO_UZ.removed}</em>`
+      : m.kind === 'photo' ? `<button class="so-dm-photo" data-so="zoom" data-src="${esc(m.photo)}"><img data-authsrc="${esc(m.photo)}" data-quiet alt=""></button>${m.text ? `<span class="so-dm-text">${esc(m.text)}</span>` : ''}`
+        : m.kind === 'voice' ? voiceMarkup({ id: m.id, audio: m.audio, seconds: m.seconds })
+          : `<span class="so-dm-text">${esc(m.text)}</span>`;
+    const time = new Date(m.at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const menu = !m.mine && !m.removed && so.msgMenu === m.id
+      ? `<div class="so-pop is-msg"><button data-so="report" data-kind="message" data-id="${esc(m.id)}">🚩 ${SO_UZ.report}</button></div>` : '';
+    return `<div class="so-msg ${m.mine ? 'is-mine' : 'is-theirs'} ${cont ? 'is-cont' : ''} is-${m.kind}">
+      <div class="so-bubble" ${!m.mine && !m.removed ? `data-so="msg-menu" data-id="${esc(m.id)}"` : ''}>${body}
+        <span class="so-meta">${esc(time)}${m.mine ? ` <span class="so-tick ${m.read ? 'is-read' : ''}">${m.read ? SO_UZ.seen : SO_UZ.delivered}</span>` : ''}</span></div>${menu}
+    </div>`;
+  }
+
+  function dmComposer(t) {
+    const chat = t.chat;
+    const name = esc(t.with?.name || '');
+    if (t.blocked) {
+      return `<div class="so-dm-note"><p>${SO_UZ.cantWrite}</p><button class="btn btn-ghost btn-sm" data-so="unblock" data-id="${esc(t.with.id)}">${SO_UZ.unblock}</button></div>`;
+    }
+    if (chat?.incoming) {
+      return `<div class="so-dm-note is-request"><p>${SO_UZ.incomingNote(name)}</p><div class="so-row-acts">
+        <button class="btn" data-so="chat-accept" data-id="${esc(t.with.id)}">${SO_UZ.accept}</button>
+        <button class="btn btn-ghost" data-so="chat-decline" data-id="${esc(t.with.id)}">${SO_UZ.decline}</button>
+        <button class="btn btn-ghost" data-so="block" data-id="${esc(t.with.id)}" data-name="${name}">⛔ ${SO_UZ.block}</button></div></div>`;
+    }
+    if (chat?.waiting) return `<div class="so-dm-note"><p>⏳ ${SO_UZ.waiting}</p></div>`;
+    const textOnly = !chat && t.with?.relation !== 'friends';
+    if (dmRec.rec || (so.busy && dmRec.start)) {
+      return `<div class="so-compose is-recording">
+        <button type="button" class="so-round is-cancel" data-so="rec-cancel" aria-label="${SO_UZ.cancel}">${CLOSE_X}</button>
+        <div class="so-recbar"><span class="so-recdot"></span><span id="so-rec-time">${mmss(dmRecSeconds())}</span><span>${SO_UZ.recording}</span><small>${SO_UZ.voiceLimit}</small></div>
+        <button type="button" class="so-round is-send" data-so="rec-send" aria-label="${SO_UZ.send}">${SEND}</button></div>`;
+    }
+    return `${textOnly ? `<p class="so-first-note">✉️ ${SO_UZ.firstNote}</p>` : ''}
+      ${so.photo ? `<div class="so-preview"><img src="${so.photo}" alt=""><button type="button" data-so="unphoto" aria-label="${SO_UZ.cancel}">×</button></div>` : ''}
+      <form class="so-compose" id="so-compose" autocomplete="off">
+        ${textOnly ? '' : `<label class="so-round is-ghost" title="${SO_UZ.choosePhoto}" aria-label="${SO_UZ.choosePhoto}">${icon('image')}<input type="file" id="so-dm-file" accept="image/*" hidden></label>`}
+        <textarea id="so-draft" data-keep rows="1" maxlength="500" placeholder="${esc(SO_UZ.placeholder)}" enterkeyhint="send">${esc(so.draft)}</textarea>
+        ${!textOnly && !so.draft.trim() && !so.photo
+          ? `<button type="button" class="so-round is-mic" data-so="rec-start" aria-label="${SO_UZ.voice}">${icon('mic')}</button>`
+          : `<button type="submit" class="so-round is-send" ${so.busy ? 'disabled' : ''} aria-label="${SO_UZ.send}">${so.busy ? '<span class="spinner"></span>' : SEND}</button>`}
+      </form>`;
+  }
+
+  function dmScreen() {
+    const t = so.thread;
+    if (!t) return `<section class="so-dm">${soSpinner()}</section>`;
+    if (t.missing) return `<section class="so-dm"><button class="crumb" data-so="back-chats">${icon('left')} ${SO_UZ.tabs.chats}</button><div class="so-error">${esc(so.error)}</div></section>`;
+    const p = t.with;
+    let lastDay = '';
+    const msgs = t.messages.map((m, i) => {
+      const day = dmDay(m.at);
+      const sep = day !== lastDay ? `<div class="so-daysep"><span>${esc(day)}</span></div>` : '';
+      lastDay = day;
+      return sep + dmBubble(m, i && t.messages[i - 1].at && dmDay(t.messages[i - 1].at) === day ? t.messages[i - 1] : null);
+    }).join('');
+    const menu = so.menu === 'dm' ? `<div class="so-pop is-right">
+      <button data-so="person" data-id="${esc(p.id)}">${icon('user')} ${SO_UZ.profile}</button>
+      ${t.chat ? `<button data-so="clear" data-id="${esc(p.id)}">🗑 ${SO_UZ.clearChat}</button>` : ''}
+      <button data-so="report" data-kind="user" data-id="${esc(p.id)}">🚩 ${SO_UZ.report}</button>
+      ${t.blocked ? `<button data-so="unblock" data-id="${esc(p.id)}">${SO_UZ.unblock}</button>`
+        : `<button class="is-danger" data-so="block" data-id="${esc(p.id)}" data-name="${esc(p.name)}">⛔ ${SO_UZ.block}</button>`}</div>` : '';
+    return `<section class="so-dm" style="--h:${soHue(p.id)}">
+      <header class="so-dm-head">
+        <button class="so-round is-ghost" data-so="back-chats" aria-label="Orqaga">${icon('left')}</button>
+        <button class="so-dm-who" data-so="person" data-id="${esc(p.id)}">${soAvatar(p, 'sm')}
+          <span><strong>${nameMarkup(p)}</strong><small>${soLevel(p.level)} ${soStatusLine(p)}</small></span></button>
+        <button class="so-round is-ghost" data-so="menu" data-menu="dm" aria-label="…">⋯</button>${menu}
+      </header>
+      <div class="so-msgs" id="so-msgs" aria-live="polite">
+        ${t.more ? `<button class="so-older" data-so="older">${SO_UZ.loadOlder}</button>` : ''}
+        ${msgs || `<div class="so-dm-hello">${soAvatar(p, 'xl')}<strong>${esc(p.name)}</strong><span>Say hello in English 👋</span></div>`}
+      </div>
+      ${so.error ? `<div class="so-error is-dm" role="alert">${esc(so.error)}</div>` : ''}
+      ${so.notice ? `<div class="so-toast">${esc(so.notice)}</div>` : ''}
+      <footer class="so-dm-foot">${dmComposer(t)}</footer>
+    </section>${soOverlays()}`;
+  }
+
+  function soOverlays() {
+    let out = '';
+    if (so.zoom) out += `<div class="so-zoom" data-so="unzoom"><img data-authsrc="${esc(so.zoom)}" data-quiet alt=""></div>`;
+    if (so.confirm) {
+      out += `<div class="so-sheet-wrap" data-so="confirm-no"><div class="so-sheet is-small" data-stop><p>${esc(so.confirm.text)}</p>
+        <div class="so-sheet-acts"><button class="btn btn-ghost" data-so="confirm-no">${SO_UZ.cancel}</button>
+        <button class="btn ${so.confirm.danger ? 'btn-danger' : ''}" data-so="confirm-yes">${esc(so.confirm.yes || SO_UZ.yes)}</button></div></div></div>`;
+    }
+    if (so.compose) {
+      const c = so.compose;
+      out += `<div class="so-sheet-wrap" data-so="compose-close"><form class="so-sheet" id="so-compose-form" data-stop>
+        <header><h3>${c.kind === 'story' ? SO_UZ.newStory : SO_UZ.newPost}</h3><button type="button" class="so-round is-ghost" data-so="compose-close" aria-label="${SO_UZ.cancel}">${CLOSE_X}</button></header>
+        <div class="so-seg is-small">
+          <button type="button" class="so-seg-btn ${c.kind === 'post' ? 'is-on' : ''}" data-so="compose-kind" data-kind="post">${SO_UZ.kindPost}</button>
+          <button type="button" class="so-seg-btn ${c.kind === 'story' ? 'is-on' : ''}" data-so="compose-kind" data-kind="story">${SO_UZ.kindStory}</button></div>
+        ${c.photo ? `<div class="so-compose-photo ${c.kind === 'story' ? 'is-story' : ''}"><img src="${c.photo}" alt=""><button type="button" data-so="compose-unphoto" aria-label="${SO_UZ.cancel}">×</button></div>`
+          : `<label class="so-drop">${icon('image')}<span>${SO_UZ.choosePhoto}</span><input type="file" id="so-post-file" accept="image/*" hidden></label>`}
+        <textarea id="so-caption" rows="3" maxlength="500" placeholder="${esc(SO_UZ.caption)}">${esc(c.text || '')}</textarea>
+        <p class="so-hint">🔒 ${SO_UZ.privacy}${c.kind === 'story' ? ` · ${SO_UZ.story24}` : ''}</p>
+        ${so.error ? `<div class="so-error">${esc(so.error)}</div>` : ''}
+        <button class="btn btn-block" type="submit" ${so.busy || (c.kind === 'story' && !c.photo) ? 'disabled' : ''}>${so.busy ? SO_UZ.sending : SO_UZ.share}</button>
+      </form></div>`;
+    }
+    if (so.edit) {
+      const e = so.edit;
+      out += `<div class="so-sheet-wrap" data-so="edit-close"><form class="so-sheet" id="so-edit-form" data-stop>
+        <header><h3>${SO_UZ.editProfile}</h3><button type="button" class="so-round is-ghost" data-so="edit-close" aria-label="${SO_UZ.cancel}">${CLOSE_X}</button></header>
+        <label class="field"><span>${SO_UZ.bio}</span><textarea id="so-bio" rows="3" maxlength="160" placeholder="${esc(SO_UZ.bioPh)}">${esc(e.bio || '')}</textarea></label>
+        <label class="field"><span>${SO_UZ.myLevel}</span><select id="so-level"><option value="">—</option>${SO_LEVELS.map(l => `<option ${e.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        ${so.error ? `<div class="so-error">${esc(so.error)}</div>` : ''}
+        <button class="btn btn-block" type="submit" ${so.busy ? 'disabled' : ''}>${SO_UZ.save}</button>
+        ${e.blocked?.length ? `<h4 class="so-h3">${SO_UZ.blockedList}</h4>${e.blocked.map(b => `<div class="so-row"><span class="so-row-main">${soAvatar(b, 'sm')}<span class="so-row-text"><strong>${esc(b.name)}</strong></span></span>
+          <button type="button" class="btn btn-ghost btn-sm" data-so="unblock" data-id="${esc(b.id)}">${SO_UZ.unblock}</button></div>`).join('')}` : ''}
+      </form></div>`;
+    }
+    if (so.viewer) {
+      const v = so.viewer;
+      const g = v.groups[v.gi];
+      const item = g?.items[v.ii];
+      if (item) {
+        out += `<div class="so-viewer" role="dialog" aria-label="${esc(g.user.name)}">
+          <div class="so-viewer-bars">${g.items.map((x, i) => `<i class="${i < v.ii ? 'is-done' : i === v.ii ? 'is-now' : ''}"></i>`).join('')}</div>
+          <header>${soAvatar(g.user, 'sm')}<strong>${esc(g.user.name)}</strong><time>${esc(soAgo(item.at, true))}</time>
+            ${item.mine ? `<button class="so-round is-ghost is-light" data-so="post-delete" data-id="${esc(item.id)}" aria-label="${SO_UZ.deletePost}">🗑</button>`
+              : `<button class="so-round is-ghost is-light" data-so="report" data-kind="post" data-id="${esc(item.id)}" aria-label="${SO_UZ.report}">🚩</button>`}
+            <button class="so-round is-ghost is-light" data-so="viewer-close" aria-label="${SO_UZ.cancel}">${CLOSE_X}</button></header>
+          <img data-authsrc="${esc(item.photo)}" data-quiet alt="">
+          ${item.text ? `<p class="so-viewer-text">${esc(item.text)}</p>` : ''}
+          <button class="so-viewer-prev" data-so="story-step" data-dir="-1" aria-label="Oldingi"></button>
+          <button class="so-viewer-next" data-so="story-step" data-dir="1" aria-label="Keyingi"></button>
+        </div>`;
+      }
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------- events
+  //
+  // One listener for the whole page, installed once: the screens are redrawn
+  // all the time, so every control carries data-so="<action>".
+
+  function soAction(action, el, event) {
+    const id = el.dataset.id;
+    switch (action) {
+      case 'tab': so.tab = el.dataset.tab; so.menu = null; so.error = ''; if (state.screen !== 'social') return openSocial(so.tab); render(); return loadSocialTab(so.tab);
+      case 'me': return openPerson('me');
+      case 'person': if (state.screen === 'dm') cancelDmVoice(); return openPerson(id);
+      case 'dm': return openDm(id);
+      case 'back-social': so.profile = null; return openSocial(so.tab);
+      case 'back-chats': cancelDmVoice(); so.thread = null; so.withId = null; return openSocial(state.screen === 'dm' ? 'chats' : so.tab);
+      case 'friend': return friendAct(id, el.dataset.act);
+      case 'block': return blockPerson(id, el.dataset.name || '');
+      case 'unblock': return unblockPerson(id);
+      case 'report': return reportThing(el.dataset.kind, id);
+      case 'menu': so.menu = so.menu === el.dataset.menu ? null : el.dataset.menu; return render();
+      case 'msg-menu': so.msgMenu = so.msgMenu === id ? null : id; return renderDm(false);
+      case 'chat-accept': return soDo(() => api(`/social/chats/${id}/accept`, { method: 'POST' }), async () => { loadSocialUnread(); if (state.screen === 'dm') await loadThread(id); else await loadChats(); });
+      case 'chat-decline': return soDo(() => api(`/social/chats/${id}/decline`, { method: 'POST' }), async () => { loadSocialUnread(); if (state.screen === 'dm') return openSocial('chats'); await loadChats(); });
+      case 'clear':
+        so.confirm = { text: SO_UZ.clearAsk, yes: SO_UZ.clearChat, danger: true, run: () => soDo(() => api(`/social/chats/${id}`, { method: 'DELETE' }), () => openSocial('chats')) };
+        so.menu = null; return render();
+      case 'confirm-yes': { const c = so.confirm; so.confirm = null; return c?.run(); }
+      case 'confirm-no': if (event.target.closest('[data-stop]') && action !== 'confirm-no') return; so.confirm = null; return render();
+      case 'older': return loadOlder();
+      case 'unphoto': so.photo = ''; return renderDm(false);
+      case 'rec-start': return startDmVoice();
+      case 'rec-cancel': return finishDmVoice(false);
+      case 'rec-send': return finishDmVoice(true);
+      case 'zoom': so.zoom = el.dataset.src; return render();
+      case 'unzoom': so.zoom = null; return render();
+      case 'like': return likePost(id);
+      case 'post-delete': return deletePost(id);
+      case 'more-feed': return loadMoreFeed();
+      case 'compose': so.compose = { kind: el.dataset.kind === 'story' ? 'story' : 'post', text: '', photo: '' }; so.error = ''; return render();
+      case 'compose-kind': so.compose.text = document.getElementById('so-caption')?.value || ''; so.compose.kind = el.dataset.kind; return render();
+      case 'compose-unphoto': so.compose.text = document.getElementById('so-caption')?.value || ''; so.compose.photo = ''; return render();
+      case 'compose-close': so.compose = null; so.error = ''; return render();
+      case 'edit':
+        so.edit = { bio: so.profile?.bio || '', level: so.profile?.level || '' };
+        render();
+        api('/social/blocked').then(b => { if (so.edit) { so.edit.blocked = b.blocked; render(); } }).catch(() => {});
+        return;
+      case 'edit-close': so.edit = null; so.error = ''; return render();
+      case 'story-open': return openStories(so.stories || [], Number(el.dataset.gi) || 0);
+      case 'profile-stories': return openStories([{ user: so.profile, mine: so.profile.self, items: so.profile.stories }], 0);
+      case 'story-step': return stepStory(Number(el.dataset.dir) || 1);
+      case 'viewer-close': clearTimeout(storyTimer); so.viewer = null; return render();
+      default:
+    }
+  }
+
+  root.addEventListener('click', event => {
+    const el = event.target.closest('[data-so]');
+    if (!el || !root.contains(el)) {
+      // a tap anywhere else closes an open "⋯" menu
+      if ((so.menu || so.msgMenu) && !event.target.closest('.so-pop')) { so.menu = null; so.msgMenu = null; if (['social', 'person', 'dm'].includes(state.screen)) render(); }
+      return;
+    }
+    // A tap inside a sheet must not count as a tap on the dark backdrop behind it.
+    const sheet = event.target.closest('[data-stop]');
+    if (sheet && !sheet.contains(el)) return;
+    if (sheet && el.contains(sheet)) return;
+    event.preventDefault();
+    soAction(el.dataset.so, el, event);
+  });
+
+  root.addEventListener('submit', event => {
+    if (event.target.id === 'so-compose') { event.preventDefault(); sendDm(); }
+    if (event.target.id === 'so-compose-form') { event.preventDefault(); sharePost(); }
+    if (event.target.id === 'so-edit-form') { event.preventDefault(); saveProfile(); }
+  });
+
+  root.addEventListener('input', event => {
+    const t = event.target;
+    if (t.id === 'so-draft') {
+      const had = Boolean(so.draft.trim());
+      so.draft = t.value;
+      t.style.height = 'auto'; t.style.height = `${Math.min(t.scrollHeight, 140)}px`;
+      if (had !== Boolean(so.draft.trim())) renderDm(false);   // mic ⇄ send
+    }
+    if (t.id === 'so-q') {
+      so.q = t.value;
+      clearTimeout(so.searchTimer);
+      so.searchTimer = setTimeout(() => loadPeople(), 350);
+    }
+  });
+
+  root.addEventListener('keydown', event => {
+    if (event.target.id === 'so-draft' && event.key === 'Enter' && !event.shiftKey && !event.isComposing && window.matchMedia('(pointer: fine)').matches) {
+      event.preventDefault(); sendDm();
+    }
+    if (event.key === 'Escape' && (so.viewer || so.zoom || so.compose || so.confirm || so.edit)) {
+      clearTimeout(storyTimer);
+      Object.assign(so, { viewer: null, zoom: null, compose: null, confirm: null, edit: null });
+      render();
+    }
+  });
+
+  root.addEventListener('change', async event => {
+    const t = event.target;
+    if (t.id !== 'so-dm-file' && t.id !== 'so-post-file') return;
+    const file = t.files?.[0];
+    if (!file) return;
+    try {
+      const shot = await shrinkShot(file);
+      if (t.id === 'so-dm-file') { so.photo = shot; so.error = ''; renderDm(true); }
+      else { so.compose.text = document.getElementById('so-caption')?.value || ''; so.compose.photo = shot; so.error = ''; render(); }
+    } catch { so.error = SO_UZ.bigImage; render(); }
+  });
+
+  /** After each draw: voice players in a private chat. */
+  function wireSocial() {
+    if (!['dm', 'social', 'person'].includes(state.screen)) {
+      if (dmRec.rec) cancelDmVoice();
+      if (so.viewer) { clearTimeout(storyTimer); so.viewer = null; }
+      return;
+    }
+    root.querySelectorAll('.so-page [data-vp], .so-dm [data-vp]').forEach(el => el.addEventListener('click', () => toggleVoice(el)));
+    paintVoice();
+    // Photos arrive after the chat is drawn; if it was at the newest message, stay there.
+    const box = document.getElementById('so-msgs');
+    if (box) {
+      box.querySelectorAll('img').forEach(img => img.addEventListener('load', () => {
+        if (Date.now() < (so.stickUntil || 0)) box.scrollTop = box.scrollHeight;
+      }, { once: true }));
+    }
+  }
+
+  // ======================================================== NATIJALAR VA FIKRLAR
+  //
+  // The public wall (2026-11-03): reviews of the website written by the
+  // teacher, and real exam certificates students upload to show what they
+  // achieved (shown once the teacher approves them). Anyone can open it,
+  // signed in or not; students upload from "Natijamni yuklash".
+
+  const WL_UZ = {
+    title: 'Natijalar va fikrlar',
+    heroTitle: 'English Hub o‘quvchilarining haqiqiy natijalari',
+    heroSub: 'Rasmiy Multilevel imtihonida erishilgan natijalar va o‘quvchilarimiz fikrlari — o‘zlari yuklagan sertifikatlar bilan.',
+    results: 'Haqiqiy imtihon natijalari',
+    reviews: 'O‘quvchilar fikrlari',
+    noResults: 'Hali natija yuklanmagan — birinchi bo‘ling!',
+    noReviews: 'Fikrlar tez orada qo‘shiladi.',
+    statResults: 'natija',
+    upload: 'Natijamni yuklash',
+    inviteTitle: 'Imtihondan yaxshi natija oldingizmi? 🏆',
+    inviteSub: 'Sertifikatingizni yuklang — hamma ko‘rsin va ilhomlansin!',
+    formTitle: 'Imtihon natijamni yuklash',
+    formSub: 'Rasmiy Multilevel sertifikatingiz rasmini va ballaringizni yuklang. Ustoz tekshirgach, natijangiz «Natijalar va fikrlar» sahifasida hammaga ko‘rinadi.',
+    photo: 'Sertifikat rasmi',
+    photoHint: 'Pasport raqami yoki shaxsiy ma’lumotlar bo‘lsa, yopib (qoralab) rasmga oling.',
+    level: 'Umumiy daraja',
+    overall: 'Umumiy ball',
+    speaking: 'Speaking',
+    writing: 'Writing',
+    listening: 'Listening',
+    reading: 'Reading',
+    optional: 'ixtiyoriy',
+    month: 'Imtihon oyi',
+    name: 'Sahifada ko‘rinadigan ism',
+    story: 'English Hub sizga qanday yordam berdi?',
+    storyPh: 'Masalan: Har hafta mock topshirib, speaking’da 51 dan 64 gacha ko‘tarildim…',
+    agree: 'Natijam, ismim va sertifikat rasmi saytda hamma uchun ko‘rinishiga roziman.',
+    send: 'Yuborish',
+    sending: 'Yuborilmoqda…',
+    sent: 'Rahmat! Ustoz tekshirgach, natijangiz sahifaga chiqadi. Javobi xabarlar qutingizga keladi.',
+    mine: 'Yuklaganlarim',
+    status: { pending: 'Tekshirilmoqda', approved: 'Sahifada', rejected: 'Qabul qilinmadi' },
+    remove: 'O‘chirish',
+    removeAsk: 'Bu natija o‘chirilsinmi?',
+    seeWall: 'Sahifani ko‘rish',
+    back: 'Orqaga',
+    signupCta: 'Siz ham boshlang',
+    choose: 'Rasm tanlash',
+    months: ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr']
+  };
+
+  const wl = { data: null, mine: null, form: null, busy: false, error: '', notice: '', zoom: null };
+
+  const wlMonth = ym => { if (!ym) return ''; const [y, m] = String(ym).split('-'); return `${WL_UZ.months[Number(m) - 1] || ''} ${y}`; };
+
+  async function openWall() {
+    go('wall');
+    try { wl.data = await api('/wall'); wl.error = ''; } catch (error) { wl.error = error.message; }
+    if (state.screen === 'wall') render();
+  }
+
+  async function openMyResults() {
+    wl.form = wl.form || { level: '', photo: '', agree: false };
+    wl.notice = '';
+    go('my-results');
+    try { wl.mine = (await api('/wall/me')).certificates; } catch (error) { wl.error = error.message; }
+    if (state.screen === 'my-results') render();
+  }
+
+  function wlScores(c) {
+    const s = (k, label, main) => (c[k] !== null && c[k] !== undefined ? `<span class="wl-score ${main ? 'is-main' : ''}"><b>${esc(c[k])}</b><span>${label}</span></span>` : '');
+    return `<div class="wl-scores">${s('overall', 'Overall', true)}${s('speaking', 'Speaking', !c.overall)}${s('writing', 'Writing')}${s('listening', 'Listening')}${s('reading', 'Reading')}</div>`;
+  }
+
+  function wlResultCard(c) {
+    return `<article class="wl-result">
+      <button class="wl-cert" data-wl-zoom="${esc(c.photo)}" aria-label="Sertifikatni kattalashtirish">
+        <img src="${esc(c.photo)}" alt="${esc(c.name)} — sertifikat" loading="lazy">
+        <span class="wl-level is-${esc(c.level.toLowerCase())}">${esc(c.level)}</span></button>
+      <div class="wl-body">
+        <div class="wl-name"><strong>${esc(c.name)}</strong><time>${esc(wlMonth(c.examMonth))}</time></div>
+        ${wlScores(c)}
+        ${c.story ? `<p class="wl-story">${esc(c.story)}</p>` : ''}
+      </div>
+    </article>`;
+  }
+
+  function wlReviewCard(r) {
+    const who = r.photo
+      ? `<img src="${esc(r.photo)}" alt="" loading="lazy">`
+      : soAvatar({ id: r.id, name: r.name }, 'md');
+    return `<figure class="wl-review">
+      <span class="wl-stars" aria-label="${r.stars} / 5">${'★'.repeat(r.stars)}${'☆'.repeat(5 - r.stars)}</span>
+      <p>${esc(r.text)}</p>
+      <figcaption class="wl-who">${who}<span><strong>${esc(r.name)}</strong>${r.label ? `<span>${esc(r.label)}</span>` : ''}</span></figcaption>
+    </figure>`;
+  }
+
+  function wallScreen() {
+    const d = wl.data;
+    const back = state.user ? `<button class="crumb" data-go="dashboard">${icon('left')} ${WL_UZ.back}</button>` : '';
+    if (!d) return `${back}${wl.error ? `<div class="alert alert-error">${esc(wl.error)}</div>` : '<div class="center-note"><span class="spinner"></span></div>'}`;
+    const stat = (n, label) => `<div class="wl-stat"><b>${n}</b><span>${label}</span></div>`;
+    return `${back}<div class="wl">
+      <section class="wl-hero">
+        <h1>${WL_UZ.heroTitle}</h1>
+        <p>${WL_UZ.heroSub}</p>
+        <div class="wl-stats">${stat(d.counts.results, WL_UZ.statResults)}${d.counts.C1 ? stat(d.counts.C1, 'C1') : ''}${d.counts.B2 ? stat(d.counts.B2, 'B2') : ''}${d.counts.B1 ? stat(d.counts.B1, 'B1') : ''}</div>
+        ${state.user && isStudentShell() ? `<button class="btn" data-wl="upload">🏆 ${WL_UZ.upload}</button>` : state.user ? '' : `<button class="btn" data-go="signup">${WL_UZ.signupCta}</button>`}
+      </section>
+      <h2 class="wl-h2">${WL_UZ.results} <small>${d.results.length}</small></h2>
+      ${d.results.length ? `<div class="wl-results">${d.results.map(wlResultCard).join('')}</div>` : `<div class="wl-empty">${WL_UZ.noResults}</div>`}
+      <h2 class="wl-h2">${WL_UZ.reviews} <small>${d.reviews.length}</small></h2>
+      ${d.reviews.length ? `<div class="wl-reviews">${d.reviews.map(wlReviewCard).join('')}</div>` : `<div class="wl-empty">${WL_UZ.noReviews}</div>`}
+    </div>
+    ${wl.zoom ? `<div class="so-zoom" data-wl-unzoom><img src="${esc(wl.zoom)}" alt=""></div>` : ''}`;
+  }
+
+  /** The invitation card: Home and Profil. */
+  const wlInvite = () => (isStudentShell()
+    ? `<button class="wl-invite" data-wl="upload"><span class="wl-invite-ic">🏆</span>
+        <span><strong>${WL_UZ.inviteTitle}</strong><span>${WL_UZ.inviteSub}</span></span><span class="wl-go">${icon('chevron')}</span></button>`
+    : '');
+
+  function myResultsScreen() {
+    const f = wl.form || {};
+    const field = (k, label, opt = true) => `<label class="field"><span>${label}${opt ? ` <small>(${WL_UZ.optional})</small>` : ''}</span>
+      <input id="wl-${k}" type="number" inputmode="decimal" min="0" max="75" step="0.5" placeholder="0–75" value="${esc(f[k] ?? '')}"></label>`;
+    const now = new Date();
+    const months = Array.from({ length: 18 }, (_, i) => { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+    const mine = (wl.mine || []).map(c => `<div class="wl-mine-row">
+        <img data-authsrc="${esc(c.photo)}" data-quiet alt="">
+        <div><strong>${esc(c.level)} · ${esc(wlMonth(c.examMonth) || '')}</strong>
+          <span class="wl-status is-${esc(c.status)}">${esc(WL_UZ.status[c.status] || c.status)}</span>
+          ${c.status === 'rejected' && c.reason ? `<small class="muted">${esc(c.reason)}</small>` : ''}</div>
+        <button class="btn btn-ghost btn-sm" data-wl="remove" data-id="${esc(c.id)}">${WL_UZ.remove}</button></div>`).join('');
+    return `<button class="crumb" data-go="profile">${icon('left')} ${PROF_UZ.title}</button>
+      <div class="wl" style="max-width:640px">
+        ${wl.notice ? `<div class="so-toast">${esc(wl.notice)}</div>` : ''}
+        <form class="card wl-form" id="wl-form" autocomplete="off">
+          <h2>🏆 ${WL_UZ.formTitle}</h2>
+          <p>${WL_UZ.formSub}</p>
+          <div class="field"><span>${WL_UZ.photo}</span>
+            ${f.photo ? `<div class="so-compose-photo"><img src="${f.photo}" alt=""><button type="button" data-wl="unphoto" aria-label="${WL_UZ.remove}">×</button></div>`
+              : `<label class="so-drop">${icon('image')}<span>${WL_UZ.choose}</span><input type="file" id="wl-file" accept="image/*" hidden></label>`}
+            <small class="muted">🔒 ${WL_UZ.photoHint}</small></div>
+          <div class="field"><span>${WL_UZ.level}</span><div class="wl-levels">${['B1', 'B2', 'C1'].map(l => `<button type="button" class="${f.level === l ? 'is-on' : ''}" data-wl="level" data-level="${l}">${l}</button>`).join('')}</div></div>
+          <div class="wl-grid">${field('speaking', WL_UZ.speaking, false)}${field('writing', WL_UZ.writing, false)}${field('overall', WL_UZ.overall)}${field('listening', WL_UZ.listening)}${field('reading', WL_UZ.reading)}</div>
+          <div class="wl-grid">
+            <label class="field"><span>${WL_UZ.month}</span><select id="wl-month">${months.map(m => `<option value="${m}" ${f.examMonth === m ? 'selected' : ''}>${esc(wlMonth(m))}</option>`).join('')}</select></label>
+            <label class="field"><span>${WL_UZ.name}</span><input id="wl-name" maxlength="60" value="${esc(f.name ?? [state.user?.firstName, state.user?.lastName].filter(Boolean).join(' '))}"></label>
+          </div>
+          <label class="field"><span>${WL_UZ.story}</span><textarea id="wl-story" rows="4" maxlength="600" placeholder="${esc(WL_UZ.storyPh)}">${esc(f.story || '')}</textarea></label>
+          <label class="wl-check"><input type="checkbox" id="wl-agree" ${f.agree ? 'checked' : ''}><span>${WL_UZ.agree}</span></label>
+          ${wl.error ? `<div class="so-error">${esc(wl.error)}</div>` : ''}
+          <button class="btn btn-block" type="submit" ${wl.busy ? 'disabled' : ''}>${wl.busy ? WL_UZ.sending : WL_UZ.send}</button>
+        </form>
+        ${mine ? `<h2 class="wl-h2">${WL_UZ.mine}</h2><div class="wl-mine">${mine}</div>` : ''}
+        <button class="btn btn-ghost" data-wl="wall">${WL_UZ.seeWall}</button>
+      </div>`;
+  }
+
+  /** Keep what was typed when the form is redrawn (a photo chosen, a level tapped). */
+  function wlKeep() {
+    if (!wl.form) return;
+    const v = id => document.getElementById(id)?.value;
+    for (const k of ['speaking', 'writing', 'overall', 'listening', 'reading']) { const x = v(`wl-${k}`); if (x !== undefined) wl.form[k] = x; }
+    if (v('wl-month') !== undefined) wl.form.examMonth = v('wl-month');
+    if (v('wl-name') !== undefined) wl.form.name = v('wl-name');
+    if (v('wl-story') !== undefined) wl.form.story = v('wl-story');
+    const agree = document.getElementById('wl-agree');
+    if (agree) wl.form.agree = agree.checked;
+  }
+
+  async function submitCertificate() {
+    wlKeep();
+    const f = wl.form;
+    if (wl.busy) return;
+    wl.busy = true; wl.error = '';
+    render();
+    try {
+      await api('/wall/me/certificates', { method: 'POST', body: { ...f } });
+      wl.form = { level: '', photo: '', agree: false };
+      wl.notice = WL_UZ.sent;
+      wl.mine = (await api('/wall/me')).certificates;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error) { wl.error = error.message; }
+    wl.busy = false;
+    render();
+  }
+
+  root.addEventListener('click', event => {
+    const el = event.target.closest('[data-wl], [data-wl-zoom], [data-wl-unzoom]');
+    if (!el || !root.contains(el)) return;
+    event.preventDefault();
+    if (el.hasAttribute('data-wl-zoom')) { wl.zoom = el.dataset.wlZoom; return render(); }
+    if (el.hasAttribute('data-wl-unzoom')) { wl.zoom = null; return render(); }
+    const action = el.dataset.wl;
+    if (action === 'upload') return openMyResults();
+    if (action === 'wall') return openWall();
+    if (action === 'level') { wlKeep(); wl.form.level = el.dataset.level; return render(); }
+    if (action === 'unphoto') { wlKeep(); wl.form.photo = ''; return render(); }
+    if (action === 'remove') {
+      if (!window.confirm(WL_UZ.removeAsk)) return;
+      api(`/wall/me/certificates/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' })
+        .then(d => { wl.mine = d.certificates; render(); })
+        .catch(error => { wl.error = error.message; render(); });
+    }
+  });
+  root.addEventListener('submit', event => {
+    if (event.target.id === 'wl-form') { event.preventDefault(); submitCertificate(); }
+  });
+  root.addEventListener('change', async event => {
+    if (event.target.id !== 'wl-file') return;
+    const file = event.target.files?.[0];
+    if (!file) return;
+    wlKeep();
+    try { wl.form.photo = await shrinkShot(file); wl.error = ''; } catch { wl.error = SO_UZ.bigImage; }
+    render();
+  });
 
   // =========================================================== EXPERT SCORE
   //
@@ -6426,8 +7623,9 @@
     { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard'] },
     { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'parts', 'writing', 'writing-check', 'briefing'] },
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
+    { id: 'friends', go: 'social', label: "Do'stlar", icon: 'message', screens: ['social', 'dm', 'person'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
-    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install', 'inbox', 'support'] }
+    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install', 'inbox', 'support', 'wall', 'my-results'] }
   ];
   const currentTab = () => TABS.find(t => t.screens.includes(state.screen))?.id || '';
   const isStudentShell = () => Boolean(state.user) && state.user.role !== 'admin';
@@ -6440,6 +7638,7 @@
    */
   const showTabs = () =>
     isStudentShell() && canLeave() && !['exam', 'writing-exam', 'eh', 'duel'].includes(state.screen) &&
+    state.screen !== 'dm' &&
     !(state.screen === 'speak' && (vc.room || (ch.tab === 'chat' && ch.view === 'room' && ch.room)));
 
   // ------------------------------------------------------------- the logo
@@ -6517,7 +7716,7 @@
     // answer, so canLeave() gates the whole set rather than some of it.
     const tab = currentTab();
     const links = canLeave()
-      ? TABS.map(t => `<button class="nav-link ${tab === t.id ? 'is-current' : ''}" data-go="${t.go}" ${tab === t.id ? 'aria-current="page"' : ''}>${t.label}</button>`).join('')
+      ? TABS.map(t => `<button class="nav-link ${tab === t.id ? 'is-current' : ''}" data-go="${t.go}" ${tab === t.id ? 'aria-current="page"' : ''}>${t.label}${t.id === 'friends' && so.unread.total ? `<span class="nav-dot">${so.unread.total > 9 ? '9+' : so.unread.total}</span>` : ''}</button>`).join('')
       : '';
     const me = { name: pr.state?.name || state.user.firstName || '', premium: pr.state?.active, avatar: pr.state?.avatar };
 
@@ -6543,7 +7742,7 @@
     const tab = currentTab();
     return `<nav class="tabbar" aria-label="Asosiy menyu">${TABS.map(t => `
       <button class="tab ${tab === t.id ? 'is-current' : ''}" data-go="${t.go}" ${tab === t.id ? 'aria-current="page"' : ''}>
-        <span class="tab-icon">${icon(t.icon)}</span><span class="tab-label">${t.label}</span>
+        <span class="tab-icon">${icon(t.icon)}${t.id === 'friends' && so.unread.total ? `<span class="tab-badge">${so.unread.total > 9 ? '9+' : so.unread.total}</span>` : ''}</span><span class="tab-label">${t.label}</span>
       </button>`).join('')}</nav>`;
   }
 
@@ -6585,7 +7784,12 @@
       vr: vrScreen,
       inbox: inboxScreen,
       support: supportScreen,
-      install: installScreen
+      install: installScreen,
+      social: socialScreen,
+      dm: dmScreen,
+      person: personScreen,
+      wall: wallScreen,
+      'my-results': myResultsScreen
     }[state.screen] || landingScreen;
 
     const tabs = tabBarMarkup();
@@ -6601,13 +7805,31 @@
         <div class="row">
           <button class="btn" data-go="signup">Get started</button>
           <button class="btn btn-ghost" data-go="login">I have an account</button>
+          <button class="btn btn-ghost" data-go="wall">🏆 ${WL_UZ.title}</button>
         </div>
       </section>
+      ${landingWall()}
       <div class="grid grid-3">
         <div class="card"><div class="section-title">1 — Speak &amp; write</div><p class="muted" style="margin-top:8px">Record your speaking answers and write your letters and essays right in the browser, on the same timer as the real exam. Nothing to install.</p></div>
         <div class="card"><div class="section-title">2 — Assessed</div><p class="muted" style="margin-top:8px">Every speaking and writing answer is marked against the official CEFR Multilevel criteria.</p></div>
         <div class="card"><div class="section-title">3 — Feedback</div><p class="muted" style="margin-top:8px">See your level in both skills, your strengths, and exactly what to fix next.</p></div>
       </div>`;
+  }
+
+  /** On the front page: a few real results and reviews from the wall, once there are some. */
+  function landingWall() {
+    if (!wl.data && !wl.loadingLanding) {
+      wl.loadingLanding = true;
+      api('/wall').then(d => { wl.data = d; if (state.screen === 'landing' || !state.screen) render(); }).catch(() => {});
+    }
+    const d = wl.data;
+    if (!d || (!d.results.length && !d.reviews.length)) return '';
+    return `<section class="wl" style="max-width:none">
+      <h2 class="wl-h2">${WL_UZ.title} <small>${d.counts.results} ${WL_UZ.statResults}</small></h2>
+      ${d.results.length ? `<div class="wl-results">${d.results.slice(0, 3).map(wlResultCard).join('')}</div>` : ''}
+      ${d.reviews.length ? `<div class="wl-reviews">${d.reviews.slice(0, 3).map(wlReviewCard).join('')}</div>` : ''}
+      <button class="btn btn-ghost" data-go="wall">${WL_UZ.seeWall} →</button>
+    </section>`;
   }
 
   function authScreen(mode) {
@@ -7468,6 +8690,7 @@
               ${tile(2, 'data-go="speak"', 'users', HOME_UZ.club, `<span class="hx-live"></span>${HOME_UZ.live}`)}
               ${tile(3, 'data-go="rank"', 'trophy', HOME_UZ.rankNone, esc(rankSub))}
             </section>
+            ${wlInvite()}
             ${adSlot('home')}
           </div>
         </div>
@@ -7646,6 +8869,8 @@
       <section class="card menu-card">
         ${row('data-go="results"', 'chart', PROF_UZ.results, PROF_UZ.resultsSub(done))}
         ${row('data-go="writing"', 'pen', PROF_UZ.writingResults, PROF_UZ.writingResultsSub, 'is-green')}
+        ${row('data-go="my-results"', 'trophy', WL_UZ.upload, WL_UZ.inviteSub, 'is-gold')}
+        ${row('data-go="wall"', 'star', WL_UZ.title, WL_UZ.reviews)}
         ${isStandalone() ? '' : row('data-install="open"', 'download', IN_UZ.menu, IN_UZ.menuSub)}
       </section>
       ${skills}
@@ -8892,7 +10117,7 @@
         el.alt = 'This picture could not be loaded';
         el.classList.add('media-failed');
         console.error('Could not load', url, error.message);
-        if (el.tagName === 'IMG' && !state.error) {
+        if (el.tagName === 'IMG' && !state.error && !el.hasAttribute('data-quiet')) {
           state.error = 'The pictures for this question could not be loaded. Tell your teacher before answering.';
           const box = document.querySelector('.alert-error');
           if (!box) render();
@@ -8910,6 +10135,7 @@
     root.querySelectorAll('[data-home-vr]').forEach(el => el.addEventListener('click', () => openVocabRace()));
     wireInbox();
     wireSupport();
+    wireSocial();
     root.querySelectorAll('[data-expert-save]').forEach(el => el.addEventListener('click', () => saveExpertScore(el.dataset.expertSave)));
 
     root.querySelectorAll('[data-open-attempt]').forEach(el =>
@@ -8950,6 +10176,9 @@
         else if (target === 'profile') openProfile();
         else if (target === 'topup') openTopup();
         else if (target === 'inbox') openInbox();
+        else if (target === 'social') openSocial();
+        else if (target === 'wall') openWall();
+        else if (target === 'my-results') openMyResults();
         else go(target);
       });
     });
@@ -9356,6 +10585,13 @@
     const token = store.get('token');
     const user = store.get('user');
     if (!token) countGuestVisit();
+    // ?page=wall — the public "Natijalar va fikrlar" page, signed in or not (a link to share).
+    if (new URLSearchParams(window.location.search).get('page') === 'wall') {
+      if (token && user) { try { state.token = token; state.user = JSON.parse(user); } catch { /* fine */ } }
+      openWall();
+      if (state.user) loadUnread();
+      return;
+    }
     if (token && user) {
       try {
         state.token = token;

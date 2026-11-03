@@ -79,6 +79,9 @@ import messageRoutes from './routes/messages.js';
 import adminMessageRoutes from './routes/adminMessages.js';
 import supportRoutes from './routes/support.js';
 import adminSupportRoutes from './routes/adminSupport.js';
+import socialRoutes, { adminRouter as socialAdminRoutes } from './routes/social.js';
+import { startStorySweep } from './services/Social.js';
+import { publicRouter as wallRoutes, studentRouter as wallStudentRoutes, adminRouter as wallAdminRoutes } from './routes/wall.js';
 import { noteGuest } from './services/UsageStats.js';
 import { resumeStuckMarking } from './routes/exam.js';
 import { retryAll, RETRY_EVERY_MS } from './services/MarkingRetry.js';
@@ -274,6 +277,7 @@ mongoose.connect(MONGODB_URI)
     startPaymentReports();
     // Course students moved to another group "from next month" switch on the 1st.
     startMoveSync();
+    startStorySweep();
 
     resumeStuckMarking().catch(err => console.error('Startup marking-resume failed:', err.message));
     setInterval(() => {
@@ -319,6 +323,9 @@ app.use('/api/avatars', avatarRoutes);
 app.use('/api/sponsors', sponsorRoutes);
 // Parents' page: signs in with a child's 6-digit code, not an account (routes/parent.js).
 app.use('/api/parent', parentRoutes);
+// The public wall of reviews and real exam results — no sign-in needed to read it.
+app.use('/api/wall/me', authenticate, requireVerifiedEmail, wallStudentRoutes);
+app.use('/api/wall', wallRoutes);
 // Daily usage statistics: a browser that opened the site without signing in
 // says so once a day, with a random id it made up (nothing personal).
 app.post('/api/visit', (req, res) => {
@@ -338,12 +345,15 @@ app.use('/api/games', authenticate, requireVerifiedEmail, gameRoutes);
 app.use('/api/assistant', authenticate, requireVerifiedEmail, assistantRoutes);
 app.use('/api/messages', authenticate, messageRoutes);
 app.use('/api/support', authenticate, supportRoutes);
+app.use('/api/social', authenticate, requireVerifiedEmail, socialRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);
 app.use('/api/admin/course-students', authenticate, courseStudentRoutes);
 app.use('/api/admin/messages', authenticate, adminMessageRoutes);
 app.use('/api/admin/support', authenticate, adminSupportRoutes);
+app.use('/api/admin/wall', authenticate, wallAdminRoutes);
+app.use('/api/admin/social', authenticate, socialAdminRoutes);
 app.use('/api/admin', authenticate, adminRoutes);
 
 // Health check

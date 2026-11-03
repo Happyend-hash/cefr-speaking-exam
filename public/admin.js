@@ -223,6 +223,9 @@
         .catch(error => { state.usageError = `Could not load the numbers: ${error.message}`; })
         .finally(() => { if (state.folder) refreshUsageCard(); else render(); });
       setState({ tests, overview, unmarked: unmarked?.attempts || [], loading: false, screen: 'tests' });
+      // the home tiles show waiting certificates and open reports
+      if (!state.wall) loadWallAdmin({ quiet: true });
+      if (!state.social) loadSocialAdmin();
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
@@ -322,6 +325,14 @@
     { key: 'accounts', icon: 'users', tone: 'rose', title: 'Accounts & access', desc: 'Every account: mocks left, packages, Premium and blocking.',
       body: () => studentsCard(), open: ['students-open'],
       meta: () => (state.overview ? `${plural(state.overview.students, 'account')}` : '') },
+    { key: 'wall', icon: 'star', tone: 'sky', title: 'Results wall', desc: 'Reviews you add, and exam certificates students upload — approve them for the public page.',
+      body: () => wallCard(),
+      badge: () => state.wall?.pending || 0,
+      meta: () => (state.wall ? (state.wall.pending ? `${plural(state.wall.pending, 'certificate')} waiting` : `${state.wall.reviews.length} reviews · ${state.wall.certificates.filter(c => c.status === 'approved').length} results`) : 'Reviews and real results') },
+    { key: 'friends', icon: 'users', tone: 'teal', title: "Do'stlar", desc: "Friends, private chats, posts and stories: reports and the latest posts.",
+      body: () => socialCard(),
+      badge: () => state.social?.open || 0,
+      meta: () => (state.social ? (state.social.open ? `${plural(state.social.open, 'report')} open` : `${state.social.counts.friendships} friendships`) : 'Reports and posts') },
     { key: 'tests', icon: 'doc', tone: 'slate', title: 'Tests', desc: 'Speaking and writing tests and their questions.',
       body: () => testsSection(),
       meta: () => `${state.tests.filter(t => t.isPublished).length} published · ${plural(state.tests.length, 'test')}` },
@@ -755,6 +766,252 @@
       if (state.attemptsOf[id]) state.attemptsOf[id] = { error: error.message };
     }
     render();
+  }
+
+  // ============================================================ RESULTS WALL
+  //
+  // "Natijalar va fikrlar" (2026-11-03): reviews of the website that you
+  // write, and the real exam certificates students upload, which appear on
+  // the public page once you approve them. The student gets a message either
+  // way.
+
+  async function loadWallAdmin({ quiet = false } = {}) {
+    if (!quiet) state.wallLoading = true;
+    try { state.wall = await api('/admin/wall'); state.wallError = ''; }
+    catch (error) { state.wallError = error.message; }
+    state.wallLoading = false;
+    render();
+  }
+
+  const wallDate = at => (at ? new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+
+  function wallCard() {
+    if (!state.wall && !state.wallLoading && !state.wallError) loadWallAdmin();
+    const w = state.wall;
+    if (!w) return `<div class="card" style="margin-top:20px">${state.wallError ? `<p class="error">${esc(state.wallError)}</p>` : '<p class="muted">Loading…</p>'}</div>`;
+    const f = state.wallEdit || null;
+    const score = (c, k, label) => (c[k] != null ? `<span class="wa-score"><b>${esc(c[k])}</b> ${label}</span>` : '');
+    const certRow = c => `<div class="wa-cert is-${esc(c.status)}">
+      <button class="wa-thumb" data-wall-zoom="${esc(c.photo)}" title="Open the certificate"><img data-wall-img="${esc(c.photo)}" alt=""></button>
+      <div class="wa-cert-body">
+        <div><strong>${esc(c.name)}</strong> <span class="tag">${esc(c.level)}</span>
+          <span class="tag ${c.status === 'approved' ? 'tag-live' : c.status === 'rejected' ? 'tag-warn' : 'tag-writing'}">${esc(c.status)}</span></div>
+        <div class="muted" style="font-size:13px">${c.user ? `${esc(c.user.email)} · ` : ''}exam ${esc(c.examMonth || '—')} · sent ${esc(wallDate(c.submittedAt))}</div>
+        <div class="wa-scores">${score(c, 'overall', 'overall')}${score(c, 'speaking', 'speaking')}${score(c, 'writing', 'writing')}${score(c, 'listening', 'listening')}${score(c, 'reading', 'reading')}</div>
+        ${c.story ? `<p class="wa-story">“${esc(c.story)}”</p>` : ''}
+        ${c.status === 'rejected' && c.reason ? `<p class="muted" style="font-size:13px">Reason: ${esc(c.reason)}</p>` : ''}
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px">
+          ${c.status !== 'approved' ? `<button class="btn btn-sm" data-wall-cert="approve" data-id="${esc(c.id)}">✓ Approve — show on the page</button>` : `<button class="btn btn-ghost btn-sm" data-wall-cert="hide" data-id="${esc(c.id)}">Hide from the page</button>`}
+          ${c.status !== 'rejected' ? `<button class="btn btn-ghost btn-sm" data-wall-cert="reject" data-id="${esc(c.id)}">Reject…</button>` : ''}
+          <button class="btn btn-ghost btn-sm" data-wall-cert="delete" data-id="${esc(c.id)}">Delete</button>
+        </div>
+      </div></div>`;
+    const reviewRow = r => `<div class="wa-review">
+      <div class="wa-review-head"><strong>${esc(r.name)}</strong>${r.label ? ` <span class="muted">· ${esc(r.label)}</span>` : ''}
+        <span style="color:#f5b301;margin-left:6px">${'★'.repeat(r.stars)}</span>
+        ${r.pinned ? '<span class="tag tag-writing">pinned</span>' : ''}${r.published ? '' : '<span class="tag tag-draft">hidden</span>'}</div>
+      <p>${esc(r.text)}</p>
+      <div class="row" style="gap:6px"><button class="btn btn-ghost btn-sm" data-wall-review="edit" data-id="${esc(r.id)}">Edit</button>
+        <button class="btn btn-ghost btn-sm" data-wall-review="delete" data-id="${esc(r.id)}">Delete</button></div></div>`;
+    const form = f ? `<form class="wa-form" id="wall-review-form">
+        <h3 style="font-size:16px">${f.id ? 'Edit review' : 'New review'}</h3>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <label class="field" style="flex:1;min-width:180px"><span>Student's name</span><input id="wr-name" maxlength="60" value="${esc(f.name || '')}" required></label>
+          <label class="field" style="flex:1;min-width:180px"><span>Line under the name (optional)</span><input id="wr-label" maxlength="60" placeholder="e.g. B2 · Speaking 62" value="${esc(f.label || '')}"></label>
+          <label class="field" style="width:110px"><span>Stars</span><select id="wr-stars">${[5, 4, 3, 2, 1].map(n => `<option ${Number(f.stars || 5) === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        </div>
+        <label class="field"><span>What the student said</span><textarea id="wr-text" rows="4" maxlength="1200" required>${esc(f.text || '')}</textarea></label>
+        <label class="field"><span>Photo (optional)</span><input type="file" id="wr-photo" accept="image/*">${f.photoUrl ? `<label class="muted" style="font-size:13px"><input type="checkbox" id="wr-nophoto"> remove the current photo</label>` : ''}</label>
+        <div class="row" style="gap:14px;flex-wrap:wrap">
+          <label class="muted"><input type="checkbox" id="wr-published" ${f.published !== false ? 'checked' : ''}> Show on the page</label>
+          <label class="muted"><input type="checkbox" id="wr-pinned" ${f.pinned ? 'checked' : ''}> Pin to the top</label>
+        </div>
+        <div class="row" style="gap:8px"><button class="btn btn-sm" type="submit" ${state.wallSaving ? 'disabled' : ''}>${state.wallSaving ? 'Saving…' : 'Save review'}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-wall-review="cancel">Cancel</button></div>
+      </form>` : `<button class="btn btn-sm" data-wall-review="new">＋ Add a review</button>`;
+    return `<div class="card" style="margin-top:20px">
+        <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <h2 style="font-size:18px">Exam certificates from students ${w.pending ? `<span class="tag tag-writing">${w.pending} waiting</span>` : ''}</h2>
+          <a class="btn btn-ghost btn-sm" href="/?page=wall" target="_blank" rel="noopener">Open the public page ↗</a>
+        </div>
+        <p class="muted" style="margin-top:6px;font-size:14px">Students upload these from <em>Profil → Natijamni yuklash</em>. Check the photo is a real certificate and that no passport number shows, then approve it — it appears on the public page and the student gets a message.</p>
+        <div class="wa-list">${w.certificates.length ? w.certificates.map(certRow).join('') : '<p class="muted">No certificates yet.</p>'}</div>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <h2 style="font-size:18px">Reviews of the website</h2>
+        <p class="muted" style="margin-top:6px;font-size:14px">Write what a student said about English Hub (from Telegram, the support chat, in class…). Everyone sees these on the public page.</p>
+        <div style="margin-top:12px">${form}</div>
+        <div class="wa-list">${w.reviews.map(reviewRow).join('') || '<p class="muted">No reviews yet.</p>'}</div>
+      </div>
+      ${state.wallZoom ? `<div class="wa-zoom" data-wall-unzoom><img data-wall-img="${esc(state.wallZoom)}" alt=""></div>` : ''}`;
+  }
+
+  /** Admin photos need the sign-in token: fetch, then show as a blob. */
+  const wallImgCache = new Map();
+  function paintWallImages() {
+    root.querySelectorAll('[data-wall-img]').forEach(async img => {
+      const url = img.dataset.wallImg;
+      img.removeAttribute('data-wall-img');
+      try {
+        let src = wallImgCache.get(url);
+        if (!src) {
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
+          if (!res.ok) throw new Error(String(res.status));
+          src = URL.createObjectURL(await res.blob());
+          wallImgCache.set(url, src);
+        }
+        img.src = src;
+      } catch { img.alt = 'Photo unavailable'; }
+    });
+  }
+
+  function readFileAsShrunkDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 900 / img.naturalWidth, 900 / img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+        const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(img.src);
+        resolve(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => reject(new Error('That picture could not be opened'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  function wireWallAdmin() {
+    paintWallImages();
+    root.querySelectorAll('[data-wall-zoom]').forEach(el => el.addEventListener('click', () => setState({ wallZoom: el.dataset.wallZoom })));
+    root.querySelector('[data-wall-unzoom]')?.addEventListener('click', () => setState({ wallZoom: null }));
+    root.querySelectorAll('[data-wall-cert]').forEach(el => el.addEventListener('click', async () => {
+      const action = el.dataset.wallCert;
+      const id = el.dataset.id;
+      let body = {};
+      if (action === 'reject') {
+        const reason = window.prompt('Why is it not approved? The student sees this (e.g. "the photo is blurry", "the passport number shows").', '');
+        if (reason === null) return;
+        body = { reason };
+      }
+      if (action === 'delete' && !window.confirm('Delete this certificate for good? The student is not told.')) return;
+      el.disabled = true;
+      try {
+        state.wall = action === 'delete'
+          ? await api(`/admin/wall/certificates/${id}`, { method: 'DELETE' })
+          : await api(`/admin/wall/certificates/${id}/${action}`, { method: 'POST', body });
+        state.notice = action === 'approve' ? 'Approved — it is on the public page, and the student got a message.' : action === 'reject' ? 'Rejected — the student got a message with the reason.' : '';
+        render();
+      } catch (error) { setState({ error: error.message }); }
+    }));
+    root.querySelectorAll('[data-wall-review]').forEach(el => el.addEventListener('click', async () => {
+      const act = el.dataset.wallReview;
+      if (act === 'new') return setState({ wallEdit: { stars: 5, published: true } });
+      if (act === 'cancel') return setState({ wallEdit: null });
+      const r = state.wall.reviews.find(x => x.id === el.dataset.id);
+      if (act === 'edit' && r) return setState({ wallEdit: { ...r, photoUrl: r.photo } });
+      if (act === 'delete' && r && window.confirm(`Delete the review from ${r.name}?`)) {
+        try { state.wall = await api(`/admin/wall/reviews/${r.id}`, { method: 'DELETE' }); render(); }
+        catch (error) { setState({ error: error.message }); }
+      }
+    }));
+    document.getElementById('wall-review-form')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const f = state.wallEdit || {};
+      const v = id => document.getElementById(id);
+      const body = {
+        name: v('wr-name').value, label: v('wr-label').value, text: v('wr-text').value,
+        stars: Number(v('wr-stars').value), published: v('wr-published').checked, pinned: v('wr-pinned').checked,
+        removePhoto: Boolean(v('wr-nophoto')?.checked)
+      };
+      setState({ wallSaving: true, wallEdit: { ...f, ...body } });
+      try {
+        const file = v('wr-photo')?.files?.[0];
+        if (file) body.photo = await readFileAsShrunkDataUrl(file);
+        await api(f.id ? `/admin/wall/reviews/${f.id}` : '/admin/wall/reviews', { method: f.id ? 'PATCH' : 'POST', body });
+        state.wallEdit = null;
+        state.notice = 'Review saved.';
+        await loadWallAdmin({ quiet: true });
+      } catch (error) { state.error = error.message; }
+      setState({ wallSaving: false });
+    });
+  }
+
+  // ======================================================= DO'STLAR MODERATION
+  //
+  // Friends' chats are private: you see a message only when someone reports
+  // it (with the messages around it), and the posts and stories students
+  // share with their friends.
+
+  async function loadSocialAdmin() {
+    state.socialLoading = true;
+    try { state.social = await api('/admin/social'); state.socialError = ''; }
+    catch (error) { state.socialError = error.message; }
+    state.socialLoading = false;
+    render();
+  }
+
+  function socialCard() {
+    if (!state.social && !state.socialLoading && !state.socialError) loadSocialAdmin();
+    const s = state.social;
+    if (!s) return `<div class="card" style="margin-top:20px">${state.socialError ? `<p class="error">${esc(state.socialError)}</p>` : '<p class="muted">Loading…</p>'}</div>`;
+    const who = u => (u ? `${esc(u.name)} <span class="muted">(${esc(u.email)})</span>${u.blocked ? ' <span class="tag tag-draft">blocked</span>' : ''}` : '—');
+    const ctx = r => (r.context || []).map(m => `<div class="wa-ctx ${m.reported ? 'is-reported' : ''}">
+        <span class="muted">${esc(m.from || '')}${m.at ? ` · ${new Date(m.at).toLocaleString()}` : ''}</span>
+        ${m.removed ? '<em class="muted">removed</em>' : ''}
+        ${m.text ? `<div>${esc(m.text)}</div>` : ''}${m.original && m.original !== m.text ? `<div class="muted" style="font-size:12px">typed: ${esc(m.original)}</div>` : ''}
+        ${m.photo ? `<img class="wa-ctx-img" data-wall-img="${esc(m.photo)}" alt="">` : ''}
+        ${m.audio ? `<button class="btn btn-ghost btn-sm" data-social-audio="${esc(m.audio)}">▶ Play voice message</button>` : ''}</div>`).join('');
+    const reports = s.reports.map(r => `<div class="wa-report ${r.status === 'done' ? 'is-done' : ''}">
+        <div><span class="tag ${r.status === 'open' ? 'tag-warn' : 'tag-draft'}">${esc(r.status)}</span> <strong>${esc(r.kind)}</strong> reported ${esc(new Date(r.at).toLocaleString())}</div>
+        <div style="font-size:14px">By ${who(r.by)} · about ${who(r.about)}</div>
+        ${r.reason ? `<div style="font-size:14px">Reason: “${esc(r.reason)}”</div>` : ''}
+        ${r.context ? `<div class="wa-ctx-list">${ctx(r)}</div>` : ''}
+        ${r.status === 'open' ? `<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">
+          ${r.kind !== 'user' ? `<button class="btn btn-sm" data-social-report="remove" data-id="${esc(r.id)}">Remove it</button>` : ''}
+          <button class="btn btn-ghost btn-sm" data-social-report="done" data-id="${esc(r.id)}">Nothing to do — close</button>
+          ${r.about ? `<span class="muted" style="font-size:13px">To stop this student everywhere: Accounts &amp; access → Block.</span>` : ''}</div>` : ''}
+      </div>`).join('');
+    const posts = s.posts.map(p => `<div class="wa-post">
+        ${p.photo ? `<img data-wall-img="${esc(p.photo)}" alt="">` : '<div class="wa-post-text">✍️</div>'}
+        <div><strong style="font-size:13px">${esc(p.user?.name || '?')}</strong> <span class="tag">${esc(p.kind)}</span>
+          <div class="muted" style="font-size:12px">${esc(new Date(p.at).toLocaleString())} · ♥ ${p.likes}</div>
+          ${p.text ? `<div style="font-size:13px">${esc(p.text)}</div>` : ''}
+          <button class="btn btn-ghost btn-sm" data-social-post-delete="${esc(p.id)}">Delete</button></div></div>`).join('');
+    const c = s.counts;
+    return `<div class="card" style="margin-top:20px">
+        <h2 style="font-size:18px">Do'stlar — friends, chats and posts</h2>
+        <p class="muted" style="margin-top:6px;font-size:14px">${c.friendships} friendships · ${c.chats} chats · ${c.messagesToday} messages in the last 24 h · ${c.posts} posts · ${c.stories} live stories.
+          Private chats stay private — you see a message only when a student reports it.</p>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <h2 style="font-size:18px">Reports ${s.open ? `<span class="tag tag-warn">${s.open} open</span>` : ''}</h2>
+        <div class="wa-list">${reports || '<p class="muted">No reports. 🎉</p>'}</div>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <h2 style="font-size:18px">Latest posts and stories</h2>
+        <div class="wa-posts">${posts || '<p class="muted">Nothing shared yet.</p>'}</div>
+      </div>`;
+  }
+
+  function wireSocialAdmin() {
+    root.querySelectorAll('[data-social-report]').forEach(el => el.addEventListener('click', async () => {
+      el.disabled = true;
+      try { state.social = await api(`/admin/social/reports/${el.dataset.id}/${el.dataset.socialReport}`, { method: 'POST' }); render(); }
+      catch (error) { setState({ error: error.message }); }
+    }));
+    root.querySelectorAll('[data-social-post-delete]').forEach(el => el.addEventListener('click', async () => {
+      if (!window.confirm('Delete this post for good? The student is not told.')) return;
+      try { state.social = await api(`/admin/social/posts/${el.dataset.socialPostDelete}`, { method: 'DELETE' }); render(); }
+      catch (error) { setState({ error: error.message }); }
+    }));
+    root.querySelectorAll('[data-social-audio]').forEach(el => el.addEventListener('click', async () => {
+      try {
+        const res = await fetch(el.dataset.socialAudio, { headers: { Authorization: `Bearer ${state.token}` } });
+        if (!res.ok) throw new Error(String(res.status));
+        new Audio(URL.createObjectURL(await res.blob())).play();
+      } catch { setState({ error: 'The voice message could not be played.' }); }
+    }));
   }
 
   /**
@@ -1489,6 +1746,8 @@
     wireAccuracy();
     wireVoiceAdmin();
     wireChatAdmin();
+    if (state.folder === 'wall') wireWallAdmin();
+    if (state.folder === 'friends') { wireSocialAdmin(); paintWallImages(); }
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
       el.addEventListener('click', () => {
         const [kind, id] = el.dataset.unmarkedRetry.split(':');

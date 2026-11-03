@@ -678,3 +678,32 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .acc-mod { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .acc-mod-speaking { color: #4f46e5; }
 .acc-mod-writing { color: #0f766e; }
+
+/* Results wall and Do'stlar moderation (2026-11-03) */
+.wa-list { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.wa-cert { display: flex; gap: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; }
+.wa-cert.is-pending { border-color: #f6dc95; background: #fffbeb; }
+.wa-thumb { flex: none; width: 140px; height: 105px; border: 0; padding: 0; border-radius: 10px; overflow: hidden; background: #f1f5f9; cursor: zoom-in; }
+.wa-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.wa-cert-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.wa-scores { display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.wa-score b { font-variant-numeric: tabular-nums; }
+.wa-story { font-size: 14px; color: var(--ink-soft); font-style: italic; }
+@media (max-width: 560px) { .wa-cert { flex-direction: column; } .wa-thumb { width: 100%; height: 180px; } }
+.wa-review { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; gap: 6px; }
+.wa-review p { white-space: pre-wrap; font-size: 14px; }
+.wa-form { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--indigo-200); border-radius: 14px; background: var(--indigo-50); }
+.wa-form .field { display: flex; flex-direction: column; gap: 4px; }
+.wa-form .field span { font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.wa-zoom { position: fixed; inset: 0; z-index: 200; background: rgba(5, 7, 20, .9); display: grid; place-items: center; padding: 16px; cursor: zoom-out; }
+.wa-zoom img { max-width: 100%; max-height: 100%; border-radius: 10px; }
+.wa-report { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; gap: 6px; }
+.wa-report.is-done { opacity: .65; }
+.wa-ctx-list { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 10px; background: #f8fafc; margin-top: 4px; }
+.wa-ctx { font-size: 14px; padding: 6px 8px; border-radius: 8px; }
+.wa-ctx.is-reported { background: #fee4e2; }
+.wa-ctx-img { max-width: 220px; max-height: 220px; border-radius: 8px; display: block; margin-top: 4px; }
+.wa-posts { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 14px; }
+.wa-post { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; }
+.wa-post img { width: 100%; height: 160px; object-fit: cover; border-radius: 10px; background: #f1f5f9; }
+.wa-post-text { height: 60px; display: grid; place-items: center; font-size: 26px; background: #f1f5f9; border-radius: 10px; }

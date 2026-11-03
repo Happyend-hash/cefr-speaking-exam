@@ -64,6 +64,14 @@ const userSchema = new mongoose.Schema(
     // not available until they have — being told is the point of recording
     // being acceptable at all.
     voiceConsentAt: Date,
+    // Do'stlar (friends, chats, posts — 2026-11-03): what the student's profile
+    // says about them. Only friends see the bio; everyone sees name, picture
+    // and level in People.
+    social: {
+      bio: { type: String, trim: true, maxlength: 160, default: '' },
+      level: { type: String, enum: ['', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'], default: '' },
+      lastSeenAt: Date
+    },
     // AI Ustoz (Gemini Live): when the student confirmed they are 18+ and read
     // that Google may review conversations, and today's session count.
     assistantAdultAt: Date,
