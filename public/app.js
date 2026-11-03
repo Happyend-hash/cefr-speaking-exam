@@ -2169,6 +2169,7 @@
           ${sp.image ? `<div class="sp-preview"><img src="${sp.image}" alt=""><button type="button" data-sp-unimage aria-label="Rasmni olib tashlash">×</button></div>` : ''}
           <div class="sp-input">
             <label class="sp-attach" title="${SP_UZ.attach}" aria-label="${SP_UZ.attach}">📎<input type="file" id="sp-file" accept="image/*" hidden></label>
+            ${emojiButton('sp-text', 'sp-emo')}
             <textarea id="sp-text" rows="1" maxlength="2000" placeholder="${esc(SP_UZ.placeholder[sp.kind])}">${esc(sp.draft)}</textarea>
             <button type="submit" class="sp-send" ${sp.busy ? 'disabled' : ''} aria-label="${SP_UZ.send}">
               ${sp.busy ? '<span class="spinner"></span>' : '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>'}
@@ -2206,6 +2207,184 @@
     root.querySelectorAll('[data-sp-zoom]').forEach(el => el.addEventListener('click', () => { sp.zoom = el.dataset.spZoom; renderKeepingComposer(); }));
     root.querySelector('[data-sp-unzoom]')?.addEventListener('click', () => { sp.zoom = null; renderKeepingComposer(); });
   }
+
+  // ================================================================== EMOJI
+  //
+  // An emoji panel for every chat box (2026-11-03): the standard Unicode
+  // emoji — the same free set Telegram has — grouped like a phone keyboard,
+  // with search and recently used ones first. They are characters, not
+  // pictures, so each phone draws them in its own emoji style. The list
+  // (public/emoji-data.js, ~47 KB) loads the first time the panel opens.
+  //
+  // Any field gets the panel from a button: data-emoji-for="<field id>".
+
+  const EMO_UZ = {
+    search: 'Emoji qidirish (inglizcha: heart, smile…)',
+    recent: 'Yaqinda ishlatilgan',
+    none: 'Topilmadi',
+    groups: {
+      recent: ['🕘', 'Yaqinda'], smileys: ['😀', 'Kulgichlar'], people: ['👋', 'Odamlar'], animals: ['🐶', 'Hayvonlar va tabiat'],
+      food: ['🍏', 'Taomlar'], travel: ['✈️', 'Sayohat'], activities: ['⚽', 'Faoliyat'], objects: ['💡', 'Buyumlar'],
+      symbols: ['❤️', 'Belgilar'], flags: ['🏁', 'Bayroqlar']
+    }
+  };
+
+  const emo = { data: null, loading: null, el: null, target: null, start: null, end: null, q: '' };
+
+  function loadEmojiData() {
+    if (emo.data) return Promise.resolve(emo.data);
+    if (emo.loading) return emo.loading;
+    emo.loading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '/emoji-data.js';
+      s.onload = () => {
+        emo.data = (window.EMOJI_DATA || []).map(g => {
+          const list = g.e.split('\u0001');
+          const names = g.n.split('|');
+          return { k: g.k, items: list.map((e, i) => [e, names[i] || '']) };
+        });
+        resolve(emo.data);
+      };
+      s.onerror = () => { emo.loading = null; reject(new Error('Emoji yuklanmadi')); };
+      document.head.appendChild(s);
+    });
+    return emo.loading;
+  }
+
+  const emoRecent = () => { try { return JSON.parse(store.get('emojiRecent') || '[]'); } catch { return []; } };
+
+  function emojiGrid() {
+    const q = emo.q.trim().toLowerCase();
+    const cell = e => `<button type="button" class="emo-cell" data-emo="${e}" aria-label="${e}">${e}</button>`;
+    if (q) {
+      const hits = emo.data.flatMap(g => g.items).filter(([, n]) => n.includes(q)).slice(0, 160);
+      return hits.length ? `<div class="emo-cells">${hits.map(([e]) => cell(e)).join('')}</div>` : `<p class="emo-none">${EMO_UZ.none}</p>`;
+    }
+    const recent = emoRecent();
+    const groups = [...(recent.length ? [{ k: 'recent', items: recent.map(e => [e, '']) }] : []), ...emo.data];
+    return groups.map(g => `<section class="emo-group" data-emo-group="${g.k}">
+        <h4>${EMO_UZ.groups[g.k]?.[1] || g.k}</h4>
+        <div class="emo-cells">${g.items.map(([e]) => cell(e)).join('')}</div></section>`).join('');
+  }
+
+  function drawEmojiPanel() {
+    if (!emo.el) return;
+    const tabs = Object.entries(EMO_UZ.groups)
+      .filter(([k]) => k !== 'recent' || emoRecent().length)
+      .map(([k, [e, l]]) => `<button type="button" class="emo-tab" data-emo-tab="${k}" title="${l}" aria-label="${l}">${e}</button>`).join('');
+    emo.el.innerHTML = `
+      <div class="emo-top"><input type="search" class="emo-search" placeholder="${esc(EMO_UZ.search)}" value="${esc(emo.q)}" autocomplete="off">
+        <button type="button" class="emo-close" data-emo-close aria-label="Yopish">✕</button></div>
+      ${emo.q ? '' : `<div class="emo-tabs">${tabs}</div>`}
+      <div class="emo-scroll">${emo.data ? emojiGrid() : '<div class="center-note"><span class="spinner"></span></div>'}</div>`;
+  }
+
+  /**
+   * Above the chat box (or under it when it is near the top of the screen),
+   * so the box itself never disappears behind the panel. Full width on phones.
+   */
+  function placeEmojiPanel(anchor) {
+    const el = emo.el;
+    if (!el || !anchor) return;
+    const r = anchor.getBoundingClientRect();
+    const vh = window.visualViewport?.height || window.innerHeight;
+    const phone = window.matchMedia('(max-width: 640px)').matches;
+    const w = phone ? window.innerWidth - 16 : 352;
+    const above = r.top - 16;
+    const below = vh - r.bottom - 16;
+    const useAbove = above >= 240 || above >= below;
+    const h = Math.max(180, Math.min(phone ? 320 : 380, useAbove ? above : below));
+    el.style.width = `${w}px`;
+    el.style.height = `${h}px`;
+    el.style.left = `${phone ? 8 : Math.max(8, Math.min(window.innerWidth - w - 8, r.left))}px`;
+    el.style.top = `${useAbove ? r.top - h - 8 : r.bottom + 8}px`;
+  }
+
+  async function openEmoji(targetId, anchor) {
+    const field = document.getElementById(targetId);
+    if (!field) return;
+    if (emo.el && emo.target === targetId) return closeEmoji();
+    emo.target = targetId;
+    emo.start = field.selectionStart ?? field.value.length;
+    emo.end = field.selectionEnd ?? field.value.length;
+    emo.q = '';
+    if (!emo.el) {
+      emo.el = document.createElement('div');
+      emo.el.className = 'emo-panel';
+      emo.el.setAttribute('role', 'dialog');
+      emo.el.setAttribute('aria-label', 'Emoji');
+      document.body.appendChild(emo.el);
+      emo.el.addEventListener('click', onEmojiClick);
+      emo.el.addEventListener('input', event => {
+        if (!event.target.classList.contains('emo-search')) return;
+        emo.q = event.target.value;
+        const pos = event.target.selectionStart;
+        drawEmojiPanel();
+        const again = emo.el.querySelector('.emo-search');
+        again.focus(); again.setSelectionRange(pos, pos);
+      });
+    }
+    drawEmojiPanel();
+    placeEmojiPanel(anchor);
+    try { await loadEmojiData(); } catch { /* shown as empty */ }
+    if (emo.target === targetId) drawEmojiPanel();
+  }
+
+  function closeEmoji() {
+    emo.el?.remove();
+    emo.el = null;
+    emo.target = null;
+  }
+
+  function insertEmoji(e) {
+    const field = document.getElementById(emo.target);
+    if (!field) return closeEmoji();
+    const v = field.value;
+    const start = Math.min(emo.start ?? v.length, v.length);
+    const end = Math.min(emo.end ?? start, v.length);
+    const max = Number(field.getAttribute('maxlength')) || Infinity;
+    if (v.length - (end - start) + e.length > max) return;
+    field.value = v.slice(0, start) + e + v.slice(end);
+    emo.start = emo.end = start + e.length;
+    try { field.setSelectionRange(emo.start, emo.start); } catch { /* not a text field */ }
+    // Tell the screen the text changed (drafts, the mic/send button, sizes).
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    const recent = [e, ...emoRecent().filter(x => x !== e)].slice(0, 32);
+    store.set('emojiRecent', JSON.stringify(recent));
+  }
+
+  function onEmojiClick(event) {
+    const cell = event.target.closest('[data-emo]');
+    if (cell) return insertEmoji(cell.dataset.emo);
+    if (event.target.closest('[data-emo-close]')) return closeEmoji();
+    const tab = event.target.closest('[data-emo-tab]');
+    if (tab) {
+      const sec = emo.el.querySelector(`[data-emo-group="${tab.dataset.emoTab}"]`);
+      const box = emo.el.querySelector('.emo-scroll');
+      if (sec && box) box.scrollTo({ top: sec.offsetTop - box.offsetTop, behavior: 'smooth' });
+    }
+  }
+
+  // The 😊 buttons, wherever they are drawn.
+  root.addEventListener('click', event => {
+    const btn = event.target.closest('[data-emoji-for]');
+    if (!btn || !root.contains(btn)) return;
+    event.preventDefault();
+    openEmoji(btn.dataset.emojiFor, btn);
+  });
+  // Keep the caret where the student left it, so emoji go there.
+  root.addEventListener('focusout', event => {
+    const t = event.target;
+    if (emo.target && t.id === emo.target) { emo.start = t.selectionStart; emo.end = t.selectionEnd; }
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!emo.el || emo.el.contains(event.target) || event.target.closest?.('[data-emoji-for]')) return;
+    closeEmoji();
+  });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && emo.el) closeEmoji(); });
+
+  /** A 😊 button for a field. */
+  const emojiButton = (id, cls = '') => `<button type="button" class="emo-btn ${cls}" data-emoji-for="${esc(id)}" aria-label="Emoji" title="Emoji">😊</button>`;
 
   // =============================================================== DO'STLAR
   //
@@ -2900,6 +3079,7 @@
       ${open?.list && open.list.length > 2 ? `<button class="so-cmt-more" data-so="comments-close" data-id="${esc(p.id)}">${SO_UZ.hideComments}</button>` : ''}
       <form class="so-cform" data-post="${esc(p.id)}" autocomplete="off">
         <input id="so-c-${esc(p.id)}" data-keep maxlength="300" placeholder="${esc(SO_UZ.commentPh)}" aria-label="${SO_UZ.comment}" enterkeyhint="send">
+        ${emojiButton(`so-c-${p.id}`, 'emo-small')}
         <button type="submit" class="so-cform-send" aria-label="${SO_UZ.send}">${SEND}</button>
       </form>
     </div>`;
@@ -3044,6 +3224,7 @@
       ${so.photo ? `<div class="so-preview"><img src="${so.photo}" alt=""><button type="button" data-so="unphoto" aria-label="${SO_UZ.cancel}">×</button></div>` : ''}
       <form class="so-compose" id="so-compose" autocomplete="off">
         ${textOnly ? '' : `<label class="so-round is-ghost" title="${SO_UZ.choosePhoto}" aria-label="${SO_UZ.choosePhoto}">${icon('image')}<input type="file" id="so-dm-file" accept="image/*" hidden></label>`}
+        ${emojiButton('so-draft', 'so-round is-ghost')}
         <textarea id="so-draft" data-keep rows="1" maxlength="500" placeholder="${esc(SO_UZ.placeholder)}" enterkeyhint="send">${esc(so.draft)}</textarea>
         ${!textOnly && !so.draft.trim() && !so.photo
           ? `<button type="button" class="so-round is-mic" data-so="rec-start" aria-label="${SO_UZ.voice}">${icon('mic')}</button>`
@@ -3103,7 +3284,7 @@
           <button type="button" class="so-seg-btn ${c.kind === 'story' ? 'is-on' : ''}" data-so="compose-kind" data-kind="story">${SO_UZ.kindStory}</button></div>
         ${c.photo ? `<div class="so-compose-photo ${c.kind === 'story' ? 'is-story' : ''}"><img src="${c.photo}" alt=""><button type="button" data-so="compose-unphoto" aria-label="${SO_UZ.cancel}">×</button></div>`
           : `<label class="so-drop">${icon('image')}<span>${SO_UZ.choosePhoto}</span><input type="file" id="so-post-file" accept="image/*" hidden></label>`}
-        <textarea id="so-caption" rows="3" maxlength="500" placeholder="${esc(SO_UZ.caption)}">${esc(c.text || '')}</textarea>
+        <div class="emo-field"><textarea id="so-caption" rows="3" maxlength="500" placeholder="${esc(SO_UZ.caption)}">${esc(c.text || '')}</textarea>${emojiButton('so-caption', 'emo-corner')}</div>
         <p class="so-hint">🔒 ${SO_UZ.privacy}${c.kind === 'story' ? ` · ${SO_UZ.story24}` : ''}</p>
         ${so.error ? `<div class="so-error">${esc(so.error)}</div>` : ''}
         <button class="btn btn-block" type="submit" ${so.busy || (c.kind === 'story' && !c.photo) ? 'disabled' : ''}>${so.busy ? SO_UZ.sending : SO_UZ.share}</button>
@@ -5070,6 +5251,7 @@
     }
     return `<form class="cx-compose" data-ch-compose="${where}" autocomplete="off">
       ${voice ? `<button type="button" class="cx-round cx-mic" data-vm="start" aria-label="${CH_UZ.record}" title="${CH_UZ.record}">${icon('mic')}</button>` : ''}
+      ${emojiButton(id, 'cx-round cx-emo')}
       <input type="text" id="${id}" data-keep maxlength="500" placeholder="${esc(CH_UZ.placeholder)}" aria-label="${esc(CH_UZ.placeholder)}" enterkeyhint="send">
       <button class="cx-round cx-send" type="submit" aria-label="${CH_UZ.send}">${SEND}</button>
     </form>`;

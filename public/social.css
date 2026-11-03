@@ -529,3 +529,42 @@ body:has(main[data-screen="dm"]) { overflow: hidden; }
   #root > main[data-screen="dm"] > .so-dm { margin: 0; width: 100%; }
 }
 .so-dm-photo img { max-height: min(300px, 42vh); }
+
+/* ==========================================================================
+   Emoji panel (2026-11-03) — the standard Unicode emoji, drawn by the phone
+   ========================================================================== */
+.emo-btn { display: inline-grid; place-items: center; flex: none; border: 0; background: none; cursor: pointer; font-size: 22px; line-height: 1;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; filter: grayscale(.35); transition: filter .15s ease, transform .15s ease; }
+.emo-btn:hover, .emo-btn:focus-visible { filter: none; transform: scale(1.08); }
+.emo-btn.so-round { width: 44px; height: 44px; font-size: 22px; }
+.emo-btn.emo-small { width: 32px; height: 32px; font-size: 18px; }
+.emo-btn.cx-emo { width: 40px; height: 40px; font-size: 22px; border-radius: 50%; }
+.emo-btn.sp-emo { width: 36px; height: 36px; font-size: 20px; }
+.emo-field { position: relative; }
+.emo-field textarea { padding-right: 44px; }
+.emo-btn.emo-corner { position: absolute; right: 6px; bottom: 8px; width: 34px; height: 34px; }
+
+.emo-panel { position: fixed; z-index: 200; display: flex; flex-direction: column; overflow: hidden; border-radius: 20px;
+  background: var(--surface, #fff); color: var(--ink, #141a3a); border: 1px solid var(--line, #e9ebf5);
+  box-shadow: 0 24px 60px -20px rgba(20, 26, 58, .45); animation: so-rise .16s ease; }
+.emo-top { display: flex; align-items: center; gap: 6px; padding: 10px 10px 6px; }
+.emo-search { flex: 1; min-width: 0; height: 38px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line, #e9ebf5);
+  background: var(--ground-2, #f3f4fa); color: inherit; font: inherit; font-size: 14px; }
+.emo-search:focus { outline: none; border-color: var(--indigo-200, #c9ccff); }
+.emo-close { width: 34px; height: 34px; border-radius: 10px; border: 0; background: none; color: var(--ink-soft, #5b6185); font-size: 16px; cursor: pointer; }
+.emo-tabs { display: flex; gap: 2px; padding: 0 8px 6px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line-soft, #f0f1f8); }
+.emo-tabs::-webkit-scrollbar { display: none; }
+.emo-tab { flex: none; width: 36px; height: 34px; border: 0; border-radius: 10px; background: none; cursor: pointer; font-size: 20px;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.emo-tab:hover { background: var(--ground-2, #f3f4fa); }
+.emo-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 10px; overscroll-behavior: contain; }
+.emo-group h4 { position: sticky; top: 0; z-index: 1; padding: 8px 4px 4px; font-size: 12px; font-weight: 800; letter-spacing: .04em;
+  color: var(--ink-faint, #8a90b5); background: var(--surface, #fff); }
+.emo-cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); }
+.emo-cell { height: 40px; border: 0; border-radius: 10px; background: none; cursor: pointer; font-size: 26px; line-height: 1; padding: 0;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.emo-cell:hover, .emo-cell:focus-visible { background: var(--ground-2, #f3f4fa); outline: none; }
+.emo-cell:active { transform: scale(.9); }
+.emo-none { text-align: center; color: var(--ink-faint, #8a90b5); padding: 24px 0; }
+/* the comment box has room for its button */
+.so-cform .emo-btn { margin-left: -2px; }
