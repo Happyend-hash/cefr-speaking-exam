@@ -33,6 +33,7 @@ import { APIError } from '../middleware/errorHandler.js';
 import { usageReport, usageList } from '../services/UsageStats.js';
 import WritingAttempt from '../models/WritingAttempt.js';
 import { reviewSpeaking, reviewWriting } from '../services/ExpertReview.js';
+import AuthService from '../services/AuthService.js';
 
 const router = express.Router();
 
@@ -1458,6 +1459,66 @@ router.get('/students', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+/**
+ * Test profile (Jamshid, 2026-11-03): an admin links ONE student account they
+ * own — by entering that account's own email and password once — and can then
+ * switch the site to it in one click to try things as a student. The link is
+ * kept on the admin's own account, so no other admin (and no student) can use
+ * it, and it can never point at someone else's account without their password.
+ */
+const testTries = new Map();      // adminId -> [timestamps] of failed password checks
+const tooManyTries = id => (testTries.get(id) || []).filter(t => Date.now() - t < 15 * 60e3).length >= 5;
+const noteFailedTry = id => testTries.set(id, [...(testTries.get(id) || []).filter(t => Date.now() - t < 15 * 60e3), Date.now()]);
+
+async function linkedTestAccount(adminId) {
+  const admin = await User.findById(adminId).select('role testAccount').lean();
+  if (admin?.role !== 'admin' || !admin.testAccount?.user) return null;
+  const test = await User.findById(admin.testAccount.user);
+  if (!test || test.role !== 'student') return null;
+  return test;
+}
+
+router.get('/test-account', async (req, res, next) => {
+  try {
+    const test = await linkedTestAccount(req.user.id);
+    res.json({ success: true, data: { linked: test ? { email: test.email, name: [test.firstName, test.lastName].filter(Boolean).join(' ') } : null } });
+  } catch (error) { next(error); }
+});
+
+router.post('/test-account', async (req, res, next) => {
+  try {
+    const id = String(req.user.id);
+    if (tooManyTries(id)) throw new APIError('Too many wrong passwords — wait 15 minutes.', 429);
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    if (!email || !password) throw new APIError('Write the test account’s email and password', 400);
+    const test = await User.findOne({ email }).select('+password role email');
+    if (!test || !(await test.comparePassword(password))) { noteFailedTry(id); throw new APIError('Wrong email or password', 401); }
+    if (String(test._id) === id) throw new APIError('That is this admin account — choose your student test account', 400);
+    if (test.role !== 'student') throw new APIError('The test account must be a student account', 400);
+    await User.updateOne({ _id: id }, { $set: { testAccount: { user: test._id, linkedAt: new Date() } } });
+    res.json({ success: true, data: { linked: { email: test.email } } });
+  } catch (error) { next(error); }
+});
+
+router.delete('/test-account', async (req, res, next) => {
+  try {
+    await User.updateOne({ _id: req.user.id }, { $unset: { testAccount: 1 } });
+    res.json({ success: true, data: { linked: null } });
+  } catch (error) { next(error); }
+});
+
+/** A student session for the linked test account. */
+router.post('/test-account/switch', async (req, res, next) => {
+  try {
+    const test = await linkedTestAccount(req.user.id);
+    if (!test) throw new APIError('No test profile is linked to this admin account', 404);
+    const session = await AuthService.startSession(test);
+    console.log(`Admin ${req.user.email} switched to test profile ${test.email}`);
+    res.json({ success: true, data: session });
+  } catch (error) { next(error); }
 });
 
 /**

@@ -223,6 +223,7 @@
         .catch(error => { state.usageError = `Could not load the numbers: ${error.message}`; })
         .finally(() => { if (state.folder) refreshUsageCard(); else render(); });
       setState({ tests, overview, unmarked: unmarked?.attempts || [], loading: false, screen: 'tests' });
+      loadTestAccount();
       // the home tiles show waiting certificates and open reports
       if (!state.wall) loadWallAdmin({ quiet: true });
       if (!state.social) loadSocialAdmin();
@@ -428,6 +429,9 @@
         <div class="row">
           <span class="muted admin-who">${esc(state.user?.email || '')}</span>
           <a class="btn btn-ghost btn-sm" href="/">Exam site</a>
+          ${state.testAcc?.linked
+            ? `<span class="tp-group"><button class="btn btn-sm tp-btn" data-action="test-switch" title="Open the site as ${esc(state.testAcc.linked.email)}">🧪 Test profile</button><button class="btn btn-ghost btn-sm tp-more" data-action="test-panel" aria-label="Test profile settings">⋯</button></span>`
+            : `<button class="btn btn-ghost btn-sm" data-action="test-panel" title="Link your student test account">🧪 Test profile</button>`}
           ${state.refreshedAt ? `<span class="muted admin-refreshed">Updated ${esc(state.refreshedAt)}</span>` : ''}
           <button class="btn btn-sm admin-refresh ${state.refreshing ? 'is-busy' : ''}" data-action="refresh" ${state.refreshing ? 'disabled' : ''} title="Load the latest changes">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
@@ -436,6 +440,7 @@
           <button class="btn btn-ghost btn-sm" data-action="signout">Sign out</button>
         </div>
       </div>
+      ${state.testPanel ? testPanel() : ''}
       <main class="stack dash">
         ${f ? folderScreen(f) : homeScreen()}
       </main>`;
@@ -1012,6 +1017,68 @@
         new Audio(URL.createObjectURL(await res.blob())).play();
       } catch { setState({ error: 'The voice message could not be played.' }); }
     }));
+  }
+
+  // ============================================================ TEST PROFILE
+  //
+  // One click from the teacher panel to the site as your own student test
+  // account, and one click back (2026-11-03). Linked once with that account's
+  // email and password; only this admin account can use the link.
+
+  async function loadTestAccount() {
+    try { state.testAcc = await api('/admin/test-account'); render(); } catch { /* the button simply offers to link */ }
+  }
+
+  function testPanel() {
+    const linked = state.testAcc?.linked;
+    return `<div class="tp-panel card">
+      <div class="row" style="justify-content:space-between;gap:8px"><h2 style="font-size:17px">🧪 Test profile</h2>
+        <button class="btn btn-ghost btn-sm" data-action="test-panel">Close</button></div>
+      ${linked ? `<p style="margin-top:8px">Linked to <strong>${esc(linked.email)}</strong>. <em>🧪 Test profile</em> in the top bar opens the site as this student; a bar at the top of the site brings you back here.</p>
+        <div class="row" style="gap:8px;margin-top:12px"><button class="btn btn-sm" data-action="test-switch">Open the site as the test profile</button>
+        <button class="btn btn-ghost btn-sm" data-action="test-unlink">Unlink</button></div>`
+        : `<p class="muted" style="margin-top:8px;font-size:14px">Link the student account you test the site with. Type that account's own email and password once — after that, one click switches to it. Only you (this admin account) can use it, and it cannot be linked to anyone's account without their password.</p>`}
+      <form id="tp-form" class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap" autocomplete="off">
+        <input id="tp-email" type="email" placeholder="Test account email" style="flex:1;min-width:200px" required>
+        <input id="tp-password" type="password" placeholder="Its password" style="flex:1;min-width:160px" autocomplete="off" required>
+        <button class="btn btn-sm" type="submit" ${state.testBusy ? 'disabled' : ''}>${linked ? 'Link another account' : 'Link test account'}</button>
+      </form>
+      ${state.testError ? `<p class="error" style="margin-top:8px">${esc(state.testError)}</p>` : ''}
+    </div>`;
+  }
+
+  async function switchToTest() {
+    try {
+      const session = await api('/admin/test-account/switch', { method: 'POST' });
+      // Whatever the student site was signed in as before comes back on return.
+      const before = { token: store.get('token'), user: store.get('user') };
+      if (!store.get('testMode')) store.set('preTest', JSON.stringify(before));
+      store.set('token', session.accessToken);
+      store.set('user', JSON.stringify(session.user));
+      store.set('testMode', '1');
+      location.href = '/';
+    } catch (error) { setState({ error: error.message, testPanel: true }); }
+  }
+
+  async function unlinkTest() {
+    if (!window.confirm('Unlink the test profile?')) return;
+    try { state.testAcc = await api('/admin/test-account', { method: 'DELETE' }); setState({ testPanel: false }); }
+    catch (error) { setState({ testError: error.message }); }
+  }
+
+  function wireTestPanel() {
+    document.getElementById('tp-form')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const email = document.getElementById('tp-email').value;
+      const password = document.getElementById('tp-password').value;
+      setState({ testBusy: true, testError: '' });
+      try {
+        await api('/admin/test-account', { method: 'POST', body: { email, password } });
+        state.testAcc = await api('/admin/test-account');
+        state.notice = 'Test profile linked — press 🧪 Test profile in the top bar to open the site as it.';
+      } catch (error) { state.testError = error.message; }
+      setState({ testBusy: false });
+    });
   }
 
   /**
@@ -1746,6 +1813,7 @@
     wireAccuracy();
     wireVoiceAdmin();
     wireChatAdmin();
+    wireTestPanel();
     if (state.folder === 'wall') wireWallAdmin();
     if (state.folder === 'friends') { wireSocialAdmin(); paintWallImages(); }
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
@@ -1861,6 +1929,9 @@
 
   function handleAction(action) {
     if (action === 'signout') return signOut();
+    if (action === 'test-switch') return switchToTest();
+    if (action === 'test-panel') return setState({ testPanel: !state.testPanel, testError: '' });
+    if (action === 'test-unlink') return unlinkTest();
     if (action === 'new-test') return setState({ screen: 'new-test' });
     if (action === 'cancel-new-test') return setState({ screen: 'tests' });
     if (action === 'cancel-form') return setState({

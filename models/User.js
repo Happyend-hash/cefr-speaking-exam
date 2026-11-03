@@ -64,6 +64,13 @@ const userSchema = new mongoose.Schema(
     // not available until they have — being told is the point of recording
     // being acceptable at all.
     voiceConsentAt: Date,
+    // Admins only: the student account this admin tests the site with
+    // (2026-11-03). Linked once with that account's password; after that the
+    // teacher panel switches to it in one click. Nobody else can use it.
+    testAccount: {
+      user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      linkedAt: Date
+    },
     // Do'stlar (friends, chats, posts — 2026-11-03): what the student's profile
     // says about them. Only friends see the bio; everyone sees name, picture
     // and level in People.

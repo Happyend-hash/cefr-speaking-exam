@@ -284,6 +284,8 @@
   }
 
   function signOut() {
+    store.remove('testMode');
+    store.remove('preTest');
     stopSocialStream();
     Object.assign(so, { chats: null, requests: [], people: null, friends: null, friendReq: null, feed: null, stories: null, profile: null, thread: null, withId: null, unread: { messages: 0, requests: 0, friendRequests: 0, total: 0 } });
     stopMicCheck();
@@ -7890,8 +7892,28 @@
     }[state.screen] || landingScreen;
 
     const tabs = tabBarMarkup();
-    return `${navMarkup()}<main class="stack ${tabs ? 'has-tabs' : ''}" data-screen="${esc(state.screen)}">${alerts()}${body()}</main>${tabs}`;
+    return `${testBar()}${navMarkup()}<main class="stack ${tabs ? 'has-tabs' : ''}" data-screen="${esc(state.screen)}">${alerts()}${body()}</main>${tabs}`;
   }
+
+  // The teacher's test profile (2026-11-03): a bar to go back to the teacher panel.
+  const inTestMode = () => store.get('testMode') === '1' && Boolean(state.user) && state.user.role === 'student';
+  const testBar = () => (inTestMode()
+    ? `<div class="test-bar" role="status"><span>🧪 Test profil: <b>${esc(state.user.email || '')}</b></span><button type="button" data-test-back>Admin panelga qaytish →</button></div>`
+    : '');
+
+  function leaveTestMode() {
+    stopSocialStream();
+    let before = null;
+    try { before = JSON.parse(store.get('preTest') || 'null'); } catch { before = null; }
+    if (before?.token) store.set('token', before.token); else store.remove('token');
+    if (before?.user) store.set('user', before.user); else store.remove('user');
+    store.remove('preTest');
+    store.remove('testMode');
+    location.href = '/admin.html';
+  }
+  root.addEventListener('click', event => {
+    if (event.target.closest('[data-test-back]')) { event.preventDefault(); leaveTestMode(); }
+  });
 
   function landingScreen() {
     return `

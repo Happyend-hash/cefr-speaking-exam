@@ -707,3 +707,10 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .wa-post { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; }
 .wa-post img { width: 100%; height: 160px; object-fit: cover; border-radius: 10px; background: #f1f5f9; }
 .wa-post-text { height: 60px; display: grid; place-items: center; font-size: 26px; background: #f1f5f9; border-radius: 10px; }
+
+/* Test profile (2026-11-03) */
+.tp-group { display: inline-flex; gap: 2px; }
+.tp-btn { background: #f5c451; color: #1a1300; }
+.tp-btn:hover:not(:disabled) { background: #e7a325; }
+.tp-more { padding-left: 8px; padding-right: 8px; }
+.tp-panel { max-width: 760px; margin: 16px auto 0; }
