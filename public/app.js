@@ -8819,12 +8819,9 @@
               </button>
             </section>
             ${balance}
-            <section class="hx-tiles">
-              ${tile(0, 'data-parts=""', 'grid', HOME_UZ.parts, HOME_UZ.partsSub)}
-              ${tile(1, 'data-home-vr="1"', 'book', 'Vocabulary test', HOME_UZ.vocabSub)}
-              ${tile(2, 'data-go="speak"', 'users', HOME_UZ.club, `<span class="hx-live"></span>${HOME_UZ.live}`)}
-              ${tile(3, 'data-go="rank"', 'trophy', HOME_UZ.rankNone, esc(rankSub))}
-            </section>
+            ${/* Qismlar, Vocabulary test, Klub and Reyting tiles removed (2026-11-03):
+                 each is a tab away — Testlar (part practice), Klub (Vocabulary test
+                 and games), Klub, Reyting. */ ''}
             ${wlInvite()}
             ${adSlot('home')}
           </div>
