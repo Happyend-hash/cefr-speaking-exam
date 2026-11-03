@@ -882,7 +882,10 @@
         c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
         const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
         URL.revokeObjectURL(img.src);
-        resolve(c.toDataURL('image/jpeg', 0.85));
+        // the server takes up to 1.2 MB: lower the quality until it fits
+        let q = 0.85; let out = c.toDataURL('image/jpeg', q);
+        while (out.length > 1500000 && q > 0.4) { q -= 0.1; out = c.toDataURL('image/jpeg', q); }
+        resolve(out);
       };
       img.onerror = () => reject(new Error('That picture could not be opened'));
       img.src = URL.createObjectURL(file);
@@ -932,9 +935,10 @@
         stars: Number(v('wr-stars').value), published: v('wr-published').checked, pinned: v('wr-pinned').checked,
         removePhoto: Boolean(v('wr-nophoto')?.checked)
       };
+      // Read the photo BEFORE anything redraws the form: a redraw empties the file box.
+      const file = v('wr-photo')?.files?.[0];
       setState({ wallSaving: true, wallEdit: { ...f, ...body } });
       try {
-        const file = v('wr-photo')?.files?.[0];
         if (file) body.photo = await readFileAsShrunkDataUrl(file);
         await api(f.id ? `/admin/wall/reviews/${f.id}` : '/admin/wall/reviews', { method: f.id ? 'PATCH' : 'POST', body });
         state.wallEdit = null;
@@ -1060,7 +1064,7 @@
           <label class="field" style="flex:1;min-width:220px"><span>Title</span><input id="nf-title" maxlength="140" value="${esc(f.title || '')}" required></label>
         </div>
         <label class="field"><span>Text (Uzbek or English — new lines are kept)</span><textarea id="nf-text" rows="6" maxlength="4000">${esc(f.text || '')}</textarea></label>
-        <label class="field"><span>Photo (optional)</span><input type="file" id="nf-photo" accept="image/*">${f.photo ? `<label class="muted" style="font-size:13px"><input type="checkbox" id="nf-nophoto"> remove the current photo</label>` : ''}</label>
+        <label class="field"><span>Photo (optional)</span>${f.photo ? `<img class="na-thumb" data-wall-img="${esc(f.photo)}" alt="">` : ''}<input type="file" id="nf-photo" accept="image/*">${f.photo ? `<label class="muted" style="font-size:13px"><input type="checkbox" id="nf-nophoto"> remove the current photo</label>` : ''}</label>
         <div class="row" style="gap:14px;flex-wrap:wrap">
           <label class="muted"><input type="checkbox" id="nf-published" ${f.published !== false ? 'checked' : ''}> Show it</label>
           <label class="muted"><input type="checkbox" id="nf-pinned" ${f.pinned ? 'checked' : ''}> Keep it at the top (pinned)</label>
@@ -1072,6 +1076,7 @@
         <div class="wa-review-head"><span class="tag">${esc(NEWS_KIND_LABEL[n.kind] || n.kind)}</span> <strong>${esc(n.title)}</strong>
           ${i === 0 && n.published ? '<span class="tag tag-live">shown open</span>' : ''}${n.pinned ? ' <span class="tag tag-writing">pinned</span>' : ''}${n.published ? '' : ' <span class="tag tag-draft">hidden</span>'}
           <span class="muted" style="font-size:12px;margin-left:6px">${esc(new Date(n.at).toLocaleString())}</span></div>
+        ${n.photo ? `<img class="na-thumb" data-wall-img="${esc(n.photo)}" alt="">` : ''}
         ${n.text ? `<p>${esc(n.text.length > 220 ? `${n.text.slice(0, 220)}…` : n.text)}</p>` : ''}
         <div class="row" style="gap:6px"><button class="btn btn-ghost btn-sm" data-news-act="edit" data-id="${esc(n.id)}">Edit</button>
           <button class="btn btn-ghost btn-sm" data-news-act="delete" data-id="${esc(n.id)}">Delete</button></div></div>`).join('');
@@ -1114,9 +1119,10 @@
         kind: v('nf-kind').value, title: v('nf-title').value, text: v('nf-text').value,
         published: v('nf-published').checked, pinned: v('nf-pinned').checked, removePhoto: Boolean(v('nf-nophoto')?.checked)
       };
+      // Read the photo BEFORE anything redraws the form: a redraw empties the file box.
+      const file = v('nf-photo')?.files?.[0];
       setState({ newsSaving: true, newsEdit: { ...f, ...body } });
       try {
-        const file = v('nf-photo')?.files?.[0];
         if (file) body.photo = await readFileAsShrunkDataUrl(file, 1280);
         await api(f.id ? `/admin/news/${f.id}` : '/admin/news', { method: f.id ? 'PATCH' : 'POST', body });
         state.newsEdit = null;
@@ -1941,7 +1947,7 @@
     wireVoiceAdmin();
     wireChatAdmin();
     wireTestPanel();
-    if (state.folder === 'news') wireNewsAdmin();
+    if (state.folder === 'news') { wireNewsAdmin(); paintWallImages(); }
     if (state.folder === 'wall') wireWallAdmin();
     if (state.folder === 'friends') { wireSocialAdmin(); paintWallImages(); }
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>
