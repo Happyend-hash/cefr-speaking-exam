@@ -9166,10 +9166,21 @@
     busy: 'Yoqilmoqda…',
     done: 'Bildirishnomalar yoqildi ✓',
     denied: 'Bildirishnomalar telefon sozlamalarida o‘chirilgan. Sozlamalar → Ilovalar → English Hub → Bildirishnomalar orqali yoqing.',
-    failed: 'Bildirishnomani yoqib bo‘lmadi — keyinroq qayta urinib ko‘ring.'
+    failed: 'Bildirishnomani yoqib bo‘lmadi',
+    dismissed: 'Ruxsat berilmadi. «Yoqish»ni qayta bosing va «Ruxsat berish»ni tanlang.',
+    retry: 'Qayta urinish'
   };
 
-  const pu = { busy: false, note: '', sent: '' };
+  /** Tell the teacher panel what went wrong on this phone (best effort). */
+  function pushReport(stage, error) {
+    const browser = (navigator.userAgent.match(/Android [\d.]+|iPhone OS [\d_]+|Chrome\/[\d.]+|Version\/[\d.]+ Mobile|SamsungBrowser\/[\d.]+/g) || []).join(' · ');
+    api('/push/problem', { method: 'POST', body: {
+      stage, error: error ? `${error.name || 'Error'}: ${error.message || error}` : '',
+      permission: 'Notification' in window ? Notification.permission : 'no Notification', agent: pushAgent(), browser
+    } }).catch(() => {});
+  }
+
+  const pu = { busy: false, note: '', sent: '', retry: false };
 
   const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
@@ -9184,7 +9195,12 @@
 
   /** Subscribe this phone (permission already given) and tell the server. */
   async function pushSubscribe() {
-    const reg = await navigator.serviceWorker.ready;
+    // The service worker receives the notifications; make sure it is there (10 s at most).
+    if (!(await navigator.serviceWorker.getRegistration())) await navigator.serviceWorker.register('/sw.js');
+    const reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, no) => setTimeout(() => no(new Error('service worker not ready after 10 s')), 10000))
+    ]);
     let sub = await reg.pushManager.getSubscription();
     if (!sub) {
       const { key } = await api('/push/key');
@@ -9201,18 +9217,33 @@
 
   /** On every Home load: phones that already said yes stay signed up. */
   function pushRefresh() {
-    if (!pushSupported() || !isStudentShell() || Notification.permission !== 'granted') return;
-    pushSubscribe().catch(() => {});
+    if (!isStudentShell()) return;
+    if (!pushSupported()) {
+      // Report once per phone why the banner never shows here.
+      if (!store.get('pushNoSupport')) { store.set('pushNoSupport', '1'); pushReport('this phone/browser has no web push'); }
+      return;
+    }
+    if (Notification.permission !== 'granted') return;
+    pushSubscribe().catch(error => { pu.note = `${PUSH_UZ.failed}: ${error?.message || error}`; pu.retry = true; render(); pushReport('sign-up on load failed', error); });
   }
 
   async function pushEnable() {
     if (pu.busy) return;
     pu.busy = true; pu.note = ''; render();
+    pu.retry = false;
+    let stage = 'asking permission';
     try {
       const answer = await Notification.requestPermission();
-      if (answer === 'granted') { await pushSubscribe(); pu.note = PUSH_UZ.done; syncBadge(); }
-      else if (answer === 'denied') pu.note = PUSH_UZ.denied;
-    } catch { pu.note = PUSH_UZ.failed; }
+      if (answer === 'granted') {
+        stage = 'signing up the phone';
+        await pushSubscribe();
+        pu.note = PUSH_UZ.done; syncBadge();
+      } else if (answer === 'denied') { pu.note = PUSH_UZ.denied; pushReport('permission denied'); }
+      else { pu.note = PUSH_UZ.dismissed; pu.retry = true; pushReport('permission prompt closed'); }
+    } catch (error) {
+      pu.note = `${PUSH_UZ.failed}: ${error?.message || error}`; pu.retry = true;
+      pushReport(stage + ' failed', error);
+    }
     pu.busy = false;
     render();
     if (pu.note === PUSH_UZ.done) setTimeout(() => { if (pu.note === PUSH_UZ.done) { pu.note = ''; render(); } }, 4000);
@@ -9225,7 +9256,7 @@
       .then(reg => reg.pushManager.getSubscription())
       .then(sub => sub && fetch('/api/push/unsubscribe', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ endpoint: sub.endpoint })
+        body: JSON.stringify({ endpoint: sub.endpoint, agent: pushAgent() })
       }))
       .catch(() => {});
     pu.sent = '';
@@ -9234,7 +9265,7 @@
 
   function pushBanner() {
     if (!pushSupported() || !isStudentShell()) return '';
-    if (pu.note) return `<div class="card pn-banner is-note" role="status">${esc(pu.note)}</div>`;
+    if (pu.note) return `<div class="card pn-banner is-note" role="status">${esc(pu.note)}${pu.retry ? ` <button class="btn btn-sm" style="margin-top:8px" data-push="on">${PUSH_UZ.retry}</button>` : ''}</div>`;
     if (Notification.permission !== 'default') return '';
     if (Number(store.get('pushLater') || 0) > Date.now()) return '';
     return `<section class="card pn-banner">

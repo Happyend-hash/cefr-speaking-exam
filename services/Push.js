@@ -141,6 +141,22 @@ export async function notify(userId, note = {}) {
   }
 }
 
+// What phones reported when signing up failed, newest first (kept in memory;
+// enough to see why while testing). Also notes sign-outs that removed a phone.
+const problems = [];
+export function logProblem(userId, email, info = {}) {
+  problems.unshift({
+    at: new Date(), user: String(userId || ''), email: String(email || ''),
+    stage: String(info.stage || '').slice(0, 40),
+    error: String(info.error || '').slice(0, 300),
+    permission: String(info.permission || '').slice(0, 20),
+    agent: String(info.agent || '').slice(0, 60),
+    browser: String(info.browser || '').slice(0, 160)
+  });
+  problems.length = Math.min(problems.length, 30);
+}
+export const recentProblems = () => problems.slice();
+
 /** The teacher's check: this student's phones, newest first. */
 export async function devices(userId) {
   const list = await PushSubscription.find({ user: userId }).sort({ updatedAt: -1 }).lean();
@@ -178,4 +194,4 @@ export async function stats() {
   return { devices, students };
 }
 
-export default { keys, publicKey, subscribe, unsubscribe, badgeCount, notify, notifySoon, notifyMany, stats, devices };
+export default { keys, publicKey, subscribe, unsubscribe, badgeCount, notify, notifySoon, notifyMany, stats, devices, logProblem, recentProblems };

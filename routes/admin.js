@@ -1489,7 +1489,11 @@ async function linkedTestAccount(adminId) {
 router.get('/push', async (req, res, next) => {
   try {
     const test = await linkedTestAccount(req.user.id);
-    res.json({ success: true, data: { stats: await Push.stats(), test: test ? { email: test.email, devices: await Push.devices(test._id) } : null } });
+    res.json({ success: true, data: {
+      stats: await Push.stats(),
+      test: test ? { email: test.email, devices: await Push.devices(test._id) } : null,
+      problems: Push.recentProblems()
+    } });
   } catch (error) { next(error); }
 });
 router.post('/push/test', async (req, res, next) => {

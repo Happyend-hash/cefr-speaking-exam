@@ -18,8 +18,14 @@ router.post('/subscribe', handle(async (req, res) => {
   ok(res, { subscribed: true });
 }));
 router.post('/unsubscribe', handle(async (req, res) => {
+  Push.logProblem(req.user.id, req.user.email, { stage: 'signed out (phone removed)', agent: req.body?.agent });
   await Push.unsubscribe(req.user.id, req.body?.endpoint);
   ok(res, { subscribed: false });
+}));
+// The phone could not sign up: what it said, so the teacher can see why.
+router.post('/problem', handle(async (req, res) => {
+  Push.logProblem(req.user.id, req.user.email, req.body || {});
+  ok(res, { logged: true });
 }));
 router.get('/count', handle(async (req, res) => ok(res, { count: await Push.badgeCount(req.user.id) })));
 

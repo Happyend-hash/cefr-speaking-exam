@@ -1185,6 +1185,10 @@
             ${d.lastError ? `<br><span class="error">Last refusal (${esc(when(d.lastErrorAt))}): ${esc(d.lastError)}</span>` : ''}
           </div>`).join('')
           : `<p class="error" style="font-size:13px">The test profile has no phone signed up. On the phone: open the app as the test profile, press “Yoqish” on Home and allow notifications. (One phone belongs to the last account that opened the site on it — if another student account was used on that phone afterwards, the phone moved to that account.)</p>`}
+        ${(p.problems || []).length ? `<details style="margin-top:8px;font-size:13px" open><summary><b>What phones reported (${p.problems.length})</b></summary>
+          ${p.problems.map(x => `<div style="padding:6px 0;border-top:1px dashed var(--line)"><span class="muted">${esc(when(x.at))} · ${esc(x.email)} · ${esc(x.agent)} · permission: ${esc(x.permission || '—')}</span><br>
+            <b>${esc(x.stage)}</b>${x.error ? `: <span class="error">${esc(x.error)}</span>` : ''}${x.browser ? `<br><span class="muted" style="font-size:11.5px">${esc(x.browser)}</span>` : ''}</div>`).join('')}
+        </details>` : ''}
         <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-sm" data-action="push-test" ${state.pushBusy || !devices.length ? 'disabled' : ''}>${state.pushBusy ? 'Sending…' : 'Send a test notification'}</button>
           <button class="btn btn-ghost btn-sm" data-action="push-refresh">Refresh</button></div>
         ${results ? `<p style="font-size:13px;margin-top:8px">${results.length ? results.map(r => r.ok ? `✓ Sent to ${esc(r.agent || 'phone')} — close the app and look at the phone.` : `✗ ${esc(r.agent || 'phone')}: ${esc(r.error || 'failed')}${r.removed ? ' (this phone was forgotten — turn notifications on again there)' : ''}`).join('<br>') : 'No phone to send to.'}</p>` : ''}`}
