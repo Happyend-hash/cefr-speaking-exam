@@ -1518,7 +1518,8 @@ router.get('/students/:id/attempts', async (req, res, next) => {
       const s = rows.filter(r => r.status === 'completed' && Number.isFinite(r.score));
       return s.length ? Math.round((s.reduce((a, r) => a + r.score, 0) / s.length) * 10) / 10 : null;
     };
-    const full = m => list.filter(r => r.module === m && r.kind === 'Full mock');
+    // finished full mocks only: an unfinished or cancelled attempt has no score to average
+    const full = m => list.filter(r => r.module === m && r.kind === 'Full mock' && r.status === 'completed' && Number.isFinite(r.score));
     res.json({
       success: true,
       data: {
