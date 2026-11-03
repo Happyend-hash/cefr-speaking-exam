@@ -2296,6 +2296,12 @@
     deletePost: 'O‘chirish',
     deleteAsk: 'Bu post o‘chirilsinmi?',
     likes: n => `${n} ta yoqtirish`,
+    comment: 'Izoh',
+    commentPh: 'Izoh yozing (inglizcha)…',
+    allComments: n => `Barcha ${n} ta izohni ko‘rish`,
+    hideComments: 'Kamroq ko‘rsatish',
+    deleteComment: 'O‘chirish',
+    friendsOnlyComments: 'Faqat do‘stlar izoh yoza oladi',
     privacy: 'Faqat do‘stlaringiz ko‘radi',
     noFriendsYet: 'Hali do‘stingiz yo‘q',
     bigImage: 'Rasm ochilmadi — boshqasini tanlang',
@@ -2310,6 +2316,7 @@
     withId: null, thread: null, draft: '', photo: '', busy: false, error: '', notice: '',
     unread: { messages: 0, requests: 0, friendRequests: 0, total: 0 },
     menu: null, msgMenu: null, confirm: null, compose: null, edit: null, viewer: null, zoom: null,
+    cm: {},          // comments opened under a post: { postId: { list, loading } }
     active: false, abort: null, connected: false, searchTimer: null
   };
 
@@ -2387,6 +2394,11 @@
         so.thread.messages.forEach(m => { if (m.mine) m.read = true; });
         renderDm(false);
       }
+      return;
+    }
+    if (event === 'comment') {
+      if (state.screen === 'social' && so.tab === 'feed') loadFeed();
+      if (state.screen === 'person' && so.personId === 'me') loadPerson('me');
       return;
     }
     if (event === 'friend' || event === 'chat') {
@@ -2852,8 +2864,88 @@
       ${p.text ? `<p class="so-post-text ${p.photo ? '' : 'is-big'}">${esc(p.text)}</p>` : ''}
       <footer><button class="so-like ${p.liked ? 'is-on' : ''}" data-so="like" data-id="${esc(p.id)}" aria-pressed="${p.liked}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 4.5 6.8 4.5c2.1 0 3.6 1.1 5.2 3 1.6-1.9 3.1-3 5.2-3 3.8 0 5.9 3.9 4.4 7.3C19.5 16.4 12 21 12 21z"/></svg>
-        <span>${p.likes ? SO_UZ.likes(p.likes) : ''}</span></button></footer>
+        <span>${p.likes ? SO_UZ.likes(p.likes) : ''}</span></button>
+        <button class="so-like so-cbtn" data-so="comment-focus" data-id="${esc(p.id)}" aria-label="${SO_UZ.comment}">${icon('message')}<span>${p.comments ? p.comments : ''}</span></button></footer>
+      ${commentsBlock(p)}
     </article>`;
+  }
+
+  function commentRow(c, postId) {
+    const menuKey = `c-${c.id}`;
+    return `<div class="so-cmt">
+      <button class="so-cmt-av" data-so="person" data-id="${esc(c.user.id)}" aria-label="${esc(c.user.name)}">${soAvatar(c.user, 'sm')}</button>
+      <div class="so-cmt-body">
+        <div class="so-cmt-bubble"><button class="so-cmt-name" data-so="person" data-id="${esc(c.user.id)}">${nameMarkup(c.user)}</button>
+          <span class="so-cmt-text">${esc(c.text)}</span></div>
+        <div class="so-cmt-meta"><time>${esc(soAgo(c.at))}</time>
+          ${c.canDelete ? `<button data-so="comment-delete" data-id="${esc(c.id)}" data-post="${esc(postId)}">${SO_UZ.deleteComment}</button>` : ''}
+          ${c.mine ? '' : `<button data-so="report" data-kind="comment" data-id="${esc(c.id)}">${SO_UZ.report}</button>`}</div>
+      </div>
+    </div>`;
+  }
+
+  /** Under a post: the latest comments (or all of them once opened) and a box to write one. */
+  function commentsBlock(p) {
+    if (p.kind !== 'post') return '';
+    const open = so.cm[p.id];
+    const list = open?.list || p.latestComments || [];
+    const more = !open?.list && (p.comments || 0) > list.length;
+    return `<div class="so-cmts">
+      ${more ? `<button class="so-cmt-more" data-so="comments-open" data-id="${esc(p.id)}">${open?.loading ? '…' : SO_UZ.allComments(p.comments)}</button>` : ''}
+      ${list.map(c => commentRow(c, p.id)).join('')}
+      ${open?.list && open.list.length > 2 ? `<button class="so-cmt-more" data-so="comments-close" data-id="${esc(p.id)}">${SO_UZ.hideComments}</button>` : ''}
+      <form class="so-cform" data-post="${esc(p.id)}" autocomplete="off">
+        <input id="so-c-${esc(p.id)}" data-keep maxlength="300" placeholder="${esc(SO_UZ.commentPh)}" aria-label="${SO_UZ.comment}" enterkeyhint="send">
+        <button type="submit" class="so-cform-send" aria-label="${SO_UZ.send}">${SEND}</button>
+      </form>
+    </div>`;
+  }
+
+  /** Every copy of a post on screen (the feed and a profile can both hold it). */
+  const postsById = id => [...(so.feed || []), ...(so.profile?.posts || [])].filter(p => p.id === id);
+
+  async function openComments(id) {
+    so.cm[id] = { loading: true };
+    render();
+    try {
+      const d = await api(`/social/posts/${encodeURIComponent(id)}/comments`);
+      so.cm[id] = { list: d.comments };
+      postsById(id).forEach(p => { p.comments = d.comments.length; });
+    } catch (error) { delete so.cm[id]; so.error = error.message; }
+    render();
+  }
+
+  async function sendComment(form) {
+    const id = form.dataset.post;
+    const input = form.querySelector('input');
+    const text = input?.value.trim();
+    if (!text || so.busy) return;
+    so.busy = true;
+    try {
+      const d = await api(`/social/posts/${encodeURIComponent(id)}/comments`, { method: 'POST', body: { text } });
+      input.value = '';
+      postsById(id).forEach(p => {
+        p.comments = (p.comments || 0) + 1;
+        p.latestComments = [...(p.latestComments || []), d.comment].slice(-2);
+      });
+      if (so.cm[id]?.list) so.cm[id].list.push(d.comment);
+      so.error = '';
+    } catch (error) { so.error = error.message; }
+    so.busy = false;
+    render();
+    document.getElementById(`so-c-${id}`)?.focus({ preventScroll: true });
+  }
+
+  async function deleteComment(id, postId) {
+    try {
+      await api(`/social/comments/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      postsById(postId).forEach(p => {
+        p.comments = Math.max(0, (p.comments || 1) - 1);
+        p.latestComments = (p.latestComments || []).filter(c => c.id !== id);
+      });
+      if (so.cm[postId]?.list) so.cm[postId].list = so.cm[postId].list.filter(c => c.id !== id);
+    } catch (error) { so.error = error.message; }
+    render();
   }
 
   function feedView() {
@@ -3081,6 +3173,10 @@
       case 'zoom': so.zoom = el.dataset.src; return render();
       case 'unzoom': so.zoom = null; return render();
       case 'like': return likePost(id);
+      case 'comment-focus': { const f = document.getElementById(`so-c-${id}`); f?.focus(); f?.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+      case 'comments-open': return openComments(id);
+      case 'comments-close': delete so.cm[id]; return render();
+      case 'comment-delete': return deleteComment(id, el.dataset.post);
       case 'post-delete': return deletePost(id);
       case 'more-feed': return loadMoreFeed();
       case 'compose': so.compose = { kind: el.dataset.kind === 'story' ? 'story' : 'post', text: '', photo: '' }; so.error = ''; return render();
@@ -3120,6 +3216,7 @@
     if (event.target.id === 'so-compose') { event.preventDefault(); sendDm(); }
     if (event.target.id === 'so-compose-form') { event.preventDefault(); sharePost(); }
     if (event.target.id === 'so-edit-form') { event.preventDefault(); saveProfile(); }
+    if (event.target.classList?.contains('so-cform')) { event.preventDefault(); sendComment(event.target); }
   });
 
   root.addEventListener('input', event => {

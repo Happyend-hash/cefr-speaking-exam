@@ -13,7 +13,8 @@ import mongoose from 'mongoose';
  *    Friends chat freely; anyone else can send ONE text as a request, which
  *    waits in "So'rovlar" until it is accepted (or deleted / blocked).
  *  - SocialPost: a photo post (kept) or a story (gone after 24 hours).
- *  - SocialReport: a user, post or message reported to the teacher.
+ *  - SocialComment: a comment under a photo post — friends only.
+ *  - SocialReport: a user, post, message or comment reported to the teacher.
  *
  * `pair` is the two user ids sorted and joined, so each pair has exactly one
  * friendship and one conversation however it was started.
@@ -81,9 +82,20 @@ const postSchema = new mongoose.Schema({
 postSchema.index({ user: 1, kind: 1, createdAt: -1 });
 postSchema.index({ kind: 1, expiresAt: 1 });
 
+// A comment under a photo post (2026-11-03): only the post's owner and their friends may write one.
+const commentSchema = new mongoose.Schema({
+  post: { type: ObjectId, ref: 'SocialPost', required: true },
+  user: { type: ObjectId, ref: 'User', required: true },
+  text: { type: String, required: true, maxlength: 300 },
+  original: { type: String, select: false },      // what was typed before the filter (teacher only)
+  removed: { type: Boolean, default: false }
+}, { timestamps: true });
+commentSchema.index({ post: 1, createdAt: 1 });
+commentSchema.index({ user: 1, createdAt: -1 });
+
 const reportSchema = new mongoose.Schema({
   by: { type: ObjectId, ref: 'User', required: true },
-  kind: { type: String, enum: ['user', 'post', 'message'], required: true },
+  kind: { type: String, enum: ['user', 'post', 'message', 'comment'], required: true },
   target: { type: ObjectId, required: true },     // the user, post or message
   targetUser: { type: ObjectId, ref: 'User' },    // whose it is
   reason: { type: String, default: '', maxlength: 300 },
@@ -99,5 +111,6 @@ export const Conversation = mongoose.model('Conversation', conversationSchema);
 export const DirectMessage = mongoose.model('DirectMessage', directMessageSchema);
 export const SocialPost = mongoose.model('SocialPost', postSchema);
 export const SocialReport = mongoose.model('SocialReport', reportSchema);
+export const SocialComment = mongoose.model('SocialComment', commentSchema);
 
-export default { Friendship, SocialBlock, Conversation, DirectMessage, SocialPost, SocialReport, pairOf };
+export default { Friendship, SocialBlock, Conversation, DirectMessage, SocialPost, SocialReport, SocialComment, pairOf };

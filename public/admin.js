@@ -981,7 +981,7 @@
     const c = s.counts;
     return `<div class="card" style="margin-top:20px">
         <h2 style="font-size:18px">Do'stlar — friends, chats and posts</h2>
-        <p class="muted" style="margin-top:6px;font-size:14px">${c.friendships} friendships · ${c.chats} chats · ${c.messagesToday} messages in the last 24 h · ${c.posts} posts · ${c.stories} live stories.
+        <p class="muted" style="margin-top:6px;font-size:14px">${c.friendships} friendships · ${c.chats} chats · ${c.messagesToday} messages and ${c.commentsToday ?? 0} comments in the last 24 h · ${c.posts} posts · ${c.stories} live stories.
           Private chats stay private — you see a message only when a student reports it.</p>
       </div>
       <div class="card" style="margin-top:20px">

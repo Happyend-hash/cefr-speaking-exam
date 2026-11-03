@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import User from '../models/User.js';
 import ExamResult from '../models/ExamResult.js';
 import {
-  Friendship, SocialBlock, Conversation, DirectMessage, SocialPost, SocialReport, pairOf
+  Friendship, SocialBlock, Conversation, DirectMessage, SocialPost, SocialReport, SocialComment, pairOf
 } from '../models/Social.js';
 import { cleanMessage } from './ChatFilter.js';
 import { badgeOf, BADGE_FIELDS } from './Premium.js';
@@ -18,7 +18,7 @@ import { socialHub } from './SocialHub.js';
  * Privacy rules, all enforced here on the server:
  *   - People (everyone): name, picture, level and whether you are friends.
  *     Nothing else until a friend request is accepted.
- *   - Friends: bio, posts, stories, likes.
+ *   - Friends: bio, posts, stories, likes, comments (only friends may comment).
  *   - Messages: friends chat freely. Anyone else may send ONE text as a
  *     request; it waits in "So'rovlar" until accepted, deleted or blocked.
  *     Photos and voice only once the chat is accepted.
@@ -33,7 +33,8 @@ const isId = id => mongoose.Types.ObjectId.isValid(String(id || '')) && /^[a-f0-
 const oid = id => new mongoose.Types.ObjectId(String(id));
 
 export const STORY_HOURS = 24;
-export const LIMITS = { friendRequestsPerDay: 30, postsPerDay: 10, storiesPerDay: 10, messagesPerMinute: 30 };
+export const LIMITS = { friendRequestsPerDay: 30, postsPerDay: 10, storiesPerDay: 10, messagesPerMinute: 30, commentsPerHour: 40 };
+export const COMMENT_PREVIEW = 2;     // comments shown under a post before "Barcha izohlar"
 export const VOICE_MAX_SECONDS = 60;
 const USER_FIELDS = `firstName lastName nickname role access social isEmailVerified emailVerificationRequired ${BADGE_FIELDS}`;
 
@@ -190,7 +191,7 @@ export async function profile(userId, id) {
     ...out,
     bio: u.social?.bio || '',
     friendCount,
-    posts: posts.map(p => postView(p, userId, c)),
+    posts: (await withComments(posts, userId)).map(p => postView(p, userId, c)),
     stories: stories.map(p => postView(p, userId, c))
   };
 }
@@ -512,8 +513,95 @@ export function postView(p, userId, person = null) {
     likes: (p.likes || []).length,
     liked: (p.likes || []).some(x => String(x) === String(userId)),
     at: p.createdAt,
-    expiresAt: p.expiresAt || null
+    expiresAt: p.expiresAt || null,
+    comments: p.kind === 'post' ? (p.commentCount ?? 0) : null,
+    latestComments: p.latestComments || []
   };
+}
+
+export function commentView(c, userId, person, postOwner) {
+  return {
+    id: String(c._id),
+    user: person,
+    text: c.removed ? '' : c.text,
+    removed: Boolean(c.removed),
+    mine: String(c.user) === String(userId),
+    // the writer, and the owner of the post, may delete it
+    canDelete: String(c.user) === String(userId) || String(postOwner) === String(userId),
+    at: c.createdAt
+  };
+}
+
+/** Each post's comment count and its latest few comments, as the viewer may see them. */
+async function withComments(posts, userId) {
+  const ids = posts.filter(p => p.kind === 'post').map(p => p._id);
+  if (!ids.length) return posts;
+  const hidden = await blockedSet(userId);
+  const all = await SocialComment.find({ post: { $in: ids }, removed: false, user: { $nin: [...hidden].map(oid) } })
+    .sort({ createdAt: 1 }).select('post user text createdAt').lean();
+  const byPost = new Map();
+  for (const c of all) {
+    const k = String(c.post);
+    if (!byPost.has(k)) byPost.set(k, []);
+    byPost.get(k).push(c);
+  }
+  const latest = [...byPost.values()].flatMap(list => list.slice(-COMMENT_PREVIEW));
+  const users = await User.find({ _id: { $in: [...new Set(latest.map(c => String(c.user)))] } }).select(USER_FIELDS).lean();
+  const people = new Map(users.map(u => [String(u._id), card(u)]));
+  return posts.map(p => {
+    const list = byPost.get(String(p._id)) || [];
+    return {
+      ...p,
+      commentCount: list.length,
+      latestComments: list.slice(-COMMENT_PREVIEW).map(c => commentView(c, userId, people.get(String(c.user)), p.user)).filter(c => c.user)
+    };
+  });
+}
+
+/** All comments of one post, oldest first (the post's owner and their friends only). */
+export async function comments(userId, postId) {
+  await me(userId);
+  if (!isId(postId)) throw fail('Topilmadi', 404);
+  const post = await SocialPost.findById(postId).lean();
+  if (!post || post.kind !== 'post' || !(await canSee(userId, post))) throw fail('Topilmadi', 404);
+  const hidden = await blockedSet(userId);
+  const list = await SocialComment.find({ post: post._id, removed: false, user: { $nin: [...hidden].map(oid) } })
+    .sort({ createdAt: 1 }).limit(300).lean();
+  const users = await User.find({ _id: { $in: [...new Set(list.map(c => String(c.user)))] } }).select(USER_FIELDS).lean();
+  const people = new Map(users.map(u => [String(u._id), card(u)]));
+  return list.map(c => commentView(c, userId, people.get(String(c.user)), post.user)).filter(c => c.user);
+}
+
+/** Write a comment: only on a post the writer may see — their own, or a friend's. */
+export async function addComment(userId, postId, text) {
+  const writer = await me(userId);
+  if (!isId(postId)) throw fail('Topilmadi', 404);
+  const post = await SocialPost.findById(postId).lean();
+  if (!post || post.kind !== 'post' || !(await canSee(userId, post))) throw fail('Faqat do‘stlar izoh yoza oladi', 403, 'friends_only');
+  const recent = await SocialComment.countDocuments({ user: userId, createdAt: { $gt: new Date(Date.now() - 3600e3) } });
+  if (recent >= LIMITS.commentsPerHour) throw fail('Juda ko‘p izoh — biroz dam oling 🙂', 429);
+  const checked = cleanMessage(String(text || '').slice(0, 300));
+  if (!checked.ok) throw fail(checked.reason === 'english' ? 'Please write in English 🙂' : 'Izoh yozing', 400, checked.reason);
+  const c = await SocialComment.create({
+    post: post._id, user: userId, text: checked.text.slice(0, 300),
+    ...(checked.changed ? { original: String(text).slice(0, 600) } : {})
+  });
+  const view = commentView(c.toObject(), userId, card(writer), post.user);
+  if (String(post.user) !== String(userId)) {
+    socialHub.send(post.user, 'comment', { post: String(post._id), from: String(userId), name: view.user.name });
+  }
+  return view;
+}
+
+export async function deleteComment(userId, id, { admin = false } = {}) {
+  if (!isId(id)) throw fail('Topilmadi', 404);
+  const c = await SocialComment.findById(id);
+  if (!c) throw fail('Topilmadi', 404);
+  const post = await SocialPost.findById(c.post).select('user').lean();
+  const allowed = admin || String(c.user) === String(userId) || String(post?.user) === String(userId);
+  if (!allowed) throw fail('Topilmadi', 404);
+  await c.deleteOne();
+  return true;
 }
 
 export async function createPost(userId, { kind = 'post', text = '', photo = null } = {}) {
@@ -545,6 +633,7 @@ export async function deletePost(userId, id, { admin = false } = {}) {
   const post = await SocialPost.findById(id);
   if (!post || (!admin && String(post.user) !== String(userId))) throw fail('Topilmadi', 404);
   if (post.photo?.key) await mediaStorage.delete(post.photo.key, post.photo.type);
+  await SocialComment.deleteMany({ post: post._id });
   await post.deleteOne();
   return true;
 }
@@ -587,7 +676,8 @@ export async function feed(userId, { before = null } = {}) {
     .sort({ createdAt: -1 }).limit(21).lean();
   const users = await User.find({ _id: { $in: [...new Set(rows.map(p => String(p.user)))] } }).select(USER_FIELDS).lean();
   const byId = new Map((await cards(userId, users)).map(p => [p.id, p]));
-  return { posts: rows.slice(0, 20).map(p => postView(p, userId, byId.get(String(p.user)))), more: rows.length > 20 };
+  const shown = await withComments(rows.slice(0, 20), userId);
+  return { posts: shown.map(p => postView(p, userId, byId.get(String(p.user)))), more: rows.length > 20 };
 }
 
 /** Stories of the last 24 hours: mine first, then friends', each person's in the order they were added. */
@@ -629,7 +719,7 @@ export function startStorySweep() {
 // ------------------------------------------------------------- reports & counts
 
 export async function report(userId, { kind, id, reason = '' } = {}) {
-  if (!['user', 'post', 'message'].includes(kind) || !isId(id)) throw fail('Nimani xabar qilyapsiz?');
+  if (!['user', 'post', 'message', 'comment'].includes(kind) || !isId(id)) throw fail('Nimani xabar qilyapsiz?');
   let targetUser = null;
   if (kind === 'user') targetUser = id;
   if (kind === 'post') {
@@ -641,6 +731,12 @@ export async function report(userId, { kind, id, reason = '' } = {}) {
     const m = await messageMedia(userId, id);
     if (!m) throw fail('Topilmadi', 404);
     targetUser = m.from;
+  }
+  if (kind === 'comment') {
+    const c = await SocialComment.findById(id).select('post user').lean();
+    const p = c ? await SocialPost.findById(c.post).select('user kind expiresAt removed').lean() : null;
+    if (!c || !(await canSee(userId, p))) throw fail('Topilmadi', 404);
+    targetUser = c.user;
   }
   const open = await SocialReport.countDocuments({ by: userId, createdAt: { $gt: new Date(Date.now() - 864e5) } });
   if (open >= 20) throw fail('Bugun juda ko‘p shikoyat yubordingiz', 429);
@@ -675,11 +771,15 @@ export async function adminOverview() {
       Conversation.countDocuments({}),
       DirectMessage.countDocuments({ createdAt: { $gt: new Date(Date.now() - 864e5) } }),
       SocialPost.countDocuments({ kind: 'post', removed: false }),
-      SocialPost.countDocuments({ kind: 'story', expiresAt: { $gt: new Date() } })
+      SocialPost.countDocuments({ kind: 'story', expiresAt: { $gt: new Date() } }),
+      SocialComment.countDocuments({ createdAt: { $gt: new Date(Date.now() - 864e5) } })
     ])
   ]);
   const userIds = new Set();
   reports.forEach(r => { userIds.add(String(r.by)); if (r.targetUser) userIds.add(String(r.targetUser)); });
+  const reportedComments = await SocialComment.find({ _id: { $in: reports.filter(r => r.kind === 'comment').map(r => r.target) } }).select('post').lean();
+  const commentPosts = await SocialPost.find({ _id: { $in: reportedComments.map(c => c.post) } }).select('user').lean();
+  commentPosts.forEach(p => userIds.add(String(p.user)));
   posts.forEach(p => userIds.add(String(p.user)));
   const users = await User.find({ _id: { $in: [...userIds] } }).select('email firstName lastName nickname access').lean();
   const who = id => {
@@ -702,6 +802,16 @@ export async function adminOverview() {
         }));
       }
     }
+    if (r.kind === 'comment') {
+      const cm = await SocialComment.findById(r.target).select('+original').lean();
+      const p = cm ? await SocialPost.findById(cm.post).lean() : null;
+      if (cm) {
+        context = [
+          ...(p ? [{ id: String(p._id), kind: 'post', from: who(p.user)?.name || '?', text: p.text, photo: p.photo?.key ? `/api/admin/social/photo/p/${p._id}` : null, at: p.createdAt }] : []),
+          { id: String(cm._id), kind: 'comment', from: who(cm.user)?.name || '?', reported: true, text: cm.text, original: cm.original || '', removed: cm.removed, at: cm.createdAt }
+        ];
+      }
+    }
     if (r.kind === 'post') {
       const p = await SocialPost.findById(r.target).lean();
       if (p) context = [{ id: String(p._id), kind: p.kind, text: p.text, removed: p.removed, photo: p.photo?.key ? `/api/admin/social/photo/p/${p._id}` : null, at: p.createdAt }];
@@ -713,7 +823,7 @@ export async function adminOverview() {
   }));
 
   return {
-    counts: { friendships: counts[0], chats: counts[1], messagesToday: counts[2], posts: counts[3], stories: counts[4] },
+    counts: { friendships: counts[0], chats: counts[1], messagesToday: counts[2], posts: counts[3], stories: counts[4], commentsToday: counts[5] },
     open: reports.filter(r => r.status === 'open').length,
     reports: withContext,
     posts: posts.map(p => ({
@@ -730,6 +840,7 @@ export async function adminHandleReport(id, { action, by }) {
   if (action === 'remove') {
     if (r.kind === 'post') await SocialPost.updateOne({ _id: r.target }, { $set: { removed: true } });
     if (r.kind === 'message') await DirectMessage.updateOne({ _id: r.target }, { $set: { removed: true } });
+    if (r.kind === 'comment') await SocialComment.updateOne({ _id: r.target }, { $set: { removed: true } });
   }
   r.status = 'done';
   r.handledBy = by;
@@ -747,5 +858,6 @@ export default {
   requestFriend, acceptFriend, removeFriend, block, unblock, blockedList,
   chats, thread, send, acceptChat, declineChat, clearChat, messageMedia,
   createPost, deletePost, toggleLike, postMedia, feed, stories, sweepStories, startStorySweep,
+  comments, addComment, deleteComment, commentView,
   report, unread, adminOverview, adminHandleReport, openReports, areFriends, allowSend, card
 };

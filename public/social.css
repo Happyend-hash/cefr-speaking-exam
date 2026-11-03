@@ -431,3 +431,26 @@ main[data-screen="dm"] { padding-top: 0; padding-bottom: 0; }
 .so-person-acts .btn { font-size: 13px; }
 .so-msg.is-photo .so-bubble { max-width: 312px; }
 .so-dm-photo img { width: 100%; }
+
+/* comments under a post (2026-11-03) */
+.so-post footer { display: flex; gap: 2px; }
+.so-cbtn svg { fill: none; }
+.so-cbtn:hover { color: var(--indigo-600); }
+.so-cmts { display: flex; flex-direction: column; gap: 10px; padding: 2px 14px 14px; border-top: 1px solid var(--line-soft); padding-top: 12px; }
+.so-cmt { display: flex; gap: 8px; align-items: flex-start; }
+.so-cmt-av { border: 0; background: none; padding: 0; cursor: pointer; border-radius: 50%; flex: none; }
+.so-cmt-av .so-av { --s: 30px; }
+.so-cmt-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.so-cmt-bubble { padding: 7px 12px 8px; border-radius: 4px 16px 16px 16px; background: var(--ground-2); line-height: 1.4; overflow-wrap: anywhere; }
+.so-cmt-name { display: inline; border: 0; background: none; padding: 0; margin-right: 6px; font: inherit; font-weight: 800; font-size: 13px; color: var(--ink); cursor: pointer; }
+.so-cmt-text { font-size: 14px; white-space: pre-wrap; }
+.so-cmt-meta { display: flex; gap: 12px; padding-left: 10px; font-size: 12px; color: var(--ink-faint); }
+.so-cmt-meta button { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--ink-faint); cursor: pointer; }
+.so-cmt-meta button:hover { color: var(--ink); }
+.so-cmt-more { align-self: flex-start; border: 0; background: none; padding: 0; font: inherit; font-size: 13px; font-weight: 700; color: var(--ink-soft); cursor: pointer; }
+.so-cmt-more:hover { color: var(--indigo-600); }
+.so-cform { display: flex; align-items: center; gap: 6px; height: 42px; padding: 0 4px 0 14px; border-radius: 21px; background: var(--ground-2); border: 1px solid var(--line); }
+.so-cform:focus-within { border-color: var(--indigo-200); box-shadow: 0 0 0 3px var(--indigo-50); background: var(--surface); }
+.so-cform input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: var(--ink); box-shadow: none; }
+.so-cform-send { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--so-mine); color: #fff; cursor: pointer; flex: none; }
+.so-cform-send svg { width: 16px; height: 16px; }

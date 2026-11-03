@@ -82,6 +82,9 @@ router.get('/stories', handle(async (req, res) => ok(res, { stories: await Socia
 router.post('/posts', handle(async (req, res) => ok(res, { post: await Social.createPost(req.user.id, req.body || {}) }, 201)));
 router.delete('/posts/:id', handle(async (req, res) => { await Social.deletePost(req.user.id, req.params.id); ok(res, { deleted: true }); }));
 router.post('/posts/:id/like', handle(async (req, res) => ok(res, await Social.toggleLike(req.user.id, req.params.id))));
+router.get('/posts/:id/comments', handle(async (req, res) => ok(res, { comments: await Social.comments(req.user.id, req.params.id) })));
+router.post('/posts/:id/comments', handle(async (req, res) => ok(res, { comment: await Social.addComment(req.user.id, req.params.id, req.body?.text) }, 201)));
+router.delete('/comments/:id', handle(async (req, res) => { await Social.deleteComment(req.user.id, req.params.id); ok(res, { deleted: true }); }));
 router.post('/report', handle(async (req, res) => { await Social.report(req.user.id, req.body || {}); ok(res, { reported: true }); }));
 
 // ---- media, only for the people allowed to see it

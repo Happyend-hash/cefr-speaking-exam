@@ -82,3 +82,17 @@ test('the wall: the public sees an approved certificate by its public photo; the
   assert.equal(r.photo, '/api/wall/photo/review/r1');
   assert.equal('published' in r, false);
 });
+
+test('comments: the writer and the post owner may delete; a story has no comments', async () => {
+  const { commentView } = await import('../services/Social.js');
+  const C = '64b000000000000000000003';
+  const c = { _id: 'c9', user: B, text: 'Nice photo!', createdAt: new Date() };
+  const person = { id: B, name: 'Malika R.' };
+  assert.equal(commentView(c, B, person, A).canDelete, true, 'the writer');
+  assert.equal(commentView(c, A, person, A).canDelete, true, 'the owner of the post');
+  assert.equal(commentView(c, C, person, A).canDelete, false, 'another friend');
+  assert.equal(commentView({ ...c, removed: true }, C, person, A).text, '');
+  const post = postView({ _id: 'p2', user: A, kind: 'post', likes: [], createdAt: new Date(), commentCount: 4, latestComments: [1, 2] }, B);
+  assert.deepEqual([post.comments, post.latestComments.length], [4, 2]);
+  assert.equal(postView({ _id: 's', user: A, kind: 'story', likes: [], createdAt: new Date() }, B).comments, null);
+});
