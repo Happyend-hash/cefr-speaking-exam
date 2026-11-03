@@ -34,6 +34,8 @@ import { usageReport, usageList } from '../services/UsageStats.js';
 import WritingAttempt from '../models/WritingAttempt.js';
 import { reviewSpeaking, reviewWriting } from '../services/ExpertReview.js';
 import AuthService from '../services/AuthService.js';
+import crypto from 'crypto';
+import { sendMail, emailConfigured } from '../services/EmailService.js';
 
 const router = express.Router();
 
@@ -1487,15 +1489,53 @@ router.get('/test-account', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Proving the test account is yours: its password, or (for an account made
+// with Google, which has no password you know) a code emailed to it.
+const testCodes = new Map();      // adminId -> { email, code, until, tries }
+
+router.post('/test-account/code', async (req, res, next) => {
+  try {
+    const id = String(req.user.id);
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) throw new APIError('Write the test account’s email', 400);
+    if (!emailConfigured()) throw new APIError('Email is not set up on the server — use the password instead', 400);
+    const test = await User.findOne({ email }).select('role email');
+    if (!test || test.role !== 'student' || String(test._id) === id) {
+      throw new APIError('No student account with that email', 400);
+    }
+    const code = String(crypto.randomInt(100000, 1000000));
+    testCodes.set(id, { email, code, until: Date.now() + 10 * 60e3, tries: 0 });
+    await sendMail({
+      to: email,
+      subject: 'English Hub — test profile code',
+      text: `Your code to link this account as the teacher's test profile: ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email.`,
+      html: `<p>Your code to link this account as the teacher's test profile:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p style="color:#666">It expires in 10 minutes. If you did not ask for this, ignore this email.</p>`
+    });
+    res.json({ success: true, data: { sent: true, email } });
+  } catch (error) { next(error); }
+});
+
 router.post('/test-account', async (req, res, next) => {
   try {
     const id = String(req.user.id);
-    if (tooManyTries(id)) throw new APIError('Too many wrong passwords — wait 15 minutes.', 429);
+    // NB: never 401 here — the teacher panel treats 401 as "signed out".
+    if (tooManyTries(id)) throw new APIError('Too many wrong tries — wait 15 minutes.', 429);
     const email = String(req.body?.email || '').trim().toLowerCase();
     const password = String(req.body?.password || '');
-    if (!email || !password) throw new APIError('Write the test account’s email and password', 400);
-    const test = await User.findOne({ email }).select('+password role email');
-    if (!test || !(await test.comparePassword(password))) { noteFailedTry(id); throw new APIError('Wrong email or password', 401); }
+    const code = String(req.body?.code || '').trim();
+    if (!email || (!password && !code)) throw new APIError('Write the test account’s email, and its password or the emailed code', 400);
+    const test = await User.findOne({ email }).select('+password role email googleId');
+    let proved = false;
+    if (test && code) {
+      const pending = testCodes.get(id);
+      if (pending && pending.email === email && pending.until > Date.now() && pending.code === code) { proved = true; testCodes.delete(id); }
+    } else if (test && password) {
+      proved = await test.comparePassword(password).catch(() => false);
+    }
+    if (!proved) {
+      noteFailedTry(id);
+      throw new APIError(code ? 'Wrong or expired code' : (test?.googleId ? 'Wrong password — this account was made with Google; use “Email me a code” instead' : 'Wrong email or password'), 400);
+    }
     if (String(test._id) === id) throw new APIError('That is this admin account — choose your student test account', 400);
     if (test.role !== 'student') throw new APIError('The test account must be a student account', 400);
     await User.updateOne({ _id: id }, { $set: { testAccount: { user: test._id, linkedAt: new Date() } } });

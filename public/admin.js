@@ -1037,11 +1037,17 @@
       ${linked ? `<p style="margin-top:8px">Linked to <strong>${esc(linked.email)}</strong>. <em>🧪 Test profile</em> in the top bar opens the site as this student; a bar at the top of the site brings you back here.</p>
         <div class="row" style="gap:8px;margin-top:12px"><button class="btn btn-sm" data-action="test-switch">Open the site as the test profile</button>
         <button class="btn btn-ghost btn-sm" data-action="test-unlink">Unlink</button></div>`
-        : `<p class="muted" style="margin-top:8px;font-size:14px">Link the student account you test the site with. Type that account's own email and password once — after that, one click switches to it. Only you (this admin account) can use it, and it cannot be linked to anyone's account without their password.</p>`}
-      <form id="tp-form" class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap" autocomplete="off">
-        <input id="tp-email" type="email" placeholder="Test account email" style="flex:1;min-width:200px" required>
-        <input id="tp-password" type="password" placeholder="Its password" style="flex:1;min-width:160px" autocomplete="off" required>
-        <button class="btn btn-sm" type="submit" ${state.testBusy ? 'disabled' : ''}>${linked ? 'Link another account' : 'Link test account'}</button>
+        : `<p class="muted" style="margin-top:8px;font-size:14px">Link the student account you test the site with: type its email, then its password — or press “Email me a code” and type the code sent to that inbox. After that, one click switches to it. Only you (this admin account) can use it, and nobody's account can be linked without its password or its inbox.</p>`}
+      <form id="tp-form" style="display:flex;flex-direction:column;gap:8px;margin-top:12px" autocomplete="off">
+        <input id="tp-email" type="email" placeholder="Test account email" value="${esc(state.testEmail || '')}" required>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <input id="tp-password" type="password" placeholder="Its password" style="flex:1;min-width:160px" autocomplete="off">
+          <span class="muted" style="align-self:center">or</span>
+          <button class="btn btn-ghost btn-sm" type="button" data-action="test-code" ${state.testBusy ? 'disabled' : ''}>Email me a code</button>
+          ${state.testCodeSent ? `<input id="tp-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:130px" autocomplete="one-time-code">` : ''}
+        </div>
+        ${state.testCodeSent ? `<p class="muted" style="font-size:13px">A code was sent to ${esc(state.testEmail)} (check Spam too). Type it above.</p>` : '<p class="muted" style="font-size:13px">If the test account was made with “Sign in with Google”, it has no password you know — use “Email me a code”.</p>'}
+        <div><button class="btn btn-sm" type="submit" ${state.testBusy ? 'disabled' : ''}>${linked ? 'Link another account' : 'Link test account'}</button></div>
       </form>
       ${state.testError ? `<p class="error" style="margin-top:8px">${esc(state.testError)}</p>` : ''}
     </div>`;
@@ -1060,6 +1066,16 @@
     } catch (error) { setState({ error: error.message, testPanel: true }); }
   }
 
+  async function sendTestCode() {
+    const email = document.getElementById('tp-email')?.value.trim();
+    if (!email) return setState({ testError: 'Write the test account’s email first' });
+    setState({ testBusy: true, testError: '', testEmail: email });
+    try { await api('/admin/test-account/code', { method: 'POST', body: { email } }); state.testCodeSent = true; }
+    catch (error) { state.testError = error.message; }
+    setState({ testBusy: false });
+    document.getElementById('tp-code')?.focus();
+  }
+
   async function unlinkTest() {
     if (!window.confirm('Unlink the test profile?')) return;
     try { state.testAcc = await api('/admin/test-account', { method: 'DELETE' }); setState({ testPanel: false }); }
@@ -1069,12 +1085,15 @@
   function wireTestPanel() {
     document.getElementById('tp-form')?.addEventListener('submit', async event => {
       event.preventDefault();
-      const email = document.getElementById('tp-email').value;
+      const email = document.getElementById('tp-email').value.trim();
       const password = document.getElementById('tp-password').value;
-      setState({ testBusy: true, testError: '' });
+      const code = document.getElementById('tp-code')?.value.trim() || '';
+      if (!password && !code) return setState({ testError: 'Type the password, or press “Email me a code”.', testEmail: email });
+      setState({ testBusy: true, testError: '', testEmail: email });
       try {
-        await api('/admin/test-account', { method: 'POST', body: { email, password } });
+        await api('/admin/test-account', { method: 'POST', body: { email, ...(code ? { code } : { password }) } });
         state.testAcc = await api('/admin/test-account');
+        state.testCodeSent = false;
         state.notice = 'Test profile linked — press 🧪 Test profile in the top bar to open the site as it.';
       } catch (error) { state.testError = error.message; }
       setState({ testBusy: false });
@@ -1932,6 +1951,7 @@
     if (action === 'test-switch') return switchToTest();
     if (action === 'test-panel') return setState({ testPanel: !state.testPanel, testError: '' });
     if (action === 'test-unlink') return unlinkTest();
+    if (action === 'test-code') return sendTestCode();
     if (action === 'new-test') return setState({ screen: 'new-test' });
     if (action === 'cancel-new-test') return setState({ screen: 'tests' });
     if (action === 'cancel-form') return setState({
