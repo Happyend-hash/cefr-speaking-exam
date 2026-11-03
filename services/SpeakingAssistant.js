@@ -26,7 +26,8 @@ import { ROOTS as SWEAR_ROOTS } from './ChatFilter.js';
 export const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'models/gemini-3.8-live';
 export const VOICE = process.env.ASSISTANT_VOICE || 'Kore';
 /** Sessions per student per day: protects the free quota from one heavy user. */
-export const DAILY_SESSIONS = Number(process.env.ASSISTANT_DAILY_SESSIONS) || 10;
+export const DAILY_SESSIONS = Number(process.env.ASSISTANT_DAILY_SESSIONS) || 3;            // free accounts
+export const PREMIUM_DAILY_SESSIONS = Number(process.env.ASSISTANT_PREMIUM_SESSIONS) || 15; // Premium (2026-11-03)
 export const WS_URL =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 const TOKEN_URL = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';

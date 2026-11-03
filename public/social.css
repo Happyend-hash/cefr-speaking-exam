@@ -568,3 +568,43 @@ body:has(main[data-screen="dm"]) { overflow: hidden; }
 .emo-none { text-align: center; color: var(--ink-faint, #8a90b5); padding: 24px 0; }
 /* the comment box has room for its button */
 .so-cform .emo-btn { margin-left: -2px; }
+
+/* ---------------------------------------------- Narxlar va Premium (Home, 2026-11-03) */
+.pc { padding: 0; overflow: hidden; }
+.pc-head { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; border: 0; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.pc-head-ic { font-size: 22px; width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 14px; background: var(--premium-tint); }
+.pc-head-t { min-width: 0; }
+.pc-head-t b { display: block; font-family: var(--font-display); font-size: 16px; }
+.pc-head-t small { color: var(--ink-soft); font-size: 12.5px; }
+.pc-chev { margin-left: auto; color: var(--ink-faint); transition: transform .2s; }
+.pc-chev svg { width: 18px; height: 18px; }
+.pc-head[aria-expanded="true"] .pc-chev { transform: rotate(90deg); }
+.pc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; padding: 0 16px 14px; }
+.pc-table { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.pc-table h4 { margin: 0; padding: 9px 12px; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; background: var(--ground-2); }
+.pc-table.is-speaking h4 { color: var(--indigo-600); }
+.pc-table.is-writing h4 { color: var(--green); }
+.pc-row { display: grid; grid-template-columns: 1fr auto; column-gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line-soft); font-size: 14px; font-variant-numeric: tabular-nums; }
+.pc-row b { text-align: right; }
+.pc-row small { grid-column: 1 / -1; color: var(--ink-faint); font-size: 11.5px; }
+.pc-row small:empty { display: none; }
+.pc-badge { font-style: normal; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--premium-tint); color: var(--premium-text); }
+.pc-premium { margin: 0 16px 14px; padding: 14px; border-radius: 16px; border: 1px solid var(--premium); background: linear-gradient(130deg, var(--premium-tint), var(--surface) 80%); }
+.pc-premium-top { display: flex; align-items: center; gap: 10px; }
+.pc-crown { font-size: 26px; }
+.pc-premium-top b { display: block; font-family: var(--font-display); font-size: 17px; color: var(--premium-text); }
+.pc-premium-top span { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pc-premium ul { margin: 10px 0 6px; padding-left: 0; list-style: none; display: grid; gap: 5px; font-size: 13.5px; }
+.pc-premium li { display: flex; gap: 8px; }
+.pc-premium li::before { content: '✓'; color: var(--premium-text); font-weight: 800; }
+.pc-note { margin: 0; font-size: 12.5px; color: var(--ink-soft); }
+.pc-how { padding: 0 16px 16px; }
+.pc-how h4 { margin: 0 0 6px; font-size: 15px; }
+.pc-how ol { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 8px; font-size: 13.5px; color: var(--ink); }
+.pc-cardnum { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--ground-2); }
+.pc-cardnum > div { min-width: 0; }
+.pc-cardnum b { display: block; font-size: 15.5px; letter-spacing: .02em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pc-cardnum .btn { flex: none; }
+.pc-cardnum small { color: var(--ink-soft); font-size: 12px; }
+:root[data-theme="night"] .pc-premium { background: linear-gradient(130deg, rgba(240, 177, 0, .14), var(--surface) 80%); }
+:root[data-theme="night"] .pc-head-ic { background: rgba(240, 177, 0, .16); }

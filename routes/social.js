@@ -16,6 +16,7 @@ const router = express.Router();
 const handle = fn => async (req, res, next) => { try { await fn(req, res); } catch (e) { next(e.statusCode ? new APIError(e.message, e.statusCode, e.code) : e); } };
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
 
+// 3 minutes at 32 kbit/s is about 0.75 MB (Premium); 2 MB leaves room for other codecs.
 const voiceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 
 /** Live events: new messages, read ticks, friend and chat requests. */
@@ -60,7 +61,7 @@ router.post('/chats/:id', handle(async (req, res) => ok(res, await Social.send(r
 }), 201)));
 router.post('/chats/:id/voice', (req, res, next) => voiceUpload.single('audio')(req, res, async error => {
   try {
-    if (error?.code === 'LIMIT_FILE_SIZE') throw new APIError('Ovozli xabar juda uzun — 1 daqiqagacha.', 413, 'too_long');
+    if (error?.code === 'LIMIT_FILE_SIZE') throw new APIError('Ovozli xabar juda uzun.', 413, 'too_long');
     if (error) throw error;
     const file = req.file;
     if (!file?.buffer?.length) throw new APIError("Ovoz yozilmadi — qayta urinib ko'ring.", 400, 'empty');

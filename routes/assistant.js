@@ -2,7 +2,7 @@ import express from 'express';
 import User from '../models/User.js';
 import {
   isConfigured, setupMessage, createSessionToken, questionsFor, listMocks,
-  DAILY_SESSIONS, WS_URL, today,
+  DAILY_SESSIONS, PREMIUM_DAILY_SESSIONS, WS_URL, today,
   CHARACTERS,
   DEFAULT_CHARACTER,
   RUDE_WORDS
@@ -19,6 +19,11 @@ import { APIError } from '../middleware/errorHandler.js';
  *   GET  /questions   the tool the model calls for real mock questions
  *   GET  /mocks       the tool that lists the mocks
  */
+import { isPremium } from '../services/Premium.js';
+
+/** Today's AI Ustoz sessions: 3 for free accounts, 15 for Premium (2026-11-03). */
+const limitFor = user => (isPremium(user) ? PREMIUM_DAILY_SESSIONS : DAILY_SESSIONS);
+
 const router = express.Router();
 
 function usageToday(user) {
@@ -37,8 +42,9 @@ router.get('/status', async (req, res, next) => {
         available: isConfigured(),
         adult: Boolean(user.assistantAdultAt),
         used,
-        limit: isStaff(user) ? null : DAILY_SESSIONS,
-        left: isStaff(user) ? null : Math.max(0, DAILY_SESSIONS - used)
+        limit: isStaff(user) ? null : limitFor(user),
+        left: isStaff(user) ? null : Math.max(0, limitFor(user) - used),
+        premium: isPremium(user), premiumLimit: PREMIUM_DAILY_SESSIONS
       }
     });
   } catch (error) {
@@ -65,8 +71,10 @@ router.post('/session', async (req, res, next) => {
     if (!user.assistantAdultAt) throw new APIError("Avval 18 yoshdan kattaligingizni tasdiqlang.", 403, 'age');
 
     const used = usageToday(user);
-    if (!isStaff(user) && used >= DAILY_SESSIONS) {
-      throw new APIError(`Bugungi ${DAILY_SESSIONS} ta suhbat tugadi — ertaga yana gaplashamiz!`, 429, 'daily_limit');
+    if (!isStaff(user) && used >= limitFor(user)) {
+      throw new APIError(isPremium(user)
+        ? `Bugungi ${limitFor(user)} ta suhbat tugadi — ertaga yana gaplashamiz!`
+        : `Bugungi ${limitFor(user)} ta bepul suhbat tugadi. Premium bilan kuniga ${PREMIUM_DAILY_SESSIONS} ta 👑`, 429, 'daily_limit');
     }
 
     let token;
@@ -86,7 +94,7 @@ router.post('/session', async (req, res, next) => {
           character: CHARACTERS[req.body?.character] ? req.body.character : DEFAULT_CHARACTER,
           studentName: user.firstName
         }),
-        left: isStaff(user) ? null : Math.max(0, DAILY_SESSIONS - used - 1),
+        left: isStaff(user) ? null : Math.max(0, limitFor(user) - used - 1),
         rudeWords: RUDE_WORDS
       }
     });

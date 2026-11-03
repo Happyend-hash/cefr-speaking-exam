@@ -1677,11 +1677,9 @@ router.post('/students/:id/access', async (req, res, next) => {
       user.subscription.writingRemaining = (user.subscription.writingRemaining || 0) + PACKAGE.writing;
       user.access.totalGranted = (user.access.totalGranted || 0) + PACKAGE.speaking;
       user.access.totalWritingGranted = (user.access.totalWritingGranted || 0) + PACKAGE.writing;
-      // A payment brings PREMIUM_DAYS of Premium, added to the end of any left.
-      extendPremium(user, PREMIUM_DAYS);
+      // Since 2026-11-03 Premium is sold on its own (15,000 so'm): mocks no longer bring it.
       confirmPayment(
-        `To'lovingiz tasdiqlandi. Hisobingizga ${PACKAGE.speaking} ta speaking va ${PACKAGE.writing} ta writing mock qo'shildi. ` +
-        `Premium ${premiumDate(user)} gacha faol 👑`
+        `To'lovingiz tasdiqlandi. Hisobingizga ${PACKAGE.speaking} ta speaking va ${PACKAGE.writing} ta writing mock qo'shildi.`
       );
       outcome = `${user.email}: package added — ${before} → ${both()}`;
     } else if (action === 'grant' || action === 'set' || action === 'reduce') {
@@ -1712,10 +1710,7 @@ router.post('/students/:id/access', async (req, res, next) => {
         } else {
           user.access.totalGranted = (user.access.totalGranted || 0) + value;
         }
-        extendPremium(user, PREMIUM_DAYS);
-        confirmPayment(
-          `To'lovingiz tasdiqlandi. Hisobingizga ${value} ta ${module} mock qo'shildi. Premium ${premiumDate(user)} gacha faol 👑`
-        );
+        confirmPayment(`To'lovingiz tasdiqlandi. Hisobingizga ${value} ta ${module} mock qo'shildi.`);
       }
 
       outcome = `${user.email}: ${module} ${before} → ${balanceLabel(user, module)} mock(s)`;
@@ -1739,6 +1734,8 @@ router.post('/students/:id/access', async (req, res, next) => {
         throw new APIError('Give a whole number of days between 1 and 366.', 400);
       }
       extendPremium(user, days);
+      // Premium is paid for on its own now: the student is told it is on.
+      confirmPayment(`Premium faollashtirildi 👑 ${premiumDate(user)} gacha amal qiladi.`);
       outcome = `${user.email}: Premium until ${premiumDate(user)}`;
     } else if (action === 'premium-off') {
       endPremium(user);

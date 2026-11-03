@@ -319,7 +319,9 @@
         // Writing results, so Home shows both skills side by side.
         api('/writing/attempts').then(list => { state.writingHistory = list; }).catch(() => {}),
         // Sayt yangiliklari: shown only when the server says this account may see them.
-        api('/news').then(d => { state.news = d; }).catch(() => {})
+        api('/news').then(d => { state.news = d; }).catch(() => {}),
+        // Prices for the "Narxlar va Premium" card.
+        api('/payment/packages').then(d => { state.prices = d; }).catch(() => {})
       ]);
       // Premium and the picture come with the profile: the avatar in the
       // top bar and the Profil tab both use them.
@@ -2035,9 +2037,9 @@
     teamSub: 'Odatda bir kun ichida javob beramiz',
     pinned: "Savol, muammo yoki fikringiz bo'lsa — bizga yozing",
     welcome: "Assalomu alaykum! 👋 Bu English Hub yordam markazi.\n\nSavolingiz bo'lsa, biror narsa ishlamayotgan bo'lsa yoki sayt haqida fikringiz bo'lsa — shu yerga yozing. Nima yoqdi, nima yoqmadi — har bir fikringiz saytni yaxshilashga yordam beradi. 💙",
-    kinds: { question: ['❓', 'Savol'], problem: ['🐞', 'Muammo'], idea: ['💡', 'Taklif'], praise: ['💚', 'Yoqdi'] },
+    kinds: { question: ['❓', 'Savol'], problem: ['🐞', 'Muammo'], idea: ['💡', 'Taklif'], praise: ['💚', 'Yoqdi'], payment: ['💳', 'To‘lov cheki'] },
     kindHint: 'Xabar turi:',
-    placeholder: { question: 'Savolingizni yozing…', problem: "Nima ishlamayapti? Qayerda, qachon? Rasm ham qo'shishingiz mumkin…", idea: "Saytga nima qo'shsak yoki o'zgartirsak bo'ladi?…", praise: 'Saytda sizga nima yoqdi?…' },
+    placeholder: { question: 'Savolingizni yozing…', problem: "Nima ishlamayapti? Qayerda, qachon? Rasm ham qo'shishingiz mumkin…", idea: "Saytga nima qo'shsak yoki o'zgartirsak bo'ladi?…", praise: 'Saytda sizga nima yoqdi?…', payment: 'Nima uchun to‘ladingiz? Masalan: «5 ta speaking mock» yoki «Premium». Chek rasmini 📎 orqali qo‘shing…' },
     attach: "Rasm qo'shish",
     send: 'Yuborish',
     sending: 'Yuborilmoqda…',
@@ -2056,6 +2058,9 @@
     await loadSupport(true);
     const box = root.querySelector('.sp-msgs');
     if (box) box.scrollTop = box.scrollHeight;
+    // The chosen kind may sit past the edge of the chip row (e.g. "To'lov cheki").
+    const chip = root.querySelector('.sp-chip.is-on');
+    if (chip?.parentElement) chip.parentElement.scrollLeft = chip.offsetLeft - chip.parentElement.offsetLeft - 8;
     sp.stickUntil = Date.now() + 4000;
   }
 
@@ -2444,6 +2449,7 @@
     send: 'Yuborish',
     recording: 'Yozilmoqda…',
     voiceLimit: '1 daqiqagacha',
+    voiceLimitPremium: '3 daqiqagacha 👑',
     sending: 'Yuborilmoqda…',
     seen: '✓✓',
     delivered: '✓',
@@ -2783,7 +2789,9 @@
 
   // Voice messages in a private chat: tap the mic, speak (up to a minute), send.
   const dmRec = { rec: null, stream: null, chunks: [], start: 0, timer: null };
-  const dmRecSeconds = () => (dmRec.start ? Math.min(60, (Date.now() - dmRec.start) / 1000) : 0);
+  // Premium: voice messages up to 3 minutes; free: 1 minute (2026-11-03).
+  const dmVoiceMax = () => (pr.state?.active ? 180 : 60);
+  const dmRecSeconds = () => (dmRec.start ? Math.min(dmVoiceMax(), (Date.now() - dmRec.start) / 1000) : 0);
 
   async function startDmVoice() {
     if (dmRec.rec || so.busy) return;
@@ -2803,7 +2811,7 @@
     dmRec.timer = setInterval(() => {
       const el = document.getElementById('so-rec-time');
       if (el) el.textContent = mmss(dmRecSeconds());
-      if (dmRecSeconds() >= 60) finishDmVoice(true);
+      if (dmRecSeconds() >= dmVoiceMax()) finishDmVoice(true);
     }, 250);
     so.error = '';
     renderDm(true);
@@ -3217,7 +3225,7 @@
     if (dmRec.rec || (so.busy && dmRec.start)) {
       return `<div class="so-compose is-recording">
         <button type="button" class="so-round is-cancel" data-so="rec-cancel" aria-label="${SO_UZ.cancel}">${CLOSE_X}</button>
-        <div class="so-recbar"><span class="so-recdot"></span><span id="so-rec-time">${mmss(dmRecSeconds())}</span><span>${SO_UZ.recording}</span><small>${SO_UZ.voiceLimit}</small></div>
+        <div class="so-recbar"><span class="so-recdot"></span><span id="so-rec-time">${mmss(dmRecSeconds())}</span><span>${SO_UZ.recording}</span><small>${pr.state?.active ? SO_UZ.voiceLimitPremium : SO_UZ.voiceLimit}</small></div>
         <button type="button" class="so-round is-send" data-so="rec-send" aria-label="${SO_UZ.send}">${SEND}</button></div>`;
     }
     return `${textOnly ? `<p class="so-first-note">✉️ ${SO_UZ.firstNote}</p>` : ''}
@@ -4776,15 +4784,16 @@
     blocked: "Ustoz sizga rasm qo'yishni to'xtatgan.",
     kept: "Rasmingiz saqlangan — Premium yangilanganda yana ko'rinadi.",
     upsellTitle: "Premium bo'ling 👑",
-    upsell: days => `Paket sotib olsangiz, ${days} kun Premium sovg'a:`,
+    upsell: days => `Premium — 15 000 so'm, ${days} kun:`,
     perks: [
-      "Ismingiz yonida toj belgisi",
+      "Ismingiz yonida toj belgisi va oltin ism",
       "O'z rasmingiz yoki animatsiyali GIF avatar",
-      "Oltin rangli ism va avatar atrofida nur",
-      "To'la xonada siz uchun qo'shimcha joy",
-      "Sherik qidirganda birinchi bo'lib topiladi"
+      "Reklamasiz sayt",
+      "AI Ustoz bilan kuniga 15 ta suhbat (bepul: 3 ta)",
+      "Do'stlar: cheksiz post va hikoya, 3 daqiqalik ovozli xabar",
+      "Speaking xonalarida qo'shimcha joy va birinchi bo'lib sherik topish"
     ],
-    buy: 'Paket olish',
+    buy: 'Premium olish',
     goldSeat: 'Premium joy',
     tooBig: "Rasm 2 MB dan katta — kichikroq rasm tanlang."
   };
@@ -4912,7 +4921,7 @@
     listBody: "Mavzu tanlang, 10 kishigacha yozishing va ovozli xabar yuboring.",
     open: 'Xona ochish',
     openPremium: 'Xona ochish · Premium',
-    openLocked: "Xona ochish faqat Premium o'quvchilar uchun. Paket olsangiz, Premium sovg'a.",
+    openLocked: "Xona ochish faqat Premium o'quvchilar uchun. Premium — 15 000 so'm, 30 kun.",
     fixedTitle: 'Umumiy xonalar',
     communityTitle: "O'quvchilar xonalari",
     noCommunity: "Hozircha ochiq xona yo'q. Premium o'quvchilar o'z xonasini ochishi mumkin.",
@@ -8483,9 +8492,9 @@
       "Har bir mock yozuvni matnga o'girish va tekshirish uchun haqiqiy pul talab qiladi, " +
       "shuning uchun birinchi bepul mockdan keyin ustoz ruxsat beradi.",
 
-    premiumLine: "Har bir paket bilan 30 kun Premium: toj belgisi, GIF avatar, oltin ism va xonalarda ustunlik.",
+    premiumLine: "Premium alohida: 15 000 so'm, 30 kun — toj, GIF avatar, reklamasiz sayt, AI Ustoz kuniga 15 marta va boshqalar.",
     premiumTitle: "Premium olish",
-    premiumBody: "Premium paket bilan birga beriladi. To'lovdan keyin ustoz paketni qo'shadi va Premium darhol yoqiladi.",
+    premiumBody: "Premium — 15 000 so'm, 30 kun. Kartaga to'lang va chekni Yordam markaziga yuboring — tekshirilgach Premium yoqiladi.",
 
     // Click checkout — shown only once CLICK_* env vars are set on the
     // server (state.clickLive); until then the manual/teacher flow below
@@ -8504,7 +8513,11 @@
     cardSub: "Kerakli summani quyidagi kartaga o'tkazing.",
     copyCard: "Nusxalash",
     copied: "Nusxalandi ✓",
-    sendProof: "To'lov skrinshotini va ro'yxatdan o'tgan pochtangizni shu yerga yuboring:",
+    sendProof: "To'lov chekining rasmini Yordam markaziga yuboring (profil rasmingiz yonidagi ✉️) va nima uchun to'laganingizni yozing — masalan «5 ta speaking mock», «10 ta writing mock» yoki «Premium».",
+    orContact: "Yoki shu yerga yozing:",
+    writingTitle: 'Writing mock',
+    speakingTitle: 'Speaking mock',
+    premiumRow: "👑 Premium · 30 kun",
 
     blockedTitle: 'Ruxsat vaqtincha to\'xtatilgan',
     blockedBody:
@@ -8597,13 +8610,18 @@
     const cardBlock = !blocked && card.number
       ? `<div style="margin-top:18px">
           <h3 style="font-size:15px;margin-bottom:4px">${ACCESS_UZ.cardTitle}</h3>
-          ${packages.length ? `
+          ${(packages.length || state.prices?.writing?.length) ? `
             <div class="pkg-table" style="margin:10px 0;border:1px solid var(--line,#e5e7eb);border-radius:10px;overflow:hidden">
-              ${packages.map(pkg => `
+              ${[[ACCESS_UZ.speakingTitle, packages], [ACCESS_UZ.writingTitle, state.prices?.writing || []]].filter(([, list]) => list.length).map(([title, list]) => `
+                <div style="padding:8px 12px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:var(--surface-2,rgba(0,0,0,.03))">${esc(title)}</div>
+                ${list.map(pkg => `
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-top:1px solid var(--line,#e5e7eb);font-size:14px">
                   <span>${esc(ACCESS_UZ.mocksLabel(pkg.mocks))}${pkg.badge ? ` <span class="chip chip-speaking" style="font-size:11px;padding:1px 8px">${esc(pkg.badge)}</span>` : ''}</span>
                   <span style="font-weight:700;font-variant-numeric:tabular-nums">${esc(ACCESS_UZ.som(pkg.price))}</span>
-                </div>`).join('')}
+                </div>`).join('')}`).join('')}
+              ${state.prices?.premium ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-top:1px solid var(--line,#e5e7eb);font-size:14px">
+                  <span>${ACCESS_UZ.premiumRow}</span>
+                  <span style="font-weight:700;font-variant-numeric:tabular-nums">${esc(ACCESS_UZ.som(state.prices.premium.price))}</span></div>` : ''}
             </div>` : ''}
           <p class="muted" style="margin-bottom:6px">${ACCESS_UZ.cardSub}</p>
           <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px">
@@ -8615,7 +8633,9 @@
               ${state.cardCopied ? esc(ACCESS_UZ.copied) : esc(ACCESS_UZ.copyCard)}
             </button>
           </div>
-          <p style="margin-top:14px">${ACCESS_UZ.sendProof} ${contactLink || `<strong>${esc(contact)}</strong>`}</p>
+          <p style="margin-top:14px">${ACCESS_UZ.sendProof}</p>
+          <button class="btn btn-gold btn-block" style="margin-top:10px" data-pc-receipt>${PRICE_UZ.sendReceipt}</button>
+          ${contact ? `<p class="muted" style="margin-top:10px;font-size:13px">${ACCESS_UZ.orContact} ${contactLink || `<strong>${esc(contact)}</strong>`}</p>` : ''}
         </div>`
       : '';
 
@@ -8659,7 +8679,9 @@
   async function openTopup(patch = {}) {
     go('topup', patch);
     try {
-      const { packages, live } = await api('/payment/packages');
+      const d = await api('/payment/packages');
+      const { packages, live } = d;
+      state.prices = d;
       state.clickPackages = packages || [];
       state.clickLive = Boolean(live);
     } catch {
@@ -9004,6 +9026,7 @@
             ${/* Qismlar, Vocabulary test, Klub and Reyting tiles removed (2026-11-03):
                  each is a tab away — Testlar (part practice), Klub (Vocabulary test
                  and games), Klub, Reyting. */ ''}
+            ${priceCard()}
             ${wlInvite()}
             ${adSlot('home')}
           </div>
@@ -9119,6 +9142,97 @@
     else if (el.dataset.newsZoom) nw.zoom = el.dataset.newsZoom;
     else nw.zoom = null;
     render();
+  });
+
+  // ------------------------------------------------------------ Narxlar va Premium
+  //
+  // On Home (2026-11-03): speaking and writing prices, Premium (15,000 so'm,
+  // 30 days) and what it gives, and how to pay — card number with a copy
+  // button, then the receipt to the Yordam markazi (the envelope by the
+  // profile picture) saying what it was for.
+
+  const PRICE_UZ = {
+    title: 'Narxlar va Premium',
+    speaking: 'Speaking mock',
+    writing: 'Writing mock',
+    each: n => `${n.toLocaleString('uz-UZ')} so'm / dona`,
+    som: n => `${n.toLocaleString('uz-UZ')} so'm`,
+    mocks: n => `${n} ta`,
+    premium: 'Premium',
+    premiumPrice: (p, d) => `${p.toLocaleString('uz-UZ')} so'm · ${d} kun`,
+    premiumFrom: 'Berilgan kundan boshlab 30 kun amal qiladi.',
+    yourPremium: d => `Premium ${d} gacha faol 👑`,
+    howTitle: 'Qanday to‘lanadi',
+    step1: 'Kerakli summani quyidagi kartaga o‘tkazing:',
+    step2: 'To‘lov chekining rasmini <b>Yordam markazi</b>ga yuboring — profil rasmingiz yonidagi ✉️ belgisi orqali.',
+    step3: 'Xabarda <b>nima uchun to‘laganingizni</b> yozing: masalan «5 ta speaking mock», «10 ta writing mock» yoki «Premium».',
+    step4: 'To‘lov tekshirilgach, mocklar yoki Premium hisobingizga qo‘shiladi va sizga xabar keladi.',
+    copy: 'Nusxa olish',
+    copied: 'Nusxa olindi ✓',
+    sendReceipt: '💳 To‘lov chekini yuborish',
+    show: 'Narxlarni ko‘rish',
+    hide: 'Yig‘ish'
+  };
+
+  const pc = { open: null };
+
+  function priceCard() {
+    const d = state.prices;
+    if (!d || !isStudentShell()) return '';
+    const speaking = d.packages || [];
+    const writing = d.writing || [];
+    const prem = d.premium || { price: 15000, days: 30 };
+    const card = state.access?.card || {};
+    const isPrem = Boolean(pr.state?.active);
+    // Premium students see the card folded; everyone else sees it open (until they fold it).
+    const open = pc.open ?? (store.get('pricesFolded') !== '1' && !isPrem);
+    const table = (title, list, tone) => `<div class="pc-table is-${tone}">
+        <h4>${title}</h4>
+        ${list.map(p => `<div class="pc-row"><span>${PRICE_UZ.mocks(p.mocks)}${p.badge ? ` <i class="pc-badge">${esc(p.badge)}</i>` : ''}</span>
+          <b>${PRICE_UZ.som(p.price)}</b>${p.mocks > 1 ? `<small>${PRICE_UZ.each(Math.round(p.price / p.mocks))}</small>` : '<small></small>'}</div>`).join('')}
+      </div>`;
+    const until = pr.state?.until ? (d => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`)(new Date(pr.state.until)) : '';
+    const head = `<button class="pc-head" data-pc-toggle aria-expanded="${open}">
+        <span class="pc-head-ic">💳</span><span class="pc-head-t"><b>${PRICE_UZ.title}</b>
+        <small>Speaking ${PRICE_UZ.som(speaking[0]?.price || 5000)} · Writing ${PRICE_UZ.som(writing[0]?.price || 2000)} · Premium ${PRICE_UZ.som(prem.price)}</small></span>
+        <span class="pc-chev">${icon('chevron')}</span></button>`;
+    if (!open) return `<section class="card pc is-folded">${head}</section>`;
+    return `<section class="card pc">
+      ${head}
+      <div class="pc-grid">${table(PRICE_UZ.speaking, speaking, 'speaking')}${table(PRICE_UZ.writing, writing, 'writing')}</div>
+      <div class="pc-premium">
+        <div class="pc-premium-top"><span class="pc-crown">👑</span><div><b>${PRICE_UZ.premium}</b><span>${PRICE_UZ.premiumPrice(prem.price, prem.days)}</span></div></div>
+        <ul>${PR_UZ.perks.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+        <p class="pc-note">${isPrem && until ? PRICE_UZ.yourPremium(until) : PRICE_UZ.premiumFrom}</p>
+      </div>
+      <div class="pc-how">
+        <h4>${PRICE_UZ.howTitle}</h4>
+        <ol>
+          <li>${PRICE_UZ.step1}
+            ${card.number ? `<div class="pc-cardnum"><div><b>${esc(card.number.replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 '))}</b>${card.holder ? `<small>${esc(card.holder)}</small>` : ''}</div>
+              <button class="btn btn-sm" data-copy-card="${esc(card.number.replace(/\D/g, ''))}">${state.cardCopied ? PRICE_UZ.copied : PRICE_UZ.copy}</button></div>` : ''}</li>
+          <li>${PRICE_UZ.step2}</li>
+          <li>${PRICE_UZ.step3}</li>
+          <li>${PRICE_UZ.step4}</li>
+        </ol>
+        <button class="btn btn-gold btn-block" data-pc-receipt>${PRICE_UZ.sendReceipt}</button>
+      </div>
+    </section>`;
+  }
+
+  root.addEventListener('click', event => {
+    const el = event.target.closest('[data-pc-toggle], [data-pc-receipt]');
+    if (!el || !root.contains(el)) return;
+    event.preventDefault();
+    if (el.hasAttribute('data-pc-toggle')) {
+      const open = !(pc.open ?? (store.get('pricesFolded') !== '1' && !pr.state?.active));
+      pc.open = open;
+      store.set('pricesFolded', open ? '0' : '1');
+      return render();
+    }
+    // Straight to the support chat with "To'lov cheki" chosen.
+    sp.kind = 'payment';
+    openSupport();
   });
 
   /** The three latest attempts, as rows — pending ones say they are being marked. */
@@ -9311,6 +9425,7 @@
   const ads = { visit: 0, lastScreen: '', cache: {} };
 
   function adSlot(place) {
+    if (pr.state?.active) return '';      // Premium: no sponsor banners (2026-11-03)
     const hit = ads.cache[place];
     const banner = hit && hit.visit === ads.visit ? hit.banner : null;
     return `<aside class="ad" id="ad-${place}" data-ad-place="${place}" ${banner ? '' : 'hidden'}>${banner ? adInner(banner) : ''}</aside>`;

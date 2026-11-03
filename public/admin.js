@@ -605,8 +605,8 @@
         A new account gets one free speaking mock and one free writing mock. After that,
         when someone pays, press <strong>Add package</strong> (${packageLabel()}) — or add
         speaking or writing mocks by hand for special cases.
-        Every package, and every mock you add, also gives <strong>30 days of Premium</strong> 👑
-        (added to any days left); <strong>+30 days</strong> gives Premium on its own.
+        <strong>Premium is sold on its own</strong> (15,000 so'm for 30 days): when a student sends the receipt,
+        press <strong>+30 days</strong> — they get a message that Premium is on. Mocks no longer include Premium.
         ${data?.contact
           ? `Students are told to contact <strong>${esc(data.contact)}</strong>.`
           : `<strong>Students are not shown anywhere to pay yet.</strong> Set
@@ -4076,7 +4076,7 @@
 
   // ------------------------------------------------------------- support chat
 
-  const SP_KINDS = { question: ['❓', 'Question'], problem: ['🐞', 'Problem'], idea: ['💡', 'Idea'], praise: ['💚', 'Liked'] };
+  const SP_KINDS = { question: ['❓', 'Question'], problem: ['🐞', 'Problem'], idea: ['💡', 'Idea'], praise: ['💚', 'Liked'], payment: ['💳', 'Payment receipt'] };
   const spImages = new Map();   // image url -> object URL (the pictures need the admin's sign-in)
 
   /**

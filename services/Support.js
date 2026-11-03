@@ -10,7 +10,7 @@ import User from '../models/User.js';
  * team answers from the admin panel as "English Hub Support".
  */
 
-export const KINDS = ['question', 'problem', 'idea', 'praise'];
+export const KINDS = ['question', 'problem', 'idea', 'praise', 'payment'];   // payment: a payment receipt (2026-11-03)
 export const MAX_TEXT = 2000;
 export const MAX_IMAGE_BYTES = 900 * 1024;
 export const PER_HOUR = 20;   // a student's messages per hour

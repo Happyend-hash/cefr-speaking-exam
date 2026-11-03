@@ -21,6 +21,21 @@ export const PACKAGES = [
   { key: 'complete', mocks: 20, price: 70000, label: '20 mock' }
 ];
 
+/**
+ * Writing mocks (Jamshid, 2026-11-03): 2,000 so'm one, cheaper in bundles.
+ * Marking a writing mock costs about 500 so'm (one AI reading), so every
+ * tier keeps a margin. Sold by card transfer; the teacher adds them by hand.
+ */
+export const WRITING_PACKAGES = [
+  { key: 'w1', mocks: 1, price: 2000, label: '1 mock' },
+  { key: 'w5', mocks: 5, price: 9000, label: '5 mock' },
+  { key: 'w10', mocks: 10, price: 16000, label: '10 mock', badge: 'Mashhur' },
+  { key: 'w20', mocks: 20, price: 30000, label: '20 mock' }
+];
+
+/** Premium (2026-11-03): sold on its own — mocks no longer include it. */
+export const PREMIUM_OFFER = { price: 15000, days: 30 };
+
 export function findPackage(key) {
   return PACKAGES.find(p => p.key === key) || null;
 }

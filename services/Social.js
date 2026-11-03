@@ -5,7 +5,7 @@ import {
   Friendship, SocialBlock, Conversation, DirectMessage, SocialPost, SocialReport, SocialComment, pairOf
 } from '../models/Social.js';
 import { cleanMessage } from './ChatFilter.js';
-import { badgeOf, BADGE_FIELDS } from './Premium.js';
+import { badgeOf, BADGE_FIELDS, isPremium } from './Premium.js';
 import { fallbackName } from './Leaderboard.js';
 import { mediaStorage, readPhoto } from './MediaStorage.js';
 import AudioStorageService from './AudioStorageService.js';
@@ -33,7 +33,10 @@ const isId = id => mongoose.Types.ObjectId.isValid(String(id || '')) && /^[a-f0-
 const oid = id => new mongoose.Types.ObjectId(String(id));
 
 export const STORY_HOURS = 24;
-export const LIMITS = { friendRequestsPerDay: 30, postsPerDay: 10, storiesPerDay: 10, messagesPerMinute: 30, commentsPerHour: 40 };
+export const LIMITS = { friendRequestsPerDay: 30, postsPerDay: 3, storiesPerDay: 3, messagesPerMinute: 30, commentsPerHour: 40 };
+// Premium (2026-11-03): posts and stories without a daily cap (50 is only a guard), 3-minute voice messages.
+export const PREMIUM_LIMITS = { postsPerDay: 50, storiesPerDay: 50 };
+export const PREMIUM_VOICE_SECONDS = 180;
 export const COMMENT_PREVIEW = 2;     // comments shown under a post before "Barcha izohlar"
 export const VOICE_MAX_SECONDS = 60;
 const USER_FIELDS = `firstName lastName nickname role access social isEmailVerified emailVerificationRequired ${BADGE_FIELDS}`;
@@ -152,8 +155,8 @@ export async function people(userId, { q = '', limit = 60 } = {}) {
   const users = await User.find(filter).select(USER_FIELDS)
     .sort({ 'social.lastSeenAt': -1, createdAt: -1 }).limit(Math.min(limit, 100)).lean();
   const list = await cards(userId, users);
-  // online first, then the order above
-  return list.sort((a, b) => Number(b.online) - Number(a.online));
+  // Premium first (2026-11-03), then online, then the order above
+  return list.sort((a, b) => Number(Boolean(b.premium)) - Number(Boolean(a.premium)) || Number(b.online) - Number(a.online));
 }
 
 /** Friend requests waiting for me, and the ones I sent. */
@@ -434,7 +437,7 @@ export async function send(userId, id, body = {}) {
         contentType: body.voice.contentType, studentId: userId, resultId: 'dm', taskNumber: 0
       });
       doc.audioKey = audioKey;
-      doc.seconds = Math.min(seconds, VOICE_MAX_SECONDS);
+      doc.seconds = Math.min(seconds, isPremium(sender) ? PREMIUM_VOICE_SECONDS : VOICE_MAX_SECONDS);
     }
   } catch (error) {
     if (isNewRequest) await conv.deleteOne().catch(() => {});
@@ -605,11 +608,16 @@ export async function deleteComment(userId, id, { admin = false } = {}) {
 }
 
 export async function createPost(userId, { kind = 'post', text = '', photo = null } = {}) {
-  await me(userId);
+  const writer = await me(userId);
   const k = kind === 'story' ? 'story' : 'post';
   const since = new Date(Date.now() - 864e5);
   const today = await SocialPost.countDocuments({ user: userId, kind: k, createdAt: { $gt: since } });
-  if (today >= (k === 'story' ? LIMITS.storiesPerDay : LIMITS.postsPerDay)) throw fail('Bugungi chegara tugadi — ertaga davom eting', 429);
+  const premium = isPremium(writer);
+  const cap = (premium ? PREMIUM_LIMITS : LIMITS)[k === 'story' ? 'storiesPerDay' : 'postsPerDay'];
+  if (today >= cap) {
+    throw fail(premium ? 'Bugungi chegara tugadi — ertaga davom eting'
+      : `Bugun ${cap} ta ${k === 'story' ? 'hikoya' : 'post'} joyladingiz. Premium bilan cheklovsiz 👑`, 429, 'limit');
+  }
   if (k === 'story' && !photo) throw fail('Hikoya uchun rasm tanlang');
   let caption = '';
   if (String(text || '').trim()) {

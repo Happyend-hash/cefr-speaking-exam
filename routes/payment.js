@@ -2,8 +2,7 @@ import express from 'express';
 import crypto from 'crypto';
 import User from '../models/User.js';
 import PaymentTransaction from '../models/PaymentTransaction.js';
-import { findPackage, PACKAGES } from '../content/packages.js';
-import { extendPremium, PREMIUM_DAYS } from '../services/Premium.js';
+import { findPackage, PACKAGES, WRITING_PACKAGES, PREMIUM_OFFER } from '../content/packages.js';
 import { authenticate } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -118,7 +117,7 @@ router.post('/click/checkout', authenticate, async (req, res, next) => {
  *          now" cards once it is.
  */
 router.get('/packages', (req, res) => {
-  res.json({ packages: PACKAGES, live: clickConfigured() });
+  res.json({ packages: PACKAGES, writing: WRITING_PACKAGES, premium: PREMIUM_OFFER, live: clickConfigured() });
 });
 
 /**
@@ -263,12 +262,10 @@ router.post('/click/complete', async (req, res) => {
         if (!student.access) student.access = {};
         student.subscription.examsRemaining = (student.subscription.examsRemaining || 0) + transaction.mocks;
         student.access.totalGranted = (student.access.totalGranted || 0) + transaction.mocks;
-        extendPremium(student, PREMIUM_DAYS);
+        // Premium is sold on its own since 2026-11-03: mocks no longer include it.
         student.access.lastGrantedAt = new Date();
         student.access.lastGrantedBy = 'Click';
-        student.access.message =
-          `To'lovingiz qabul qilindi. Hisobingizga ${transaction.mocks} ta mock qo'shildi. ` +
-          `Premium ${new Date(student.premiumUntil).toLocaleDateString('uz-UZ')} gacha faol 👑`;
+        student.access.message = `To'lovingiz qabul qilindi. Hisobingizga ${transaction.mocks} ta mock qo'shildi.`;
         student.access.messageAt = new Date();
         await student.save();
       } else {
