@@ -509,3 +509,23 @@ main[data-screen="dm"] { padding-top: 0; padding-bottom: 0; }
 .nw-bar-text small { font-size: 13px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nw-bar-n { min-width: 24px; height: 24px; padding: 0 7px; border-radius: 12px; background: var(--ground-2); color: var(--ink-soft); font-size: 12px; font-weight: 800; display: grid; place-items: center; }
 .nw-bar > svg { width: 18px; height: 18px; color: var(--ink-faint); flex: none; }
+
+/* ---------------------------------------------------------------- chat layout fix (2026-11-03)
+   On phones the writing bar disappeared after a photo was sent: the message
+   list grew with the photo instead of scrolling (a flex child needs
+   min-height: 0 to scroll), and the fixed height ignored the yellow test-profile
+   bar. Now the chat fills exactly the space under whatever bars are on top,
+   the list scrolls, and the writing bar always stays at the bottom. */
+.so-msgs { min-height: 0; }
+.so-dm-head, .so-dm-foot { flex: none; }
+body:has(main[data-screen="dm"]) { overflow: hidden; }
+#root:has(> main[data-screen="dm"]) { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+#root:has(> main[data-screen="dm"]) > .nav, #root:has(> main[data-screen="dm"]) > .test-bar { flex: none; }
+#root > main[data-screen="dm"] { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0; width: 100%; padding: 16px 32px; }
+#root > main[data-screen="dm"] > .so-dm { flex: 1 1 auto; min-height: 0; height: auto; }
+#root > main[data-screen="dm"] > .alert { flex: none; margin-bottom: 8px; }
+@media (max-width: 899px) {
+  #root > main[data-screen="dm"] { padding: 0; }
+  #root > main[data-screen="dm"] > .so-dm { margin: 0; width: 100%; }
+}
+.so-dm-photo img { max-height: min(300px, 42vh); }

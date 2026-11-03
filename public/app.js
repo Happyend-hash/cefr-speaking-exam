@@ -3261,8 +3261,20 @@
     } catch { so.error = SO_UZ.bigImage; render(); }
   });
 
+  // Phones: when the keyboard opens, the visible part of the page shrinks.
+  // The chat follows it, so the writing bar sits right above the keyboard.
+  function fitChatToScreen() {
+    const r = document.getElementById('root');
+    if (!r) return;
+    const vv = window.visualViewport;
+    if (state.screen === 'dm' && vv) { r.style.height = `${Math.round(vv.height)}px`; window.scrollTo(0, 0); }
+    else r.style.height = '';
+  }
+  window.visualViewport?.addEventListener('resize', fitChatToScreen);
+
   /** After each draw: voice players in a private chat. */
   function wireSocial() {
+    fitChatToScreen();
     if (!['dm', 'social', 'person'].includes(state.screen)) {
       if (dmRec.rec) cancelDmVoice();
       if (so.viewer) { clearTimeout(storyTimer); so.viewer = null; }
