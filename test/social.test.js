@@ -96,3 +96,15 @@ test('comments: the writer and the post owner may delete; a story has no comment
   assert.deepEqual([post.comments, post.latestComments.length], [4, 2]);
   assert.equal(postView({ _id: 's', user: A, kind: 'story', likes: [], createdAt: new Date() }, B).comments, null);
 });
+
+test('site news: photo through the guarded route, the hidden flag only for the admin', async () => {
+  const { newsView } = await import('../services/News.js');
+  const at = new Date('2026-11-03T10:00:00Z');
+  const n = { _id: 'n1', kind: 'update', title: 'Do‘stlar ochildi', text: 'Line 1\nLine 2', photo: { key: 'k' }, published: false, createdAt: at, updatedAt: at };
+  const pub = newsView(n);
+  assert.equal(pub.photo, '/api/news/n1/photo');
+  assert.equal(pub.text, 'Line 1\nLine 2');
+  assert.equal('published' in pub, false);
+  assert.equal(newsView(n, { admin: true }).published, false);
+  assert.equal(pub.edited, null);
+});

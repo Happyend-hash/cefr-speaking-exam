@@ -459,3 +459,38 @@ main[data-screen="dm"] { padding-top: 0; padding-bottom: 0; }
 .test-bar { position: sticky; top: 0; z-index: 90; display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
   padding: 6px 12px; background: #f5c451; color: #1a1300; font-size: 13px; font-weight: 600; }
 .test-bar button { border: 0; border-radius: 999px; padding: 4px 12px; background: #1a1300; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+
+/* ==========================================================================
+   Sayt yangiliklari — news on Home (2026-11-03)
+   ========================================================================== */
+.nw { display: flex; flex-direction: column; gap: 12px; position: relative; overflow: hidden; }
+.nw::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 4px; background: linear-gradient(90deg, #6366f1, #8b5cf6, #f5c451); }
+.nw-head { display: flex; align-items: center; gap: 10px; }
+.nw-head h2 { font-family: var(--font-display); font-size: 18px; letter-spacing: -.02em; }
+.nw-new { padding: 3px 10px; border-radius: 999px; background: #ef4444; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; animation: so-pulse 1.6s ease-in-out 3; }
+.nw-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-faint); }
+.nw-kind { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 7px; font-size: 11px; font-weight: 800; white-space: nowrap; background: var(--indigo-50); color: var(--indigo-700); }
+.nw-kind.is-update { background: #e0f2fe; color: #0369a1; }
+.nw-kind.is-event { background: #fce7f3; color: #be185d; }
+.nw-kind.is-results { background: var(--gold-tint, #fff4d6); color: var(--gold-text, #a86f00); }
+:root[data-theme="night"] .nw-kind.is-update { background: rgba(56, 189, 248, .14); color: #7dd3fc; }
+:root[data-theme="night"] .nw-kind.is-event { background: rgba(244, 114, 182, .14); color: #f9a8d4; }
+:root[data-theme="night"] .nw-kind.is-results { background: rgba(245, 196, 81, .14); color: #f5c451; }
+.nw-latest { display: flex; flex-direction: column; gap: 8px; }
+.nw-latest h3 { font-family: var(--font-display); font-size: 20px; line-height: 1.25; letter-spacing: -.02em; }
+.nw-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; color: var(--ink-soft); }
+.nw-photo { display: block; border: 0; padding: 0; border-radius: 16px; overflow: hidden; background: var(--ground-2); cursor: zoom-in; }
+.nw-photo img { display: block; width: 100%; max-height: 340px; object-fit: cover; }
+.nw-olders { display: flex; flex-direction: column; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.nw-older-label { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 4px; }
+.nw-old + .nw-old { border-top: 1px solid var(--line-soft); }
+.nw-old-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 2px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.nw-old-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; font-size: 14px; }
+.nw-old-head time { flex: none; font-size: 12px; color: var(--ink-faint); }
+.nw-chev { display: grid; place-items: center; color: var(--ink-faint); transition: transform .2s ease; }
+.nw-chev svg { width: 16px; height: 16px; }
+.nw-old.is-open .nw-chev { transform: rotate(90deg); }
+.nw-old.is-open .nw-old-title { white-space: normal; }
+.nw-old-body { display: flex; flex-direction: column; gap: 8px; padding: 0 2px 12px; }
+.nw-more { align-self: flex-start; margin-top: 6px; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 13px; font-weight: 700; color: var(--indigo-600); cursor: pointer; }
+.nw-pin { font-size: 12px; }

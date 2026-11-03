@@ -80,6 +80,7 @@ import adminMessageRoutes from './routes/adminMessages.js';
 import supportRoutes from './routes/support.js';
 import adminSupportRoutes from './routes/adminSupport.js';
 import socialRoutes, { adminRouter as socialAdminRoutes } from './routes/social.js';
+import newsRoutes, { adminRouter as newsAdminRoutes } from './routes/news.js';
 import { startStorySweep } from './services/Social.js';
 import { publicRouter as wallRoutes, studentRouter as wallStudentRoutes, adminRouter as wallAdminRoutes } from './routes/wall.js';
 import { noteGuest } from './services/UsageStats.js';
@@ -346,6 +347,7 @@ app.use('/api/assistant', authenticate, requireVerifiedEmail, assistantRoutes);
 app.use('/api/messages', authenticate, messageRoutes);
 app.use('/api/support', authenticate, supportRoutes);
 app.use('/api/social', authenticate, requireVerifiedEmail, socialRoutes);
+app.use('/api/news', authenticate, newsRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);
@@ -354,6 +356,7 @@ app.use('/api/admin/messages', authenticate, adminMessageRoutes);
 app.use('/api/admin/support', authenticate, adminSupportRoutes);
 app.use('/api/admin/wall', authenticate, wallAdminRoutes);
 app.use('/api/admin/social', authenticate, socialAdminRoutes);
+app.use('/api/admin/news', authenticate, newsAdminRoutes);
 app.use('/api/admin', authenticate, adminRoutes);
 
 // Health check

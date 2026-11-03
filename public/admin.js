@@ -326,6 +326,9 @@
     { key: 'accounts', icon: 'users', tone: 'rose', title: 'Accounts & access', desc: 'Every account: mocks left, packages, Premium and blocking.',
       body: () => studentsCard(), open: ['students-open'],
       meta: () => (state.overview ? `${plural(state.overview.students, 'account')}` : '') },
+    { key: 'news', icon: 'doc', tone: 'violet', title: 'Site news', desc: 'News on the students’ Home screen: changes, updates, events and results.',
+      body: () => newsAdminCard(),
+      meta: () => (state.newsAdmin ? `${plural(state.newsAdmin.news.length, 'item')} · ${state.newsAdmin.audience === 'all' ? 'every student' : 'test profile only'}` : 'Sayt yangiliklari') },
     { key: 'wall', icon: 'star', tone: 'sky', title: 'Results wall', desc: 'Reviews you add, and exam certificates students upload — approve them for the public page.',
       body: () => wallCard(),
       badge: () => state.wall?.pending || 0,
@@ -870,11 +873,11 @@
     });
   }
 
-  function readFileAsShrunkDataUrl(file) {
+  function readFileAsShrunkDataUrl(file, max = 900) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
-        const scale = Math.min(1, 900 / img.naturalWidth, 900 / img.naturalHeight);
+        const scale = Math.min(1, max / img.naturalWidth, max / img.naturalHeight);
         const c = document.createElement('canvas');
         c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
         const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
@@ -1017,6 +1020,111 @@
         new Audio(URL.createObjectURL(await res.blob())).play();
       } catch { setState({ error: 'The voice message could not be played.' }); }
     }));
+  }
+
+  // ============================================================ SITE NEWS
+  //
+  // "Sayt yangiliklari" on the students' Home screen (2026-11-03): changes,
+  // updates, events, students' results. The newest shows open, older ones
+  // fold. "Who sees it" starts at your test profile only; switch it to every
+  // student when you are happy with it.
+
+  const NEWS_KIND_LABEL = { news: '📢 News', update: '✨ Update', event: '🎉 Event', results: '🏆 Results' };
+
+  async function loadNewsAdmin() {
+    state.newsLoading = true;
+    try { state.newsAdmin = await api('/admin/news'); state.newsError = ''; }
+    catch (error) { state.newsError = error.message; }
+    state.newsLoading = false;
+    render();
+  }
+
+  function newsAdminCard() {
+    if (!state.newsAdmin && !state.newsLoading && !state.newsError) loadNewsAdmin();
+    const d = state.newsAdmin;
+    if (!d) return `<div class="card" style="margin-top:20px">${state.newsError ? `<p class="error">${esc(state.newsError)}</p>` : '<p class="muted">Loading…</p>'}</div>`;
+    const f = state.newsEdit;
+    const testLinked = state.testAcc?.linked;
+    const audience = `<div class="card" style="margin-top:20px">
+        <h2 style="font-size:18px">Who sees “Sayt yangiliklari”</h2>
+        <div class="na-aud">
+          <button class="na-aud-btn ${d.audience === 'test' ? 'is-on' : ''}" data-news-audience="test"><b>🧪 Only my test profile</b><span>${testLinked ? esc(testLinked.email) : 'Link it first: 🧪 Test profile in the top bar'}</span></button>
+          <button class="na-aud-btn ${d.audience === 'all' ? 'is-on' : ''}" data-news-audience="all"><b>👥 Every student</b><span>On everyone’s Home screen</span></button>
+        </div>
+        <p class="muted" style="font-size:13px;margin-top:8px">Try it on your test profile first; when it looks right, choose “Every student”. Admin accounts always see it.</p>
+      </div>`;
+    const form = f ? `<form class="wa-form" id="news-form" style="margin-top:12px">
+        <h3 style="font-size:16px">${f.id ? 'Edit news' : 'New news'}</h3>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <label class="field" style="width:170px"><span>Type</span><select id="nf-kind">${Object.entries(NEWS_KIND_LABEL).map(([k, l]) => `<option value="${k}" ${f.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field" style="flex:1;min-width:220px"><span>Title</span><input id="nf-title" maxlength="140" value="${esc(f.title || '')}" required></label>
+        </div>
+        <label class="field"><span>Text (Uzbek or English — new lines are kept)</span><textarea id="nf-text" rows="6" maxlength="4000">${esc(f.text || '')}</textarea></label>
+        <label class="field"><span>Photo (optional)</span><input type="file" id="nf-photo" accept="image/*">${f.photo ? `<label class="muted" style="font-size:13px"><input type="checkbox" id="nf-nophoto"> remove the current photo</label>` : ''}</label>
+        <div class="row" style="gap:14px;flex-wrap:wrap">
+          <label class="muted"><input type="checkbox" id="nf-published" ${f.published !== false ? 'checked' : ''}> Show it</label>
+          <label class="muted"><input type="checkbox" id="nf-pinned" ${f.pinned ? 'checked' : ''}> Keep it at the top (pinned)</label>
+        </div>
+        <div class="row" style="gap:8px"><button class="btn btn-sm" type="submit" ${state.newsSaving ? 'disabled' : ''}>${state.newsSaving ? 'Saving…' : f.id ? 'Save' : 'Publish'}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-news-act="cancel">Cancel</button></div>
+      </form>` : `<button class="btn btn-sm" style="margin-top:12px" data-news-act="new">＋ Write news</button>`;
+    const rows = d.news.map((n, i) => `<div class="wa-review">
+        <div class="wa-review-head"><span class="tag">${esc(NEWS_KIND_LABEL[n.kind] || n.kind)}</span> <strong>${esc(n.title)}</strong>
+          ${i === 0 && n.published ? '<span class="tag tag-live">shown open</span>' : ''}${n.pinned ? ' <span class="tag tag-writing">pinned</span>' : ''}${n.published ? '' : ' <span class="tag tag-draft">hidden</span>'}
+          <span class="muted" style="font-size:12px;margin-left:6px">${esc(new Date(n.at).toLocaleString())}</span></div>
+        ${n.text ? `<p>${esc(n.text.length > 220 ? `${n.text.slice(0, 220)}…` : n.text)}</p>` : ''}
+        <div class="row" style="gap:6px"><button class="btn btn-ghost btn-sm" data-news-act="edit" data-id="${esc(n.id)}">Edit</button>
+          <button class="btn btn-ghost btn-sm" data-news-act="delete" data-id="${esc(n.id)}">Delete</button></div></div>`).join('');
+    return `${audience}
+      <div class="card" style="margin-top:20px">
+        <h2 style="font-size:18px">News</h2>
+        <p class="muted" style="margin-top:6px;font-size:14px">The newest appears open at the top of students’ Home screen; older ones fold into one line each and open on a tap.</p>
+        ${form}
+        <div class="wa-list">${rows || '<p class="muted">No news yet.</p>'}</div>
+      </div>`;
+  }
+
+  function wireNewsAdmin() {
+    root.querySelectorAll('[data-news-audience]').forEach(el => el.addEventListener('click', async () => {
+      const value = el.dataset.newsAudience;
+      if (value === 'all' && !window.confirm('Show “Sayt yangiliklari” to every student now?')) return;
+      try {
+        await api('/admin/news/audience', { method: 'PUT', body: { audience: value } });
+        state.newsAdmin.audience = value;
+        state.notice = value === 'all' ? 'Every student now sees the news on Home.' : 'Only your test profile sees the news now.';
+        render();
+      } catch (error) { setState({ error: error.message }); }
+    }));
+    root.querySelectorAll('[data-news-act]').forEach(el => el.addEventListener('click', async () => {
+      const act = el.dataset.newsAct;
+      if (act === 'new') return setState({ newsEdit: { kind: 'news', published: true } });
+      if (act === 'cancel') return setState({ newsEdit: null });
+      const n = state.newsAdmin.news.find(x => x.id === el.dataset.id);
+      if (act === 'edit' && n) return setState({ newsEdit: { ...n } });
+      if (act === 'delete' && n && window.confirm(`Delete “${n.title}”?`)) {
+        try { await api(`/admin/news/${n.id}`, { method: 'DELETE' }); await loadNewsAdmin(); }
+        catch (error) { setState({ error: error.message }); }
+      }
+    }));
+    document.getElementById('news-form')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const f = state.newsEdit || {};
+      const v = id => document.getElementById(id);
+      const body = {
+        kind: v('nf-kind').value, title: v('nf-title').value, text: v('nf-text').value,
+        published: v('nf-published').checked, pinned: v('nf-pinned').checked, removePhoto: Boolean(v('nf-nophoto')?.checked)
+      };
+      setState({ newsSaving: true, newsEdit: { ...f, ...body } });
+      try {
+        const file = v('nf-photo')?.files?.[0];
+        if (file) body.photo = await readFileAsShrunkDataUrl(file, 1280);
+        await api(f.id ? `/admin/news/${f.id}` : '/admin/news', { method: f.id ? 'PATCH' : 'POST', body });
+        state.newsEdit = null;
+        state.notice = f.id ? 'News saved.' : (state.newsAdmin.audience === 'test' ? 'Published — open your 🧪 Test profile to see it on Home.' : 'Published — it is on every student’s Home screen.');
+        await loadNewsAdmin();
+      } catch (error) { state.error = error.message; }
+      setState({ newsSaving: false });
+    });
   }
 
   // ============================================================ TEST PROFILE
@@ -1833,6 +1941,7 @@
     wireVoiceAdmin();
     wireChatAdmin();
     wireTestPanel();
+    if (state.folder === 'news') wireNewsAdmin();
     if (state.folder === 'wall') wireWallAdmin();
     if (state.folder === 'friends') { wireSocialAdmin(); paintWallImages(); }
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>

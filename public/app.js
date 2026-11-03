@@ -317,7 +317,9 @@
         api('/user/profile').catch(() => null),
         loadLeaderboard(),
         // Writing results, so Home shows both skills side by side.
-        api('/writing/attempts').then(list => { state.writingHistory = list; }).catch(() => {})
+        api('/writing/attempts').then(list => { state.writingHistory = list; }).catch(() => {}),
+        // Sayt yangiliklari: shown only when the server says this account may see them.
+        api('/news').then(d => { state.news = d; }).catch(() => {})
       ]);
       // Premium and the picture come with the profile: the avatar in the
       // top bar and the Profil tab both use them.
@@ -8787,6 +8789,7 @@
               <h1>${esc(HOME_UZ.hello(name))} <span aria-hidden="true">👋</span></h1>
               <p>${HOME_UZ.sub}</p>
             </section>
+            ${newsCard()}
             ${streak}
             ${level}
             ${homeRecent()}
@@ -8815,6 +8818,73 @@
         </div>
       </div>`;
   }
+
+  // ------------------------------------------------------------ Sayt yangiliklari
+  //
+  // News about the site, written by the admin (2026-11-03). The newest is
+  // open; every older one is folded into one line and opens on a tap — one at
+  // a time — so the card never grows into a long wall of text.
+
+  const NEWS_UZ = {
+    title: 'Sayt yangiliklari',
+    fresh: 'Yangi',
+    older: 'Avvalgi yangiliklar',
+    more: n => `Yana ${n} ta yangilik`,
+    less: 'Kamroq ko‘rsatish',
+    kinds: { news: ['📢', 'Yangilik'], update: ['✨', 'Yangilanish'], event: ['🎉', 'Tadbir'], results: ['🏆', 'Natijalar'] },
+    months: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr']
+  };
+  const nw = { open: null, all: false, seenAtLoad: null };
+  const newsDate = at => { const d = new Date(at); return `${d.getDate()}-${NEWS_UZ.months[d.getMonth()]}${d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : ''}`; };
+  const newsKind = k => { const [e, l] = NEWS_UZ.kinds[k] || NEWS_UZ.kinds.news; return `<span class="nw-kind is-${esc(k)}">${e} ${l}</span>`; };
+
+  function newsBody(n) {
+    return `${n.photo ? `<button class="nw-photo" data-news-zoom="${esc(n.photo)}"><img data-authsrc="${esc(n.photo)}" data-quiet alt="" loading="lazy"></button>` : ''}
+      ${n.text ? `<p class="nw-text">${esc(n.text)}</p>` : ''}`;
+  }
+
+  function newsCard() {
+    const list = state.news?.visible ? state.news.news || [] : [];
+    if (!list.length) return '';
+    const [latest, ...older] = list;
+    if (nw.seenAtLoad === null) {
+      nw.seenAtLoad = store.get('newsSeen') || '';
+      store.set('newsSeen', latest.id);
+    }
+    const isNew = nw.seenAtLoad !== latest.id && !nw.seenAtLoad.split(',').includes(latest.id);
+    const shown = nw.all ? older : older.slice(0, 4);
+    const row = n => {
+      const open = nw.open === n.id;
+      return `<div class="nw-old ${open ? 'is-open' : ''}">
+        <button class="nw-old-head" data-news-open="${esc(n.id)}" aria-expanded="${open}">
+          ${newsKind(n.kind)}<span class="nw-old-title">${esc(n.title)}</span><time>${esc(newsDate(n.at))}</time>
+          <span class="nw-chev" aria-hidden="true">${icon('chevron')}</span></button>
+        ${open ? `<div class="nw-old-body">${newsBody(n)}</div>` : ''}
+      </div>`;
+    };
+    return `<section class="card nw">
+      <div class="nw-head"><h2>📰 ${NEWS_UZ.title}</h2>${isNew ? `<span class="nw-new">${NEWS_UZ.fresh}</span>` : ''}</div>
+      <article class="nw-latest">
+        <div class="nw-meta">${newsKind(latest.kind)}<time>${esc(newsDate(latest.at))}</time>${latest.pinned ? '<span class="nw-pin">📌</span>' : ''}</div>
+        <h3>${esc(latest.title)}</h3>
+        ${newsBody(latest)}
+      </article>
+      ${older.length ? `<div class="nw-olders"><p class="nw-older-label">${NEWS_UZ.older}</p>${shown.map(row).join('')}
+        ${older.length > 4 ? `<button class="nw-more" data-news-all>${nw.all ? NEWS_UZ.less : NEWS_UZ.more(older.length - 4)}</button>` : ''}</div>` : ''}
+    </section>
+    ${nw.zoom ? `<div class="so-zoom" data-news-unzoom><img data-authsrc="${esc(nw.zoom)}" data-quiet alt=""></div>` : ''}`;
+  }
+
+  root.addEventListener('click', event => {
+    const el = event.target.closest('[data-news-open], [data-news-all], [data-news-zoom], [data-news-unzoom]');
+    if (!el || !root.contains(el)) return;
+    event.preventDefault();
+    if (el.dataset.newsOpen) nw.open = nw.open === el.dataset.newsOpen ? null : el.dataset.newsOpen;
+    else if (el.hasAttribute('data-news-all')) nw.all = !nw.all;
+    else if (el.dataset.newsZoom) nw.zoom = el.dataset.newsZoom;
+    else nw.zoom = null;
+    render();
+  });
 
   /** The three latest attempts, as rows — pending ones say they are being marked. */
   function homeRecent() {

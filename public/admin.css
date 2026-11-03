@@ -714,3 +714,9 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .tp-btn:hover:not(:disabled) { background: #e7a325; }
 .tp-more { padding-left: 8px; padding-right: 8px; }
 .tp-panel { max-width: 760px; margin: 16px auto 0; }
+
+/* Site news (2026-11-03) */
+.na-aud { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 12px; }
+.na-aud-btn { display: flex; flex-direction: column; gap: 4px; padding: 14px; border-radius: 14px; border: 2px solid var(--line); background: #fff; text-align: left; cursor: pointer; font: inherit; }
+.na-aud-btn span { font-size: 13px; color: var(--ink-soft); }
+.na-aud-btn.is-on { border-color: var(--indigo-600); background: var(--indigo-50); }
