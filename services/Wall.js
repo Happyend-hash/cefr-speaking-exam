@@ -97,7 +97,7 @@ export async function myCertificates(userId) {
 export async function submitCertificate(userId, body = {}) {
   const user = await User.findById(userId).select('firstName lastName nickname role access').lean();
   if (!user) throw fail('Foydalanuvchi topilmadi', 404);
-  if (user.access?.blocked) throw fail('Ustozingiz kirishingizni to‘xtatgan', 403);
+  if (user.access?.blocked) throw fail('Hisobingiz vaqtincha to‘xtatilgan', 403);
   const pending = await WallCertificate.countDocuments({ user: userId, status: 'pending' });
   if (pending >= MAX_PENDING) throw fail('Avvalgi natijalaringiz hali tekshirilmoqda — biroz kuting', 429);
 

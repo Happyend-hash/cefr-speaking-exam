@@ -83,7 +83,7 @@ export function card(u, { level = null, relation = 'none' } = {}) {
 async function me(userId) {
   const u = await User.findById(userId).select(USER_FIELDS).lean();
   if (!u) throw fail('Foydalanuvchi topilmadi', 404);
-  if (u.access?.blocked) throw fail('Ustozingiz kirishingizni to‘xtatgan.', 403, 'blocked');
+  if (u.access?.blocked) throw fail('Hisobingiz vaqtincha to‘xtatilgan.', 403, 'blocked');
   return u;
 }
 
