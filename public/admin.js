@@ -1150,7 +1150,8 @@
         <button class="btn btn-ghost btn-sm" data-action="test-panel">Close</button></div>
       ${linked ? `<p style="margin-top:8px">Linked to <strong>${esc(linked.email)}</strong>. <em>🧪 Test profile</em> in the top bar opens the site as this student; a bar at the top of the site brings you back here.</p>
         <div class="row" style="gap:8px;margin-top:12px"><button class="btn btn-sm" data-action="test-switch">Open the site as the test profile</button>
-        <button class="btn btn-ghost btn-sm" data-action="test-unlink">Unlink</button></div>`
+        <button class="btn btn-ghost btn-sm" data-action="test-unlink">Unlink</button></div>
+        ${pushCheck()}`
         : `<p class="muted" style="margin-top:8px;font-size:14px">Link the student account you test the site with: type its email, then its password — or press “Email me a code” and type the code sent to that inbox. After that, one click switches to it. Only you (this admin account) can use it, and nobody's account can be linked without its password or its inbox.</p>`}
       <form id="tp-form" style="display:flex;flex-direction:column;gap:8px;margin-top:12px" autocomplete="off">
         <input id="tp-email" type="email" placeholder="Test account email" value="${esc(state.testEmail || '')}" required>
@@ -1165,6 +1166,43 @@
       </form>
       ${state.testError ? `<p class="error" style="margin-top:8px">${esc(state.testError)}</p>` : ''}
     </div>`;
+  }
+
+  // Phone notifications check (2026-11-03): the test profile's signed-up
+  // phones and a real test notification, with the push service's answer.
+  function pushCheck() {
+    const p = state.pushInfo;
+    const when = d => (d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
+    const devices = p?.test?.devices || [];
+    const results = state.pushResults;
+    return `<div class="tp-push" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <h3 style="font-size:15px">🔔 Phone notifications</h3>
+      ${!p ? '<p class="muted" style="font-size:13px">Checking…</p>' : `
+        <p class="muted" style="font-size:13px;margin:4px 0 8px">${p.stats.students} student${p.stats.students === 1 ? '' : 's'} turned notifications on (${p.stats.devices} phone${p.stats.devices === 1 ? '' : 's'}).</p>
+        ${devices.length ? devices.map(d => `<div style="font-size:13px;padding:6px 0;border-top:1px dashed var(--line)">
+            📱 <b>${esc(d.agent)}</b> <span class="muted">· ${esc(d.service)} · signed up ${esc(when(d.since))}</span><br>
+            <span class="muted">Last delivered: ${esc(when(d.lastOkAt))}</span>
+            ${d.lastError ? `<br><span class="error">Last refusal (${esc(when(d.lastErrorAt))}): ${esc(d.lastError)}</span>` : ''}
+          </div>`).join('')
+          : `<p class="error" style="font-size:13px">The test profile has no phone signed up. On the phone: open the app as the test profile, press “Yoqish” on Home and allow notifications. (One phone belongs to the last account that opened the site on it — if another student account was used on that phone afterwards, the phone moved to that account.)</p>`}
+        <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-sm" data-action="push-test" ${state.pushBusy || !devices.length ? 'disabled' : ''}>${state.pushBusy ? 'Sending…' : 'Send a test notification'}</button>
+          <button class="btn btn-ghost btn-sm" data-action="push-refresh">Refresh</button></div>
+        ${results ? `<p style="font-size:13px;margin-top:8px">${results.length ? results.map(r => r.ok ? `✓ Sent to ${esc(r.agent || 'phone')} — close the app and look at the phone.` : `✗ ${esc(r.agent || 'phone')}: ${esc(r.error || 'failed')}${r.removed ? ' (this phone was forgotten — turn notifications on again there)' : ''}`).join('<br>') : 'No phone to send to.'}</p>` : ''}`}
+    </div>`;
+  }
+
+  async function loadPushInfo() {
+    try { state.pushInfo = await api('/admin/push'); } catch (error) { state.pushInfo = { stats: { students: 0, devices: 0 }, test: null }; state.testError = error.message; }
+    render();
+  }
+
+  async function sendPushTest() {
+    setState({ pushBusy: true, pushResults: null });
+    try {
+      const d = await api('/admin/push/test', { method: 'POST' });
+      state.pushInfo = { ...(state.pushInfo || {}), test: { ...(state.pushInfo?.test || {}), devices: d.devices } };
+      setState({ pushBusy: false, pushResults: d.results || [] });
+    } catch (error) { setState({ pushBusy: false, pushResults: [{ ok: false, error: error.message }] }); }
   }
 
   async function switchToTest() {
@@ -2064,7 +2102,9 @@
   function handleAction(action) {
     if (action === 'signout') return signOut();
     if (action === 'test-switch') return switchToTest();
-    if (action === 'test-panel') return setState({ testPanel: !state.testPanel, testError: '' });
+    if (action === 'test-panel') { if (!state.testPanel) loadPushInfo(); return setState({ testPanel: !state.testPanel, testError: '', pushResults: null }); }
+    if (action === 'push-test') return sendPushTest();
+    if (action === 'push-refresh') { state.pushInfo = null; render(); return loadPushInfo(); }
     if (action === 'test-unlink') return unlinkTest();
     if (action === 'test-code') return sendTestCode();
     if (action === 'new-test') return setState({ screen: 'new-test' });

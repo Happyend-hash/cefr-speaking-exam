@@ -16,7 +16,9 @@ const subscriptionSchema = new mongoose.Schema({
   keys: { p256dh: { type: String, required: true }, auth: { type: String, required: true } },
   agent: { type: String, default: '' },          // "Android app", "Chrome", … for the teacher's count only
   lastOkAt: Date,
-  fails: { type: Number, default: 0 }
+  fails: { type: Number, default: 0 },
+  lastError: { type: String, default: '' },      // what the push service said last time it refused
+  lastErrorAt: Date
 }, { timestamps: true });
 
 const pushKeySchema = new mongoose.Schema({

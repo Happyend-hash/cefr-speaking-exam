@@ -100,14 +100,18 @@ async function deliver(sub, payload) {
       { TTL: 24 * 3600, urgency: 'high' }
     );
     await PushSubscription.updateOne({ _id: sub._id }, { $set: { lastOkAt: new Date(), fails: 0 } });
+    return { ok: true, agent: sub.agent || '' };
   } catch (error) {
-    const gone = error?.statusCode === 404 || error?.statusCode === 410;
+    const status = error?.statusCode || 0;
+    const reason = `${status || ''} ${String(error?.body || error?.message || '').slice(0, 200)}`.trim();
+    const gone = status === 404 || status === 410;
     if (gone || (sub.fails || 0) + 1 >= MAX_FAILS) {
       await PushSubscription.deleteOne({ _id: sub._id }).catch(() => {});
     } else {
-      await PushSubscription.updateOne({ _id: sub._id }, { $inc: { fails: 1 } }).catch(() => {});
-      console.warn(`push failed (${error?.statusCode || error?.message})`);
+      await PushSubscription.updateOne({ _id: sub._id }, { $inc: { fails: 1 }, $set: { lastError: reason, lastErrorAt: new Date() } }).catch(() => {});
     }
+    console.warn(`push failed: ${reason}`);
+    return { ok: false, agent: sub.agent || '', error: reason, removed: gone };
   }
 }
 
@@ -117,9 +121,9 @@ async function deliver(sub, payload) {
  */
 export async function notify(userId, note = {}) {
   try {
-    if (!mongoose.isValidObjectId(String(userId))) return;
+    if (!mongoose.isValidObjectId(String(userId))) return [];
     const subs = await PushSubscription.find({ user: userId }).lean();
-    if (!subs.length) return;
+    if (!subs.length) return [];
     await keys();
     const payload = JSON.stringify({
       title: String(note.title || 'English Hub').slice(0, 80),
@@ -130,10 +134,21 @@ export async function notify(userId, note = {}) {
       badge: await (forTests.badge || badgeCount)(userId),
       at: Date.now()
     });
-    await Promise.all(subs.map(s => deliver(s, payload)));
+    return await Promise.all(subs.map(s => deliver(s, payload)));
   } catch (error) {
     console.warn(`push notify skipped: ${error?.message}`);
+    return [{ ok: false, error: error?.message || 'failed' }];
   }
+}
+
+/** The teacher's check: this student's phones, newest first. */
+export async function devices(userId) {
+  const list = await PushSubscription.find({ user: userId }).sort({ updatedAt: -1 }).lean();
+  return list.map(s => ({
+    agent: s.agent || 'Phone', since: s.createdAt, updatedAt: s.updatedAt, lastOkAt: s.lastOkAt || null,
+    fails: s.fails || 0, lastError: s.lastError || '', lastErrorAt: s.lastErrorAt || null,
+    service: (() => { try { return new URL(s.endpoint).host; } catch { return ''; } })()
+  }));
 }
 
 /** Same, without making the caller wait. */
@@ -163,4 +178,4 @@ export async function stats() {
   return { devices, students };
 }
 
-export default { keys, publicKey, subscribe, unsubscribe, badgeCount, notify, notifySoon, notifyMany, stats };
+export default { keys, publicKey, subscribe, unsubscribe, badgeCount, notify, notifySoon, notifyMany, stats, devices };

@@ -34,6 +34,7 @@ import { usageReport, usageList } from '../services/UsageStats.js';
 import WritingAttempt from '../models/WritingAttempt.js';
 import { reviewSpeaking, reviewWriting } from '../services/ExpertReview.js';
 import AuthService from '../services/AuthService.js';
+import Push from '../services/Push.js';
 import crypto from 'crypto';
 import { sendMail, emailConfigured } from '../services/EmailService.js';
 
@@ -1481,6 +1482,26 @@ async function linkedTestAccount(adminId) {
   if (!test || test.role !== 'student') return null;
   return test;
 }
+
+// Phone notifications check (2026-11-03): is the test profile's phone signed
+// up, and does a notification really go through? Shows the push service's own
+// answer when it refuses.
+router.get('/push', async (req, res, next) => {
+  try {
+    const test = await linkedTestAccount(req.user.id);
+    res.json({ success: true, data: { stats: await Push.stats(), test: test ? { email: test.email, devices: await Push.devices(test._id) } : null } });
+  } catch (error) { next(error); }
+});
+router.post('/push/test', async (req, res, next) => {
+  try {
+    const test = await linkedTestAccount(req.user.id);
+    if (!test) return res.status(400).json({ success: false, message: 'Link a test profile first' });
+    const results = await Push.notify(test._id, {
+      title: 'English Hub 🔔', body: 'Test bildirishnoma — hammasi ishlayapti ✓', url: '/', kind: 'test'
+    });
+    res.json({ success: true, data: { results, devices: await Push.devices(test._id) } });
+  } catch (error) { next(error); }
+});
 
 router.get('/test-account', async (req, res, next) => {
   try {
