@@ -7721,7 +7721,7 @@
   // computer. Teachers keep their own short menu.
 
   const TABS = [
-    { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard'] },
+    { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard', 'news'] },
     { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'parts', 'writing', 'writing-check', 'briefing'] },
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'friends', go: 'social', label: "Do'stlar", icon: 'message', screens: ['social', 'dm', 'person'] },
@@ -7890,7 +7890,8 @@
       dm: dmScreen,
       person: personScreen,
       wall: wallScreen,
-      'my-results': myResultsScreen
+      'my-results': myResultsScreen,
+      news: newsScreen
     }[state.screen] || landingScreen;
 
     const tabs = tabBarMarkup();
@@ -8831,6 +8832,9 @@
     older: 'Avvalgi yangiliklar',
     more: n => `Yana ${n} ta yangilik`,
     less: 'Kamroq ko‘rsatish',
+    hide: 'Yashirish',
+    home: 'Asosiy',
+    empty: 'Hozircha yangilik yo‘q.',
     kinds: { news: ['📢', 'Yangilik'], update: ['✨', 'Yangilanish'], event: ['🎉', 'Tadbir'], results: ['🏆', 'Natijalar'] },
     months: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr']
   };
@@ -8843,15 +8847,14 @@
       ${n.text ? `<p class="nw-text">${esc(n.text)}</p>` : ''}`;
   }
 
-  function newsCard() {
-    const list = state.news?.visible ? state.news.news || [] : [];
-    if (!list.length) return '';
+  /** The news list: the newest open, older ones folded. On Home it carries "Yashirish"; on the news screen it does not. */
+  function newsList(list, { home = false } = {}) {
     const [latest, ...older] = list;
     if (nw.seenAtLoad === null) {
       nw.seenAtLoad = store.get('newsSeen') || '';
       store.set('newsSeen', latest.id);
     }
-    const isNew = nw.seenAtLoad !== latest.id && !nw.seenAtLoad.split(',').includes(latest.id);
+    const isNew = nw.seenAtLoad !== latest.id;
     const shown = nw.all ? older : older.slice(0, 4);
     const row = n => {
       const open = nw.open === n.id;
@@ -8863,7 +8866,8 @@
       </div>`;
     };
     return `<section class="card nw">
-      <div class="nw-head"><h2>📰 ${NEWS_UZ.title}</h2>${isNew ? `<span class="nw-new">${NEWS_UZ.fresh}</span>` : ''}</div>
+      <div class="nw-head"><h2>📰 ${NEWS_UZ.title}</h2>${isNew && home ? `<span class="nw-new">${NEWS_UZ.fresh}</span>` : ''}
+        ${home ? `<button class="nw-hide" data-news-hide="${esc(latest.id)}">${NEWS_UZ.hide} <span aria-hidden="true">✓</span></button>` : ''}</div>
       <article class="nw-latest">
         <div class="nw-meta">${newsKind(latest.kind)}<time>${esc(newsDate(latest.at))}</time>${latest.pinned ? '<span class="nw-pin">📌</span>' : ''}</div>
         <h3>${esc(latest.title)}</h3>
@@ -8875,11 +8879,51 @@
     ${nw.zoom ? `<div class="so-zoom" data-news-unzoom><img data-authsrc="${esc(nw.zoom)}" data-quiet alt=""></div>` : ''}`;
   }
 
+  /**
+   * On Home: the news card — or, once the student has read the newest item
+   * and pressed "Yashirish", just one line that opens the news section. A
+   * newer item brings the full card back.
+   */
+  function newsCard() {
+    const list = state.news?.visible ? state.news.news || [] : [];
+    if (!list.length) return '';
+    const latest = list[0];
+    if (store.get('newsHidden') === latest.id) {
+      return `<button class="nw-bar" data-news-screen>
+        <span class="nw-bar-ic">📰</span>
+        <span class="nw-bar-text"><b>${NEWS_UZ.title}</b><small>${esc(latest.title)}</small></span>
+        <span class="nw-bar-n">${list.length}</span>${icon('chevron')}</button>`;
+    }
+    return newsList(list, { home: true });
+  }
+
+  /** The news section: every item, the newest open. */
+  function newsScreen() {
+    const list = state.news?.visible ? state.news.news || [] : [];
+    return `<button class="crumb" data-go="dashboard">${icon('left')} ${NEWS_UZ.home}</button>
+      <div class="page-head"><h1>${NEWS_UZ.title}</h1></div>
+      ${list.length ? newsList(list) : `<p class="muted">${NEWS_UZ.empty}</p>`}`;
+  }
+
   root.addEventListener('click', event => {
-    const el = event.target.closest('[data-news-open], [data-news-all], [data-news-zoom], [data-news-unzoom]');
+    const el = event.target.closest('[data-news-open], [data-news-all], [data-news-zoom], [data-news-unzoom], [data-news-hide], [data-news-screen]');
     if (!el || !root.contains(el)) return;
     event.preventDefault();
-    if (el.dataset.newsOpen) nw.open = nw.open === el.dataset.newsOpen ? null : el.dataset.newsOpen;
+    if (el.dataset.newsHide) {
+      // Read: fold it away — it lives on in the news section, a tap from Home.
+      store.set('newsHidden', el.dataset.newsHide);
+      nw.open = null;
+      const card = el.closest('.nw');
+      if (card && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        card.classList.add('is-leaving');
+        setTimeout(render, 220);
+        return;
+      }
+    } else if (el.hasAttribute('data-news-screen')) {
+      nw.open = null;
+      go('news');
+      return;
+    } else if (el.dataset.newsOpen) nw.open = nw.open === el.dataset.newsOpen ? null : el.dataset.newsOpen;
     else if (el.hasAttribute('data-news-all')) nw.all = !nw.all;
     else if (el.dataset.newsZoom) nw.zoom = el.dataset.newsZoom;
     else nw.zoom = null;

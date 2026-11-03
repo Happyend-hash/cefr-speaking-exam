@@ -494,3 +494,18 @@ main[data-screen="dm"] { padding-top: 0; padding-bottom: 0; }
 .nw-old-body { display: flex; flex-direction: column; gap: 8px; padding: 0 2px 12px; }
 .nw-more { align-self: flex-start; margin-top: 6px; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 13px; font-weight: 700; color: var(--indigo-600); cursor: pointer; }
 .nw-pin { font-size: 12px; }
+
+/* "Yashirish": the read news folds into one line on Home (2026-11-03) */
+.nw-hide { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.nw-hide:hover { color: var(--indigo-600); border-color: var(--indigo-200); }
+.nw.is-leaving { transition: opacity .2s ease, transform .2s ease; opacity: 0; transform: translateY(-8px) scale(.98); }
+.nw-bar { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border-radius: 18px; border: 1px solid var(--line);
+  background: var(--surface); box-shadow: var(--shadow); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.nw-bar:hover { border-color: var(--indigo-200); }
+.nw-bar-ic { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 12px; background: var(--indigo-50); font-size: 20px; }
+.nw-bar-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.nw-bar-text b { font-size: 15px; }
+.nw-bar-text small { font-size: 13px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nw-bar-n { min-width: 24px; height: 24px; padding: 0 7px; border-radius: 12px; background: var(--ground-2); color: var(--ink-soft); font-size: 12px; font-weight: 800; display: grid; place-items: center; }
+.nw-bar > svg { width: 18px; height: 18px; color: var(--ink-faint); flex: none; }
