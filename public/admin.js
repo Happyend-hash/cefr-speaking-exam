@@ -32,6 +32,8 @@
   ];
 
   const state = {
+    // Accounts & access: a student's attempts, opened by clicking the name { id: { loading, data, error } }
+    attemptsOf: {},
     screen: 'login',
     token: null,
     user: null,
@@ -668,7 +670,10 @@
     return `<div style="padding:12px 0;border-bottom:1px solid var(--line)">
       <div class="row" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="min-width:220px">
-          <strong>${esc(s.name || s.email)}</strong> ${tags}
+          <button class="acc-name" data-attempts-of="${esc(s.id)}" aria-expanded="${state.attemptsOf[s.id] ? 'true' : 'false'}"
+                  title="Show this student's speaking and writing results">
+            <strong>${esc(s.name || s.email)}</strong> <span class="acc-caret">${state.attemptsOf[s.id] ? '▾' : '▸'}</span>
+          </button> ${tags}
           <div class="muted" style="font-size:13px">${esc(s.email)}</div>
         </div>
         <div class="muted" style="font-size:13px">
@@ -704,7 +709,52 @@
         <button class="btn btn-ghost btn-sm" data-access="premium" data-id="${esc(s.id)}" title="30 more days of Premium, without adding mocks">+30 days</button>
         ${s.premiumUntil ? `<button class="btn btn-ghost btn-sm" data-access="premium-off" data-id="${esc(s.id)}">End</button>` : ''}
       </div>
+      ${state.attemptsOf[s.id] ? attemptsPanel(state.attemptsOf[s.id]) : ''}
     </div>`;
+  }
+
+  /** One student's speaking and writing results, under their row (click the name again to close). */
+  function attemptsPanel(entry) {
+    if (entry.loading) return '<div class="acc-attempts"><p class="muted">Loading results…</p></div>';
+    if (entry.error) return `<div class="acc-attempts"><p class="error">${esc(entry.error)}</p></div>`;
+    const { attempts = [], summary = {} } = entry.data || {};
+    const sum = (label, m) => `<div class="acc-sum"><span>${label}</span>
+      <strong>${m?.average ?? '—'}</strong><small>${m?.average != null ? 'average of ' : ''}${m?.fullMocks || 0} full mock${m?.fullMocks === 1 ? '' : 's'} · ${m?.attempts || 0} attempt${m?.attempts === 1 ? '' : 's'} in all</small></div>`;
+    const STATUS = { in_progress: 'not finished', submitted: 'submitted', evaluating: 'being marked', failed: 'marking failed', cancelled: 'cancelled' };
+    const rows = attempts.map(a => {
+      const when = a.at ? new Date(a.at).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      const done = a.status === 'completed';
+      const score = done
+        ? (a.score != null ? `<b>${esc(a.score)}</b>/75` : '') + (a.level ? ` <span class="tag">${esc(a.level)}</span>` : '')
+        : `<span class="muted">${esc(STATUS[a.status] || a.status)}</span>`;
+      const bands = a.bands.length ? a.bands.map(b => `${esc(b.part)} <b>${esc(b.band)}</b>`).join(' · ') : '';
+      return `<tr>
+        <td><span class="acc-mod acc-mod-${a.module}">${a.module === 'speaking' ? '🎙 Speaking' : '✍️ Writing'}</span></td>
+        <td>${esc(a.title)}<div class="muted" style="font-size:12px">${esc(a.kind)}</div></td>
+        <td class="acc-score">${score}${a.expert ? ' <span class="tag tag-live" title="Reviewed by you">expert</span>' : ''}${a.backupMark ? ' <span class="tag tag-draft">backup mark</span>' : ''}</td>
+        <td class="muted" style="font-size:12px">${bands}</td>
+        <td class="muted" style="font-size:12px;white-space:nowrap">${esc(when)}</td>
+        <td>${done ? `<a class="btn btn-ghost btn-sm" href="${esc(a.link)}">Open</a>` : ''}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="acc-attempts">
+      <div class="acc-sums">${sum('Speaking', summary.speaking)}${sum('Writing', summary.writing)}</div>
+      ${rows ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th></th><th>Test</th><th>Score</th><th>Parts</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : '<p class="muted">No speaking or writing attempts yet.</p>'}
+    </div>`;
+  }
+
+  async function toggleAttempts(id) {
+    if (state.attemptsOf[id]) { delete state.attemptsOf[id]; render(); return; }
+    state.attemptsOf[id] = { loading: true };
+    render();
+    try {
+      const data = await api(`/admin/students/${encodeURIComponent(id)}/attempts`);
+      if (state.attemptsOf[id]) state.attemptsOf[id] = { data };
+    } catch (error) {
+      if (state.attemptsOf[id]) state.attemptsOf[id] = { error: error.message };
+    }
+    render();
   }
 
   /**
@@ -1526,6 +1576,8 @@
     // ---- students ----
     root.querySelectorAll('[data-access]').forEach(el =>
       el.addEventListener('click', () => changeAccess(el.dataset.id, el.dataset.access)));
+    root.querySelectorAll('[data-attempts-of]').forEach(el =>
+      el.addEventListener('click', () => toggleAttempts(el.dataset.attemptsOf)));
 
     root.querySelectorAll('[data-review-filter]').forEach(el =>
       el.addEventListener('click', () => loadReview({ only: el.dataset.reviewFilter })));

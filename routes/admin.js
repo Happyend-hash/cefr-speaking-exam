@@ -1461,6 +1461,78 @@ router.get('/students', async (req, res, next) => {
 });
 
 /**
+ * @route   GET /api/admin/students/:id/attempts
+ * @desc    Every speaking and writing attempt of one account, newest first —
+ *          opened by clicking the student's name in Accounts & access
+ *          (Jamshid, 2026-11-03: in the same list, no new window).
+ */
+const SPEAKING_PART_NAMES = { part11: 'Part 1.1', part12: 'Part 1.2', part2: 'Part 2', part3: 'Part 3' };
+router.get('/students/:id/attempts', async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) throw new APIError('Invalid student id', 400);
+    const [speaking, writing] = await Promise.all([
+      ExamResult.find({ student: req.params.id })
+        .sort({ createdAt: -1 }).limit(100)
+        .populate('exam', 'title')
+        .select('exam mode part status overallScore overallLevel partBands expertReview markingMethod completedAt createdAt')
+        .lean(),
+      WritingAttempt.find({ student: req.params.id })
+        .sort({ createdAt: -1 }).limit(100)
+        .select('mode testTitle status score level complete expertMark submittedParts parts.part11.band parts.part12.band parts.part2.band expertReview markedAt submittedAt createdAt')
+        .lean()
+    ]);
+    const bandsOf = (obj, keys, names) => keys
+      .filter(k => Number.isFinite(obj?.[k]))
+      .map(k => ({ part: names[k] || k, band: obj[k] }));
+    const list = [
+      ...speaking.map(r => ({
+        id: String(r._id), module: 'speaking',
+        title: r.exam?.title || 'Speaking mock',
+        kind: r.mode === 'practice' ? `Practice · ${SPEAKING_PART_NAMES[r.part] || r.part || 'one part'}` : 'Full mock',
+        status: r.status,
+        score: r.overallScore ?? null,
+        level: r.overallLevel || '',
+        bands: bandsOf(r.partBands, ['part11', 'part12', 'part2', 'part3'], SPEAKING_PART_NAMES),
+        expert: Boolean(r.expertReview?.at),
+        backupMark: r.markingMethod === 'average-fallback',
+        at: r.completedAt || r.createdAt,
+        link: `/?result=${r._id}`
+      })),
+      ...writing.map(a => ({
+        id: String(a._id), module: 'writing',
+        title: a.testTitle || (a.mode === 'check' ? 'Writing check' : 'Writing mock'),
+        kind: a.mode === 'check' ? 'Check my writing' : (a.complete === false ? 'Mock · some parts' : 'Full mock'),
+        status: a.status,
+        score: a.score ?? null,
+        level: a.level || '',
+        bands: [['part11', 'Part 1.1'], ['part12', 'Part 1.2'], ['part2', 'Part 2']]
+          .filter(([k]) => Number.isFinite(a.parts?.[k]?.band))
+          .map(([k, name]) => ({ part: name, band: a.parts[k].band })),
+        expert: Boolean(a.expertReview?.at),
+        at: a.markedAt || a.submittedAt || a.createdAt,
+        link: `/?writing=${a._id}`
+      }))
+    ].sort((x, y) => new Date(y.at) - new Date(x.at));
+
+    const avg = rows => {
+      const s = rows.filter(r => r.status === 'completed' && Number.isFinite(r.score));
+      return s.length ? Math.round((s.reduce((a, r) => a + r.score, 0) / s.length) * 10) / 10 : null;
+    };
+    const full = m => list.filter(r => r.module === m && r.kind === 'Full mock');
+    res.json({
+      success: true,
+      data: {
+        attempts: list,
+        summary: {
+          speaking: { attempts: speaking.length, fullMocks: full('speaking').length, average: avg(full('speaking')) },
+          writing: { attempts: writing.length, fullMocks: full('writing').length, average: avg(full('writing')) }
+        }
+      }
+    });
+  } catch (error) { next(error); }
+});
+
+/**
  * @route   POST /api/admin/students/:id/access
  * @desc    Grant mocks, set a balance, block or unblock one student
  *

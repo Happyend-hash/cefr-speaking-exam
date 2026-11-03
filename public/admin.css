@@ -656,3 +656,25 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .cs-move-form p { font-size: 13px; margin: 0; }
 .cs-prev-vocab { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
 .cs-prev-chip { display: inline-flex; gap: 6px; align-items: center; padding: 3px 9px; border-radius: 99px; border: 1px solid var(--line); background: var(--ground, #f8fafc); }
+
+/* Accounts & access: click a name to see that student's results (2026-11-03) */
+.acc-name { background: none; border: 0; padding: 0; font: inherit; color: var(--ink, inherit); cursor: pointer; text-align: left; }
+.acc-name strong { text-decoration: underline; text-decoration-color: rgba(79, 70, 229, .35); text-underline-offset: 3px; }
+.acc-name:hover strong { color: var(--brand, #4f46e5); }
+.acc-name:focus-visible { outline: 2px solid var(--brand, #4f46e5); outline-offset: 2px; border-radius: 4px; }
+.acc-caret { color: var(--muted, #64748b); font-size: 12px; }
+.acc-attempts { margin-top: 12px; padding: 14px; border-radius: 12px; background: var(--soft, #f6f7fb); border: 1px solid var(--line); }
+.acc-sums { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.acc-sum { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--card, #fff); border: 1px solid var(--line); }
+.acc-sum span { font-size: 12px; color: var(--muted, #64748b); text-transform: uppercase; letter-spacing: .04em; }
+.acc-sum strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+.acc-sum small { font-size: 12px; color: var(--muted, #64748b); }
+.acc-table-wrap { overflow-x: auto; }
+.acc-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.acc-table th { text-align: left; font-size: 12px; color: var(--muted, #64748b); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.acc-table td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.acc-table tr:last-child td { border-bottom: 0; }
+.acc-score { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.acc-mod { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.acc-mod-speaking { color: #4f46e5; }
+.acc-mod-writing { color: #0f766e; }
