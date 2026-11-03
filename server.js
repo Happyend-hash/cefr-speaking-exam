@@ -81,6 +81,7 @@ import supportRoutes from './routes/support.js';
 import adminSupportRoutes from './routes/adminSupport.js';
 import socialRoutes, { adminRouter as socialAdminRoutes } from './routes/social.js';
 import newsRoutes, { adminRouter as newsAdminRoutes } from './routes/news.js';
+import pushRoutes from './routes/push.js';
 import { startStorySweep } from './services/Social.js';
 import { publicRouter as wallRoutes, studentRouter as wallStudentRoutes, adminRouter as wallAdminRoutes } from './routes/wall.js';
 import { noteGuest } from './services/UsageStats.js';
@@ -348,6 +349,7 @@ app.use('/api/messages', authenticate, messageRoutes);
 app.use('/api/support', authenticate, supportRoutes);
 app.use('/api/social', authenticate, requireVerifiedEmail, socialRoutes);
 app.use('/api/news', authenticate, newsRoutes);
+app.use('/api/push', authenticate, pushRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);

@@ -284,6 +284,7 @@
   }
 
   function signOut() {
+    pushForget(state.token);
     store.remove('testMode');
     store.remove('preTest');
     stopSocialStream();
@@ -338,6 +339,7 @@
         user: profile?.user || state.user,
         loading: false
       });
+      pushRefresh();
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
@@ -1842,6 +1844,7 @@
     try {
       const d = await api('/messages/unread');
       if (d.unread !== state.unread || d.support !== state.supportUnread) setState({ unread: d.unread, supportUnread: d.support || 0 });
+      syncBadge();
     } catch { /* the badge simply stays as it was */ }
   }
 
@@ -2541,6 +2544,7 @@
       const changed = u.total !== so.unread.total || u.requests !== so.unread.requests || u.friendRequests !== so.unread.friendRequests;
       so.unread = u;
       if (changed) render();
+      syncBadge({ from: state.screen === 'dm' ? so.withId || '' : '' });
     } catch { /* the badge stays as it was */ }
     startSocialStream();
   }
@@ -9026,6 +9030,7 @@
             ${/* Qismlar, Vocabulary test, Klub and Reyting tiles removed (2026-11-03):
                  each is a tab away — Testlar (part practice), Klub (Vocabulary test
                  and games), Klub, Reyting. */ ''}
+            ${pushBanner()}
             ${priceCard()}
             ${wlInvite()}
             ${adSlot('home')}
@@ -9143,6 +9148,166 @@
     else nw.zoom = null;
     render();
   });
+
+  // ------------------------------------------------------------ Bildirishnomalar
+  //
+  // Phone notifications with the red number (2026-11-03). A student turns
+  // them on once (Home banner); after that every new Do'stlar message, chat
+  // or friend request, Yordam markazi reply and teacher message arrives as a
+  // notification under "English Hub" — in the Android app too, which hands
+  // notifications to the site — and the app icon shows how many are unread.
+  // Reading things here clears those notifications and lowers the number.
+
+  const PUSH_UZ = {
+    title: 'Yangi xabarlarni o‘tkazib yubormang 🔔',
+    body: 'Do‘stlaringiz yozganda, Yordam markazi javob berganda yoki ustoz xabar yuborganda telefoningizga bildirishnoma keladi — ilova belgisida qizil raqam bilan.',
+    on: 'Yoqish',
+    later: 'Keyinroq',
+    busy: 'Yoqilmoqda…',
+    done: 'Bildirishnomalar yoqildi ✓',
+    denied: 'Bildirishnomalar telefon sozlamalarida o‘chirilgan. Sozlamalar → Ilovalar → English Hub → Bildirishnomalar orqali yoqing.',
+    failed: 'Bildirishnomani yoqib bo‘lmadi — keyinroq qayta urinib ko‘ring.'
+  };
+
+  const pu = { busy: false, note: '', sent: '' };
+
+  const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+  const b64ToBytes = s => {
+    const pad = '='.repeat((4 - (s.length % 4)) % 4);
+    const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+  };
+
+  const pushAgent = () => (document.referrer.startsWith('android-app://') ? 'Android app'
+    : window.matchMedia?.('(display-mode: standalone)').matches ? 'Installed app' : 'Browser');
+
+  /** Subscribe this phone (permission already given) and tell the server. */
+  async function pushSubscribe() {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const { key } = await api('/push/key');
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    }
+    const json = sub.toJSON();
+    // Once per page load is enough; the server keeps it until the phone drops it.
+    if (pu.sent !== json.endpoint + state.user?.id) {
+      await api('/push/subscribe', { method: 'POST', body: { subscription: json, agent: pushAgent() } });
+      pu.sent = json.endpoint + state.user?.id;
+    }
+    return true;
+  }
+
+  /** On every Home load: phones that already said yes stay signed up. */
+  function pushRefresh() {
+    if (!pushSupported() || !isStudentShell() || Notification.permission !== 'granted') return;
+    pushSubscribe().catch(() => {});
+  }
+
+  async function pushEnable() {
+    if (pu.busy) return;
+    pu.busy = true; pu.note = ''; render();
+    try {
+      const answer = await Notification.requestPermission();
+      if (answer === 'granted') { await pushSubscribe(); pu.note = PUSH_UZ.done; syncBadge(); }
+      else if (answer === 'denied') pu.note = PUSH_UZ.denied;
+    } catch { pu.note = PUSH_UZ.failed; }
+    pu.busy = false;
+    render();
+    if (pu.note === PUSH_UZ.done) setTimeout(() => { if (pu.note === PUSH_UZ.done) { pu.note = ''; render(); } }, 4000);
+  }
+
+  /** Signing out on a shared phone: that phone stops getting this account's notifications. */
+  function pushForget(token) {
+    if (!pushSupported() || !token) return;
+    navigator.serviceWorker.ready
+      .then(reg => reg.pushManager.getSubscription())
+      .then(sub => sub && fetch('/api/push/unsubscribe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ endpoint: sub.endpoint })
+      }))
+      .catch(() => {});
+    pu.sent = '';
+    try { if (window.matchMedia?.('(display-mode: standalone)').matches) navigator.clearAppBadge?.()?.catch(() => {}); } catch { /* fine */ }
+  }
+
+  function pushBanner() {
+    if (!pushSupported() || !isStudentShell()) return '';
+    if (pu.note) return `<div class="card pn-banner is-note" role="status">${esc(pu.note)}</div>`;
+    if (Notification.permission !== 'default') return '';
+    if (Number(store.get('pushLater') || 0) > Date.now()) return '';
+    return `<section class="card pn-banner">
+      <span class="pn-bell" aria-hidden="true">🔔<i>3</i></span>
+      <div class="pn-text"><b>${PUSH_UZ.title}</b><p>${PUSH_UZ.body}</p>
+        <div class="pn-acts"><button class="btn btn-sm" data-push="on" ${pu.busy ? 'disabled' : ''}>${pu.busy ? PUSH_UZ.busy : PUSH_UZ.on}</button>
+        <button class="btn btn-ghost btn-sm" data-push="later">${PUSH_UZ.later}</button></div></div>
+    </section>`;
+  }
+
+  root.addEventListener('click', event => {
+    const el = event.target.closest('[data-push]');
+    if (!el || !root.contains(el)) return;
+    event.preventDefault();
+    if (el.dataset.push === 'on') return pushEnable();
+    store.set('pushLater', String(Date.now() + 7 * 864e5));   // ask again in a week
+    render();
+  });
+
+  /**
+   * The red number on the app icon = everything unread here. Also tells the
+   * service worker which notifications are now read, so they leave the
+   * phone's notification list.
+   */
+  let lastBadge = -1;
+  function syncBadge({ from = '' } = {}) {
+    if (!isStudentShell()) return;
+    const inbox = Math.max(0, (state.unread || 0) - (state.supportUnread || 0));
+    const support = state.supportUnread || 0;
+    const chats = (so.unread.messages || 0) + (so.unread.requests || 0);
+    const friends = so.unread.friendRequests || 0;
+    const total = inbox + support + chats + friends;
+    // Only an installed app has an icon to badge (a browser tab has none).
+    const installed = window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+    if (installed && navigator.setAppBadge) {
+      try {
+        if (total > 0) navigator.setAppBadge(total).catch(() => {});
+        else navigator.clearAppBadge().catch(() => {});
+      } catch { /* not supported here */ }
+    }
+    const kinds = [!inbox && 'inbox', !support && 'support', !chats && 'dm', !friends && 'friend'].filter(Boolean);
+    if (total === lastBadge && !from) return;
+    lastBadge = total;
+    navigator.serviceWorker?.controller?.postMessage({ type: 'read', kinds, from, badge: total });
+  }
+
+  /** ?open=… — where a tapped notification leads. */
+  function openFromLink(params) {
+    const where = params.get('open');
+    if (!where) return false;
+    try { history.replaceState(null, '', window.location.pathname); } catch { /* fine */ }
+    if (where === 'dm' && params.get('id')) openDm(params.get('id'));
+    else if (where === 'friends') openSocial('people');
+    else if (where === 'chats') openSocial('chats');
+    else if (where === 'support') openSupport();
+    else if (where === 'inbox') openInbox(params.get('id') || null);
+    else return false;
+    return true;
+  }
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', event => {
+      const msg = event.data || {};
+      if (!state.user || !isStudentShell()) return;
+      if (msg.type === 'push') {
+        // The site is open: the badges here update instead of a pop-up.
+        loadUnread();
+        if (state.screen === 'support' && msg.data?.kind === 'support') loadSupport();
+      } else if (msg.type === 'open' && msg.url) {
+        try { openFromLink(new URL(msg.url).searchParams); } catch { /* ignore */ }
+      }
+    });
+  }
 
   // ------------------------------------------------------------ Narxlar va Premium
   //
@@ -11168,6 +11333,13 @@
         // off, so ask it before putting the student on the code screen.
         if (needsVerification()) {
           recheckVerification();
+          return;
+        }
+
+        // ?open=dm&id=… / friends / support / inbox — a tapped notification.
+        const link = new URLSearchParams(window.location.search);
+        if (link.get('open')) {
+          loadDashboard().then(() => openFromLink(link));
           return;
         }
 

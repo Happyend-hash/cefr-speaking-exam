@@ -10,6 +10,7 @@ import { fallbackName } from './Leaderboard.js';
 import { mediaStorage, readPhoto } from './MediaStorage.js';
 import AudioStorageService from './AudioStorageService.js';
 import { socialHub } from './SocialHub.js';
+import { notifySoon } from './Push.js';
 
 /**
  * Do'stlar — friends, private chats with photos and voice messages, photo
@@ -224,7 +225,7 @@ export async function touch(userId) {
 // ------------------------------------------------------------- friends
 
 export async function requestFriend(userId, id) {
-  await me(userId);
+  const asker = await me(userId);
   const u = await other(userId, id);
   if (await isBlocked(userId, id)) throw fail('Bu foydalanuvchiga so‘rov yuborib bo‘lmaydi', 403);
   const f = await friendship(userId, id);
@@ -240,6 +241,7 @@ export async function requestFriend(userId, id) {
     if (error?.code !== 11000) throw error;          // both pressed at once: the other one won
   }
   socialHub.send(id, 'friend', { kind: 'request', from: String(userId) });
+  notifySoon(u._id, { title: 'Do‘stlik so‘rovi 🤝', body: `${nameOf(asker)} siz bilan do‘st bo‘lmoqchi`, url: '/?open=friends', kind: 'friend', from: String(userId) });
   return 'sent';
 }
 
@@ -454,6 +456,12 @@ export async function send(userId, id, body = {}) {
   const senderCard = card(sender);
   socialHub.send(u._id, 'message', { with: String(userId), person: senderCard, message: toThem, status: conv.status, incoming: conv.status === 'request' });
   socialHub.send(userId, 'message', { with: String(u._id), message: toMe, status: conv.status, incoming: false });
+  // The phone: a notification and the red number on the app icon.
+  notifySoon(u._id, {
+    title: senderCard.name,
+    body: conv.status === 'request' ? `💬 Suhbat so‘rovi: ${lastText(m)}` : lastText(m),
+    url: `/?open=dm&id=${userId}`, kind: 'dm', from: String(userId)
+  });
   return { message: toMe, status: conv.status };
 }
 

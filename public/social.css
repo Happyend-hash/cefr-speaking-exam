@@ -608,3 +608,14 @@ body:has(main[data-screen="dm"]) { overflow: hidden; }
 .pc-cardnum small { color: var(--ink-soft); font-size: 12px; }
 :root[data-theme="night"] .pc-premium { background: linear-gradient(130deg, rgba(240, 177, 0, .14), var(--surface) 80%); }
 :root[data-theme="night"] .pc-head-ic { background: rgba(240, 177, 0, .16); }
+
+/* ---------------------------------------------- Bildirishnomalar banner (Home, 2026-11-03) */
+.pn-banner { display: flex; gap: 14px; align-items: flex-start; padding: 16px; border: 1px solid var(--indigo-200); background: linear-gradient(120deg, var(--indigo-50), var(--surface) 70%); }
+.pn-banner.is-note { display: block; font-weight: 600; font-size: 14px; }
+.pn-bell { position: relative; flex: none; width: 48px; height: 48px; display: grid; place-items: center; font-size: 26px; border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+.pn-bell i { position: absolute; top: -5px; right: -5px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--red); color: #fff; font: 700 12px/20px var(--font-body, inherit); font-style: normal; text-align: center; box-shadow: 0 0 0 2px var(--surface); }
+.pn-text { min-width: 0; }
+.pn-text b { display: block; font-family: var(--font-display); font-size: 15.5px; }
+.pn-text p { margin: 4px 0 10px; font-size: 13.5px; color: var(--ink-soft); }
+.pn-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+:root[data-theme="night"] .pn-banner { background: linear-gradient(120deg, rgba(99, 102, 241, .16), var(--surface) 70%); border-color: rgba(99, 102, 241, .35); }

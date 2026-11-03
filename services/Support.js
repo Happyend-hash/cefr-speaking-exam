@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import SupportMessage from '../models/SupportMessage.js';
 import SupportImage from '../models/SupportImage.js';
 import User from '../models/User.js';
+import { notifySoon } from './Push.js';
 
 /**
  * English Hub Support (Jamshid, 2026-10-24): every student has one
@@ -88,6 +89,7 @@ export async function teamSend(user, { text, image, sentBy }) {
   // Answering means the team has read everything before it.
   await SupportMessage.updateMany({ user, from: 'user', readByTeam: null }, { $set: { readByTeam: new Date() } });
   const m = await SupportMessage.create({ user, from: 'team', text: body, image: imageId, sentBy });
+  notifySoon(user, { title: 'Yordam markazi 📩', body: body || '📷 Rasm', url: '/?open=support', kind: 'support' });
   return view(m.toObject(), { admin: true });
 }
 

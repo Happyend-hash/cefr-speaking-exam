@@ -3,6 +3,7 @@ import sanitizeHtml from 'sanitize-html';
 import Message from '../models/Message.js';
 import User from '../models/User.js';
 import CourseStudent from '../models/CourseStudent.js';
+import { notifySoon, notifyMany } from './Push.js';
 
 /**
  * The message box (Jamshid, 2026-10-23): the teacher writes to one student,
@@ -98,6 +99,7 @@ export async function sendMessages({ to, title, html, gift, sentBy }) {
     ...(box ? { gift: { ...box } } : {})
   }));
   for (let i = 0; i < docs.length; i += 500) await Message.insertMany(docs.slice(i, i + 500), { ordered: false });
+  notifyMany(users, { title: box ? 'Sizga sovg‘a! 🎁' : 'English Hub ✉️', body: cleanTitle, url: '/?open=inbox', kind: 'inbox' });
   return { batch: String(batch), sent: docs.length };
 }
 
@@ -257,6 +259,7 @@ export async function scoreUpdateMessage({ user, module, attemptId, attemptTitle
     user, batch: new mongoose.Types.ObjectId(), kind: 'score', title: title.slice(0, 140), html, sentBy,
     score: { module: skill, attemptId: String(attemptId), attemptTitle, attemptDate, parts, before, after }
   });
+  notifySoon(user, { title: 'Natijangiz yangilandi ✉️', body: title.slice(0, 140), url: `/?open=inbox&id=${m._id}`, kind: 'inbox' });
   return view(m.toObject());
 }
 
