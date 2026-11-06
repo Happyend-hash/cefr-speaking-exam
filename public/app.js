@@ -4793,7 +4793,7 @@
       "Ismingiz yonida toj belgisi va oltin ism",
       "O'z rasmingiz yoki animatsiyali GIF avatar",
       "Reklamasiz sayt",
-      "AI Ustoz bilan kuniga 15 ta suhbat (bepul: 3 ta)",
+      "AI Ustoz bilan kuniga 15 ta suhbat (bepul: 5 ta)",
       "Do'stlar: cheksiz post va hikoya, 3 daqiqalik ovozli xabar",
       "Speaking xonalarida qo'shimcha joy va birinchi bo'lib sherik topish"
     ],
