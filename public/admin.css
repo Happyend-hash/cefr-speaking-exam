@@ -728,3 +728,9 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .acc-gift-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-soft, #64748b); }
 .acc-gift-field input[type="number"] { width: 72px; }
 .acc-gift-ok { margin-top: 8px; font-size: 13px; color: #15803d; font-weight: 600; }
+.gift-btn { display: inline-grid; place-items: center; width: 30px; height: 30px; margin-left: 4px; padding: 0; vertical-align: middle;
+  border: 1px solid #f3d27a; border-radius: 50%; background: #fff8e1; font-size: 15px; line-height: 1; cursor: pointer; transition: transform .1s, background .15s; }
+.gift-btn:hover { background: #ffefc2; transform: scale(1.06); }
+.gift-btn.is-on { background: #f5c451; border-color: #e3a008; }
+.gift-btn:focus-visible { outline: 2px solid #e3a008; outline-offset: 2px; }
+.cs-table .gift-btn, .gift-btn { width: 30px !important; min-width: 30px; max-width: 30px; height: 30px; padding: 0 !important; flex: none; }

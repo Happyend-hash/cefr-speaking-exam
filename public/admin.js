@@ -692,7 +692,7 @@
           <button class="acc-name" data-attempts-of="${esc(s.id)}" aria-expanded="${state.attemptsOf[s.id] ? 'true' : 'false'}"
                   title="Show this student's results and the 🎁 gift option">
             <strong>${esc(s.name || s.email)}</strong> <span class="acc-caret">${state.attemptsOf[s.id] ? '▾' : '▸'}</span>
-          </button> ${tags}
+          </button> ${giftToggle(s.id)} ${tags}
           <div class="muted" style="font-size:13px">${esc(s.email)}</div>
         </div>
         <div class="muted" style="font-size:13px">
@@ -728,57 +728,89 @@
         <button class="btn btn-ghost btn-sm" data-access="premium" data-id="${esc(s.id)}" title="30 more days of Premium, without adding mocks">+30 days</button>
         ${s.premiumUntil ? `<button class="btn btn-ghost btn-sm" data-access="premium-off" data-id="${esc(s.id)}">End</button>` : ''}
       </div>
-      ${state.attemptsOf[s.id] ? giftBox(s) + attemptsPanel(state.attemptsOf[s.id]) : ''}
+      ${state.giftOpen?.[s.id] || state.attemptsOf[s.id] ? giftBox({ key: s.id, name: s.name || s.email, id: s.id }) : ''}
+      ${state.attemptsOf[s.id] ? attemptsPanel(state.attemptsOf[s.id]) : ''}
     </div>`;
   }
 
   // 🎁 Gift mocks (2026-11-06): in every student's panel. Sent as a gift in
   // the student's Xabarlar (with a phone notification); the student opens it
   // and the mocks are added — the same gift as ✉ Message → gift.
-  function giftBox(s) {
-    const g = state.giftOf?.[s.id] || {};
-    const id = esc(s.id);
+  // `who`: { key, name, id?, email?, blocked? } — an account id (Students) or
+  // the linked account's email (O'quvchilar). `blocked` explains why not.
+  function giftBox(who) {
+    const g = state.giftOf?.[who.key] || {};
+    const k = esc(who.key);
+    if (who.blocked) {
+      return `<div class="acc-gift"><div class="acc-gift-head">🎁 <b>Gift mocks to ${esc(who.name)}</b></div>
+        <p class="muted" style="font-size:13px;margin:0">${esc(who.blocked)}</p></div>`;
+    }
     return `<div class="acc-gift">
-      <div class="acc-gift-head">🎁 <b>Gift mocks to ${esc(s.name || s.email)}</b></div>
+      <div class="acc-gift-head">🎁 <b>Gift mocks to ${esc(who.name)}</b></div>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
-        <label class="acc-gift-field">Speaking<input id="gift-sp-${id}" type="number" min="0" max="10" value="${esc(g.sp ?? 1)}"></label>
-        <label class="acc-gift-field">Writing<input id="gift-wr-${id}" type="number" min="0" max="10" value="${esc(g.wr ?? 0)}"></label>
-        <label class="acc-gift-field" style="flex:1;min-width:180px">Note to the student (optional)<input id="gift-note-${id}" type="text" maxlength="300" placeholder="Masalan: Darsdagi faolligingiz uchun!" value="${esc(g.note || '')}"></label>
-        <button class="btn btn-sm" data-gift-send="${id}" ${g.busy ? 'disabled' : ''}>${g.busy ? 'Sending…' : 'Send gift 🎁'}</button>
+        <label class="acc-gift-field">Speaking<input id="gift-sp-${k}" type="number" min="0" max="10" value="${esc(g.sp ?? 1)}"></label>
+        <label class="acc-gift-field">Writing<input id="gift-wr-${k}" type="number" min="0" max="10" value="${esc(g.wr ?? 0)}"></label>
+        <label class="acc-gift-field" style="flex:1;min-width:180px">Note to the student (optional)<input id="gift-note-${k}" type="text" maxlength="300" placeholder="Masalan: Darsdagi faolligingiz uchun!" value="${esc(g.note || '')}"></label>
+        <button class="btn btn-sm" data-gift-send="${k}" ${who.id ? `data-gift-id="${esc(who.id)}"` : `data-gift-email="${esc(who.email)}"`} data-gift-name="${esc(who.name)}" ${g.busy ? 'disabled' : ''}>${g.busy ? 'Sending…' : 'Send gift 🎁'}</button>
       </div>
       ${g.done ? `<p class="acc-gift-ok">${esc(g.done)}</p>` : ''}
       ${g.error ? `<p class="error" style="font-size:13px;margin-top:6px">${esc(g.error)}</p>` : ''}
     </div>`;
   }
 
-  async function sendGift(id) {
-    const s = (state.students?.students || []).find(x => x.id === id) || {};
-    const val = k => document.getElementById(`gift-${k}-${id}`)?.value ?? '';
+  /** The 🎁 button next to a student's name: opens or closes their gift box. */
+  const giftToggle = key => `<button type="button" class="gift-btn ${state.giftOpen?.[key] ? 'is-on' : ''}" data-gift-toggle="${esc(key)}" title="Gift mocks" aria-label="Gift mocks" aria-expanded="${state.giftOpen?.[key] ? 'true' : 'false'}">🎁</button>`;
+
+  async function sendGift(btn) {
+    const key = btn.dataset.giftSend;
+    const name = btn.dataset.giftName || 'The student';
+    const val = k => document.getElementById(`gift-${k}-${key}`)?.value ?? '';
     const sp = Number(val('sp')) || 0;
     const wr = Number(val('wr')) || 0;
     const note = String(val('note')).trim();
     state.giftOf = state.giftOf || {};
     const keep = { sp, wr, note };
     if (!Number.isInteger(sp) || !Number.isInteger(wr) || sp < 0 || wr < 0 || sp > 10 || wr > 10) {
-      state.giftOf[id] = { ...keep, error: 'Give 0 to 10 mocks of each kind.' }; return render();
+      state.giftOf[key] = { ...keep, error: 'Give 0 to 10 mocks of each kind.' }; return render();
     }
-    if (!sp && !wr) { state.giftOf[id] = { ...keep, error: 'Choose at least one speaking or writing mock.' }; return render(); }
-    state.giftOf[id] = { ...keep, busy: true };
+    if (!sp && !wr) { state.giftOf[key] = { ...keep, error: 'Choose at least one speaking or writing mock.' }; return render(); }
+    state.giftOf[key] = { ...keep, busy: true };
     render();
     const what = [sp ? `${sp} ta speaking` : '', wr ? `${wr} ta writing` : ''].filter(Boolean).join(' va ');
     const body = note || `English Hub sizga ${what} mock sovg‘a qildi. Sovg‘ani oching — mocklar hisobingizga qo‘shiladi.`;
     try {
       await api('/admin/messages', { method: 'POST', body: {
-        to: [id], title: 'Sizga sovg‘a! 🎁',
+        ...(btn.dataset.giftId ? { to: [btn.dataset.giftId] } : { toEmail: btn.dataset.giftEmail }),
+        title: 'Sizga sovg‘a! 🎁',
         html: `<p>${esc(body)}</p>`,
         gift: { speaking: sp, writing: wr }
       } });
-      state.giftOf[id] = { sp: 1, wr: 0, note: '', done: `✓ Gift sent: ${[sp && `${sp} speaking`, wr && `${wr} writing`].filter(Boolean).join(' + ')} mock${sp + wr === 1 ? '' : 's'}. ${s.name || 'The student'} gets a notification, finds the gift in Xabarlar and opens it to add the mocks.` };
+      state.giftOf[key] = { sp: 1, wr: 0, note: '', done: `✓ Gift sent: ${[sp && `${sp} speaking`, wr && `${wr} writing`].filter(Boolean).join(' + ')} mock${sp + wr === 1 ? '' : 's'}. ${name} gets a notification, finds the gift in Xabarlar and opens it to add the mocks.` };
     } catch (error) {
-      state.giftOf[id] = { ...keep, error: error.message };
+      state.giftOf[key] = { ...keep, error: error.message };
     }
     render();
   }
+
+  // Capture phase: a 🎁 inside a clickable row must not also open/close the row.
+  root.addEventListener('click', event => {
+    const toggle = event.target.closest('[data-gift-toggle]');
+    if (toggle) {
+      event.preventDefault(); event.stopPropagation();
+      const key = toggle.dataset.giftToggle;
+      const on = !state.giftOpen?.[key];
+      state.giftOpen = { ...(state.giftOpen || {}), [key]: on };
+      // O'quvchilar: the 🎁 in the list opens that student's panel, where the gift box is.
+      const csId = key.startsWith('cs-') ? key.slice(3) : null;
+      if (csId && on && state.csSel !== csId) {
+        const row = root.querySelector(`[data-cs-sel="${CSS.escape(csId)}"]`);
+        if (row) return row.click();
+      }
+      return render();
+    }
+    const send = event.target.closest('[data-gift-send]');
+    if (send) { event.preventDefault(); event.stopPropagation(); sendGift(send); }
+  }, true);
 
   /** One student's speaking and writing results, under their row (click the name again to close). */
   function attemptsPanel(entry) {
@@ -2129,8 +2161,6 @@
       el.addEventListener('click', () => changeAccess(el.dataset.id, el.dataset.access)));
     root.querySelectorAll('[data-attempts-of]').forEach(el =>
       el.addEventListener('click', () => toggleAttempts(el.dataset.attemptsOf)));
-    root.querySelectorAll('[data-gift-send]').forEach(el =>
-      el.addEventListener('click', () => sendGift(el.dataset.giftSend)));
 
     root.querySelectorAll('[data-review-filter]').forEach(el =>
       el.addEventListener('click', () => loadReview({ only: el.dataset.reviewFilter })));
@@ -2368,7 +2398,7 @@
             const open = state.csSel === s.id;
             return `<tr class="cs-tr ${open ? 'is-open' : ''} ${s.active ? '' : 'is-paused'}" data-cs-sel="${esc(s.id)}" tabindex="0">
                 <td>${csFace(s, 36)}</td>
-                <td><strong>${esc(s.name)}</strong>${s.active ? '' : ' <span class="tag">paused</span>'}${familySize(s.family) > 1 ? ' <span class="cs-fam" title="Shares the parent code with brothers/sisters">family</span>' : ''}</td>
+                <td><strong>${esc(s.name)}</strong> ${giftToggle(`cs-${s.id}`)}${s.active ? '' : ' <span class="tag">paused</span>'}${familySize(s.family) > 1 ? ' <span class="cs-fam" title="Shares the parent code with brothers/sisters">family</span>' : ''}</td>
                 <td class="cs-num ${csBand(s.month.percent)}">${csPct(s.month.percent)}</td>
                 <td class="cs-num">${s.month.homeworks}</td>
                 <td class="cs-num">${s.attendance.lessons ? `${s.attendance.attended}/${s.attendance.lessons}${s.attendance.absent ? ` <span class="cs-miss">${s.attendance.absent} missed</span>` : ''}` : '<span class="muted">—</span>'}</td>
@@ -2898,6 +2928,11 @@
           <div class="muted" style="font-size:13px">${s.results.length} homework${s.results.length === 1 ? '' : 's'} in total · parents ${s.lastParentVisit ? `last opened ${esc(new Date(s.lastParentVisit).toLocaleDateString())}` : 'have not opened it yet'}</div>
         </div>
       </div>
+      ${state.giftOpen?.[`cs-${s.id}`] ? giftBox({
+        key: `cs-${s.id}`, name: s.name, email: s.accountEmail,
+        blocked: !s.accountEmail ? 'Link this student’s website account (Gmail) in the details below first — the gift goes to that account.'
+          : !s.accountFound ? `No website account with ${s.accountEmail} yet. Once the student signs up with it, you can send the gift.` : ''
+      }) : ''}
 
       <form class="cs-hw" id="cs-hw">
         <div class="cs-hw-top">
