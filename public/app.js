@@ -7079,8 +7079,47 @@
       if (bar && vr.phase === 'question' && vr.q) {
         bar.style.width = `${Math.max(0, (vr.deadline - Date.now()) / (vr.q.seconds * 10))}%`;
       }
+      // Watchdog for solo tests (2026-11-06): if the next word or the reveal
+      // doesn't arrive (live stream silently dead, phone just woke up), ask
+      // the server where the test is instead of sitting on a stale screen.
+      if (!vr.host && vr.solo && !document.hidden) {
+        const now = Date.now();
+        const stuckQuestion = vr.phase === 'question' && vr.deadline && now > vr.deadline + 3000;
+        const stuckReveal = vr.phase === 'reveal' && vr.revealAt && now - vr.revealAt > 4000;
+        if (stuckQuestion || stuckReveal) vrResync();
+      }
     }, 200);
   }
+
+  /** Where is my solo test? The server answers (and restarts a paused one). */
+  async function vrResync() {
+    if (vr.resyncing || Date.now() - (vr.lastResync || 0) < 3000) return;
+    if (!['question', 'reveal'].includes(vr.phase)) return;
+    vr.resyncing = true; vr.lastResync = Date.now();
+    try {
+      const out = await api('/games/vocabrace/resume', { method: 'POST' });
+      if (out?.room && ['question', 'reveal'].includes(vr.phase)) {
+        vrApplyRoomView(out.room);
+        if (vr.phase === 'finished-you') loadVocabHomework();
+        if (state.screen === 'vr') render();
+      }
+    } catch (error) {
+      if (/poyga topilmadi/.test(error.message || '') && ['question', 'reveal'].includes(vr.phase)) {
+        vr.phase = vr.hwRun ? 'hw-units' : 'choose';
+        state.error = 'Test to‘xtab qoldi — natija saqlanmadi. Iltimos, qaytadan boshlang.';
+        if (vr.hwRun) loadVocabHomework();
+        if (state.screen === 'vr') render();
+      }
+    }
+    vr.resyncing = false;
+  }
+
+  // Going to another app or locking the phone: the test waits after this word.
+  document.addEventListener('visibilitychange', () => {
+    if (!vr.active || vr.host || !vr.solo || !['question', 'reveal'].includes(vr.phase)) return;
+    if (document.hidden) api('/games/vocabrace/away', { method: 'POST' }).catch(() => {});
+    else { vr.lastResync = 0; vrResync(); }
+  });
 
   /** A personalized room snapshot from 'hello' — used to pick up where this browser left off after a reconnect. */
   function vrApplyRoomView(r) {
@@ -7124,7 +7163,7 @@
         vr.phase = 'question'; vr.q = data; vr.myPick = null; vr.reveal = null; vr.deadline = Date.now() + data.seconds * 1000;
         break;
       case 'reveal':
-        vr.phase = 'reveal'; vr.reveal = data; vr.score = data.score;
+        vr.phase = 'reveal'; vr.reveal = data; vr.score = data.score; vr.revealAt = Date.now();
         break;
       case 'finished-you':
         vr.phase = 'finished-you'; vr.score = data.score; vr.correct = data.correct; vr.total = data.total; vr.missed = data.missed || [];
@@ -7249,7 +7288,7 @@
       const out = await api('/games/vocabrace/answer', { method: 'POST', body: { i: asked, choice: i } });
       // Same reveal as the stream sends: shown even if the stream is reconnecting.
       if (out?.reveal && vr.q?.i === asked && vr.phase === 'question') {
-        vr.phase = 'reveal'; vr.reveal = out.reveal; vr.score = out.reveal.score;
+        vr.phase = 'reveal'; vr.reveal = out.reveal; vr.score = out.reveal.score; vr.revealAt = Date.now();
         if (state.screen === 'vr') render();
       }
     } catch (error) {
@@ -7259,6 +7298,10 @@
         vr.myPick = null;
         state.error = `Javob qabul qilinmadi: ${error.message}. Qaytadan bosing.`;
         if (state.screen === 'vr') render();
+      } else if (vr.solo && !vr.host) {
+        // The screen was behind the server (a word passed while away): catch up.
+        vr.lastResync = 0;
+        vrResync();
       }
     }
   }

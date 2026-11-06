@@ -182,6 +182,10 @@ router.post('/vocabrace/mistakes/review', handle(async (req, res) => {
   const out = vocabRace.solo(req.user.id, packKey, [], req.body?.style, { review: words });
   reply(res, out.ok ? { ...out, review: true } : out);
 }));
+// A solo test waits while the student is away (2026-11-06): the app says so
+// when it goes to the background, and asks where it is when it comes back.
+router.post('/vocabrace/away', handle(async (req, res) => reply(res, vocabRace.away(req.user.id))));
+router.post('/vocabrace/resume', handle(async (req, res) => reply(res, vocabRace.resume(req.user.id))));
 router.post('/vocabrace/style', handle(async (req, res) => reply(res, vocabRace.setStyle(req.user.id, req.body?.style))));
 router.post('/vocabrace/join', handle(async (req, res) => {
   await player(req.user.id);

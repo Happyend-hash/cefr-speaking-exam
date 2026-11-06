@@ -23,6 +23,11 @@ export const QUESTION_MS = 10000;
 export const NEXT_MS = 900; // brief pause after an answer before the next word
 export const VOCAB_RACE_STYLES = ['track', 'kart', 'rocket', 'animal'];
 const DROP_GRACE_MS = 10000;
+// A solo test (practice, homework, Xatolarim) waits for a student who went
+// away instead of marking every remaining word wrong (2026-11-06): a phone
+// that locked or left the app used to come back to a 0% homework result.
+export const IDLE_PAUSE_WORDS = 3;               // unanswered words in a row → pause (stream may be dead)
+const PAUSED_GIVE_UP_MS = 30 * 60 * 1000;        // a paused test nobody comes back to ends, unsaved
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
 const CODE_LEN = 4;
 const ROOM_TTL_MS = 3 * 60 * 60 * 1000; // rooms nobody ever starts are swept up
@@ -103,7 +108,9 @@ export class VocabRaceHub {
     if (c.dropTimer) { this.clearTimer(c.dropTimer); c.dropTimer = null; }
     this.clients.set(id, c);
     const room = this.roomOfUser(id);
+    const me = room?.players.get(id);
     this.send(id, 'hello', { you: id, room: room ? this.view(room, id) : null });
+    if (me?.paused && !room.over) this.resume(id);   // back after going away: the waiting word comes now
   }
 
   disconnect(id, stream) {
@@ -343,12 +350,59 @@ export class VocabRaceHub {
 
   questionView(player) {
     const q = player.qs[player.cursor];
-    return { i: player.cursor, total: player.qs.length, kicker: q.kicker, prompt: q.prompt, pos: q.pos, options: q.options, seconds: QUESTION_MS / 1000 };
+    // Time left on this word (a resync mid-word must not hand out a fresh 10 s).
+    const left = player.paused ? QUESTION_MS : Math.max(1000, player.askedAt + QUESTION_MS - this.now());
+    return { i: player.cursor, total: player.qs.length, kicker: q.kicker, prompt: q.prompt, pos: q.pos, options: q.options, seconds: Math.round(left / 1000) };
+  }
+
+  connected(id) {
+    return Boolean(this.clients.get(String(id))?.streams?.size);
+  }
+
+  /** Should this solo player's test wait instead of asking the next word? */
+  shouldPause(room, player) {
+    if (!room.solo) return false;                 // a teacher's class race keeps everyone on the clock
+    const idle = player.idle || 0;
+    return Boolean(player.away) || idle >= IDLE_PAUSE_WORDS || (idle >= 1 && !this.connected(player.user.id));
+  }
+
+  pause(room, player, next) {
+    player.paused = true;
+    player.cursor = next;
+    if (player.timer) { this.clearTimer(player.timer); player.timer = null; }
+    if (player.giveUp) this.clearTimer(player.giveUp);
+    player.giveUp = this.setTimer(() => { if (player.paused && !room.over) this.finish(room); }, PAUSED_GIVE_UP_MS);
+  }
+
+  /** The student is back (or asked where they are): carry on from the waiting word. */
+  resume(userId) {
+    userId = String(userId);
+    const room = this.roomOfUser(userId);
+    const player = room?.players.get(userId);
+    if (!room || !player) return { ok: false, reason: 'poyga topilmadi' };
+    player.away = false;
+    if (player.paused && !room.over && !player.finished) {
+      player.paused = false;
+      player.idle = 0;
+      if (player.giveUp) { this.clearTimer(player.giveUp); player.giveUp = null; }
+      this.ask(room, player, player.cursor);
+    }
+    return { ok: true, room: this.view(room, userId) };
+  }
+
+  /** The app went to the background: finish this word, then wait. */
+  away(userId) {
+    userId = String(userId);
+    const room = this.roomOfUser(userId);
+    const player = room?.players.get(userId);
+    if (room?.solo && player && !player.finished) player.away = true;
+    return { ok: true };
   }
 
   ask(room, player, i) {
     if (room.over || player.finished) return;
     player.cursor = i;
+    player.paused = false;
     player.askedAt = this.now();
     this.send(player.user.id, 'question', this.questionView(player));
     player.timer = this.setTimer(() => this.timeout(room.code, player.user.id, i), QUESTION_MS + 500);
@@ -357,7 +411,8 @@ export class VocabRaceHub {
   timeout(code, userId, i) {
     const room = this.rooms.get(code);
     const player = room?.players.get(String(userId));
-    if (!room || !player || player.cursor !== i || player.finished) return;
+    if (!room || !player || player.cursor !== i || player.finished || player.paused) return;
+    player.idle = (player.idle || 0) + 1;
     this.settle(room, player, null, QUESTION_MS);
   }
 
@@ -366,6 +421,7 @@ export class VocabRaceHub {
     const room = this.roomOfUser(userId);
     const player = room?.players.get(userId);
     if (!room || !player || player.finished) return { ok: false, reason: 'poyga topilmadi' };
+    if (player.paused) return { ok: false, reason: 'kech qoldingiz' };
     if (Number(i) !== player.cursor) return { ok: false, reason: 'kech qoldingiz' };
     const ms = this.now() - player.askedAt;
     if (ms > QUESTION_MS + 500) return { ok: false, reason: 'vaqt tugadi' };
@@ -373,6 +429,9 @@ export class VocabRaceHub {
     const pick = Number(choice);
     const q = player.qs[i];
     if (!Number.isInteger(pick) || pick < 0 || pick >= q.options.length) return { ok: false, reason: 'noto’g’ri tanlov' };
+    player.idle = 0;
+    player.answered = (player.answered || 0) + 1;
+    player.away = false;
     const reveal = this.settle(room, player, pick, ms);
     // The reveal comes back in the reply as well as over the stream, so a
     // phone whose stream is reconnecting still sees whether it was right.
@@ -415,6 +474,7 @@ export class VocabRaceHub {
     this.setTimer(() => {
       if (room.over) return;
       if (next >= player.qs.length) this.finishPlayer(room, player);
+      else if (this.shouldPause(room, player)) this.pause(room, player, next);
       else this.ask(room, player, next);
     }, NEXT_MS);
     return reveal;
@@ -442,11 +502,18 @@ export class VocabRaceHub {
   finishPlayer(room, player) {
     player.finished = true;
     player.finishedAt = this.now();
-    const homework = room.homework ? { ...room.homework, ...this.homeworkResult(player) } : null;
+    if (player.giveUp) { this.clearTimer(player.giveUp); player.giveUp = null; }
+    // A homework test where not a single word was answered is not a result:
+    // nothing is saved, so it can never replace a real one with 0%.
+    const unanswered = room.homework && !(player.answered > 0);
+    const homework = room.homework && !unanswered ? { ...room.homework, ...this.homeworkResult(player) } : null;
     this.send(player.user.id, 'finished-you', {
       score: player.score, correct: player.correct, total: player.qs.length, missed: player.missed,
-      homework: homework ? { percent: homework.percent, kind: homework.kind, label: homework.label, saved: null } : null
+      homework: room.homework ? { percent: homework ? homework.percent : 0, kind: room.homework.kind, label: room.homework.label, saved: null } : null
     });
+    if (unanswered) {
+      this.send(player.user.id, 'homework-saved', { ok: false, reason: 'Hech bir so‘zga javob berilmadi — natija saqlanmadi. Testni qaytadan topshiring.' });
+    }
     if (homework) {
       // Saved by the route (CourseStudent); the student is told when it is in.
       Promise.resolve(this.onHomework({ userId: player.user.id, homework }))

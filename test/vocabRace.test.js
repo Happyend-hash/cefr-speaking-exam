@@ -376,14 +376,91 @@ test('a solo homework accepts answers even when the live stream is not connected
   hub.connect({ id: 'kid' }, s);
   assert.equal(s.last('hello').room?.code, out.code, 'a late stream finds the running test');
   hub.disconnect('kid', s);
-  c.advance(30_000 - NEXT_MS * 0);
-  // The word asked meanwhile timed out; the test carried on to the next one.
+  c.advance(30_000);
+  // The word asked meanwhile timed out; since 2026-11-06 the test then waits.
   const player = hub.rooms.get(out.code).players.get('kid');
-  if (!player.finished) {
-    const r = hub.answer('kid', player.cursor, q[player.cursor].answer);
-    assert.equal(r.ok, true, 'answers after a long drop are still accepted');
-  }
-  c.advance(60_000);
+  assert.equal(player.paused, true, 'a phone that went away is waited for');
+  assert.equal(saved.length, 0, 'nothing saved while waiting');
+  // The phone comes back: the stream reconnects and the waiting word is asked.
+  const s2 = stream();
+  hub.connect({ id: 'kid' }, s2);
+  assert.equal(s2.last('question')?.i, player.cursor);
+  const r = hub.answer('kid', player.cursor, q[player.cursor].answer);
+  assert.equal(r.ok, true, 'answers after a long drop are still accepted');
+  c.advance(NEXT_MS);
+  while (!player.finished) { hub.answer('kid', player.cursor, q[player.cursor].answer); c.advance(NEXT_MS); }
+  await new Promise(r2 => setImmediate(r2));
   assert.equal(saved.length, 1);
   assert.ok(saved[0].homework.percent > 0, 'the right answers count — not 0%');
+});
+
+// The zero results of 2026-10-31 … 11-05: a homework test kept marking words
+// wrong after the student's phone locked or left the app, and saved 0% over
+// the real result. Now a solo test waits, and an unanswered one is never saved.
+test('a solo test waits for a student who went away, and resumes where it stopped', () => {
+  const c = clock();
+  const hub = new VocabRaceHub({ packs: PACKS, random: () => 0, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer });
+  const s = stream();
+  hub.connect({ id: 'kid' }, s);
+  const out = hub.solo('kid', 'test-pack', ['1', '2'], 'track');
+  const player = hub.rooms.get(out.code).players.get('kid');
+  const q = player.qs;
+  hub.answer('kid', 0, q[0].answer);
+  hub.away('kid');                                  // the app went to the background after word 1
+  c.advance(NEXT_MS);
+  assert.equal(player.paused, true, 'the next word is not asked while away');
+  assert.equal(player.cursor, 1);
+  c.advance(10 * 60_000);
+  assert.equal(player.cursor, 1, 'no words pass while away');
+  assert.equal(player.results.length, 1, 'nothing was marked wrong meanwhile');
+  const back = hub.resume('kid');
+  assert.equal(back.ok, true);
+  assert.equal(back.room.you.i, 1, 'the waiting word comes back');
+  assert.equal(hub.answer('kid', 1, q[1].answer).ok, true);
+
+  // Going away in the middle of a word: that word runs out, then the test waits.
+  c.advance(NEXT_MS);
+  hub.away('kid');
+  c.advance(QUESTION_MS + 500 + NEXT_MS);
+  assert.equal(player.paused, true);
+  assert.equal(player.cursor, 3);
+});
+
+test('three unanswered words in a row pause a solo test even with the stream up; a class race never pauses', () => {
+  const c = clock();
+  const hub = new VocabRaceHub({ packs: PACKS, random: () => 0, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer });
+  hub.connect({ id: 'kid' }, stream());
+  const out = hub.solo('kid', 'test-pack', ['1', '2'], 'track');
+  const player = hub.rooms.get(out.code).players.get('kid');
+  for (let k = 0; k < 3; k += 1) c.advance(QUESTION_MS + 500 + NEXT_MS);
+  assert.equal(player.paused, true);
+  assert.equal(player.cursor, 3);
+
+  const t = new VocabRaceHub({ packs: PACKS, random: () => 0, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer });
+  t.connect({ id: 'teacher' }, stream());
+  t.connect({ id: 'a' }, stream());
+  const room = t.create('teacher', 'test-pack', ['1', '2']);
+  t.join('a', room.code);
+  t.start('teacher');
+  for (let k = 0; k < 5; k += 1) c.advance(QUESTION_MS + 500 + NEXT_MS);
+  assert.equal(t.rooms.get(room.code).players.get('a').finished, true, 'the race runs on the clock');
+});
+
+test('a homework test with no word answered saves nothing (never a 0% over a real result)', async () => {
+  const c = clock();
+  const saved = [];
+  const hub = new VocabRaceHub({ packs: PACKS, random: () => 0, now: c.now, setTimer: c.setTimer, clearTimer: c.clearTimer, onHomework: async h => saved.push(h) });
+  const s = stream();
+  hub.connect({ id: 'kid' }, s);
+  const out = hub.solo('kid', 'test-pack', ['1', '2'], 'track', { homework: { kind: 'unit', label: 'Unit 1', courseStudentId: 'x' } });
+  const player = hub.rooms.get(out.code).players.get('kid');
+  // Force the end with no answers (e.g. it was paused, then resumed and left to run).
+  player.cursor = player.qs.length - 1;
+  hub.timeout(out.code, 'kid', player.cursor);
+  c.advance(NEXT_MS);
+  await new Promise(r => setImmediate(r));
+  assert.equal(player.finished, true);
+  assert.equal(saved.length, 0);
+  assert.equal(s.last('homework-saved')?.ok, false);
+  assert.equal(s.last('finished-you')?.homework?.label, 'Unit 1', 'the student still sees which homework it was');
 });
