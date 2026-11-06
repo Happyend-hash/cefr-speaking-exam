@@ -721,3 +721,10 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .na-aud-btn span { font-size: 13px; color: var(--ink-soft); }
 .na-aud-btn.is-on { border-color: var(--indigo-600); background: var(--indigo-50); }
 .na-thumb { display: block; width: 160px; max-height: 200px; object-fit: cover; border-radius: 10px; margin: 4px 0; background: #f1f5f9; }
+
+/* 🎁 Gift mocks, inside a student's panel (2026-11-06) */
+.acc-gift { margin-top: 10px; padding: 12px 14px; border: 1px solid #f3d27a; border-radius: 12px; background: linear-gradient(120deg, #fff8e1, transparent 80%); }
+.acc-gift-head { margin-bottom: 8px; font-size: 14px; }
+.acc-gift-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-soft, #64748b); }
+.acc-gift-field input[type="number"] { width: 72px; }
+.acc-gift-ok { margin-top: 8px; font-size: 13px; color: #15803d; font-weight: 600; }

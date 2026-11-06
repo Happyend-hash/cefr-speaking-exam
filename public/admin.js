@@ -690,7 +690,7 @@
       <div class="row" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="min-width:220px">
           <button class="acc-name" data-attempts-of="${esc(s.id)}" aria-expanded="${state.attemptsOf[s.id] ? 'true' : 'false'}"
-                  title="Show this student's speaking and writing results">
+                  title="Show this student's results and the 🎁 gift option">
             <strong>${esc(s.name || s.email)}</strong> <span class="acc-caret">${state.attemptsOf[s.id] ? '▾' : '▸'}</span>
           </button> ${tags}
           <div class="muted" style="font-size:13px">${esc(s.email)}</div>
@@ -728,8 +728,56 @@
         <button class="btn btn-ghost btn-sm" data-access="premium" data-id="${esc(s.id)}" title="30 more days of Premium, without adding mocks">+30 days</button>
         ${s.premiumUntil ? `<button class="btn btn-ghost btn-sm" data-access="premium-off" data-id="${esc(s.id)}">End</button>` : ''}
       </div>
-      ${state.attemptsOf[s.id] ? attemptsPanel(state.attemptsOf[s.id]) : ''}
+      ${state.attemptsOf[s.id] ? giftBox(s) + attemptsPanel(state.attemptsOf[s.id]) : ''}
     </div>`;
+  }
+
+  // 🎁 Gift mocks (2026-11-06): in every student's panel. Sent as a gift in
+  // the student's Xabarlar (with a phone notification); the student opens it
+  // and the mocks are added — the same gift as ✉ Message → gift.
+  function giftBox(s) {
+    const g = state.giftOf?.[s.id] || {};
+    const id = esc(s.id);
+    return `<div class="acc-gift">
+      <div class="acc-gift-head">🎁 <b>Gift mocks to ${esc(s.name || s.email)}</b></div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label class="acc-gift-field">Speaking<input id="gift-sp-${id}" type="number" min="0" max="10" value="${esc(g.sp ?? 1)}"></label>
+        <label class="acc-gift-field">Writing<input id="gift-wr-${id}" type="number" min="0" max="10" value="${esc(g.wr ?? 0)}"></label>
+        <label class="acc-gift-field" style="flex:1;min-width:180px">Note to the student (optional)<input id="gift-note-${id}" type="text" maxlength="300" placeholder="Masalan: Darsdagi faolligingiz uchun!" value="${esc(g.note || '')}"></label>
+        <button class="btn btn-sm" data-gift-send="${id}" ${g.busy ? 'disabled' : ''}>${g.busy ? 'Sending…' : 'Send gift 🎁'}</button>
+      </div>
+      ${g.done ? `<p class="acc-gift-ok">${esc(g.done)}</p>` : ''}
+      ${g.error ? `<p class="error" style="font-size:13px;margin-top:6px">${esc(g.error)}</p>` : ''}
+    </div>`;
+  }
+
+  async function sendGift(id) {
+    const s = (state.students?.students || []).find(x => x.id === id) || {};
+    const val = k => document.getElementById(`gift-${k}-${id}`)?.value ?? '';
+    const sp = Number(val('sp')) || 0;
+    const wr = Number(val('wr')) || 0;
+    const note = String(val('note')).trim();
+    state.giftOf = state.giftOf || {};
+    const keep = { sp, wr, note };
+    if (!Number.isInteger(sp) || !Number.isInteger(wr) || sp < 0 || wr < 0 || sp > 10 || wr > 10) {
+      state.giftOf[id] = { ...keep, error: 'Give 0 to 10 mocks of each kind.' }; return render();
+    }
+    if (!sp && !wr) { state.giftOf[id] = { ...keep, error: 'Choose at least one speaking or writing mock.' }; return render(); }
+    state.giftOf[id] = { ...keep, busy: true };
+    render();
+    const what = [sp ? `${sp} ta speaking` : '', wr ? `${wr} ta writing` : ''].filter(Boolean).join(' va ');
+    const body = note || `English Hub sizga ${what} mock sovg‘a qildi. Sovg‘ani oching — mocklar hisobingizga qo‘shiladi.`;
+    try {
+      await api('/admin/messages', { method: 'POST', body: {
+        to: [id], title: 'Sizga sovg‘a! 🎁',
+        html: `<p>${esc(body)}</p>`,
+        gift: { speaking: sp, writing: wr }
+      } });
+      state.giftOf[id] = { sp: 1, wr: 0, note: '', done: `✓ Gift sent: ${[sp && `${sp} speaking`, wr && `${wr} writing`].filter(Boolean).join(' + ')} mock${sp + wr === 1 ? '' : 's'}. ${s.name || 'The student'} gets a notification, finds the gift in Xabarlar and opens it to add the mocks.` };
+    } catch (error) {
+      state.giftOf[id] = { ...keep, error: error.message };
+    }
+    render();
   }
 
   /** One student's speaking and writing results, under their row (click the name again to close). */
@@ -2081,6 +2129,8 @@
       el.addEventListener('click', () => changeAccess(el.dataset.id, el.dataset.access)));
     root.querySelectorAll('[data-attempts-of]').forEach(el =>
       el.addEventListener('click', () => toggleAttempts(el.dataset.attemptsOf)));
+    root.querySelectorAll('[data-gift-send]').forEach(el =>
+      el.addEventListener('click', () => sendGift(el.dataset.giftSend)));
 
     root.querySelectorAll('[data-review-filter]').forEach(el =>
       el.addEventListener('click', () => loadReview({ only: el.dataset.reviewFilter })));
