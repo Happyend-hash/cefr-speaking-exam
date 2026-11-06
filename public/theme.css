@@ -492,3 +492,21 @@ input[type="search"], input[type="number"], input[type="date"], select, textarea
 .vr-mist-done { color: #15803d; font-weight: 800; }
 :root[data-theme="night"] .vr-mist-done { color: #86efac; }
 .vr-mist-word { grid-template-columns: minmax(0, 1fr) auto; }
+
+/* ← Orqaga: one step back (2026-11-06) */
+.nav-back {
+  flex: none; width: 40px; height: 40px; margin-right: 10px; padding: 0; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
+  transition: background .15s, border-color .15s, color .15s, transform .1s;
+}
+.nav-back svg { width: 20px; height: 20px; stroke-width: 2.4; }
+.nav-back:hover { background: var(--gold-tint); border-color: var(--gold-line); color: var(--gold-text); }
+.nav-back:active { transform: scale(.94); }
+.nav-back:focus-visible { outline: 2px solid var(--gold-text); outline-offset: 2px; }
+:root[data-theme="night"] .nav-back { background: rgba(255, 255, 255, .06); border-color: rgba(255, 255, 255, .12); color: #eef0ff; }
+@media (max-width: 640px) {
+  .nav-student.has-back .brand .logo-words { display: none; }
+  .nav-back { width: 38px; height: 38px; margin-right: 8px; }
+}

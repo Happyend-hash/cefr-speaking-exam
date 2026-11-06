@@ -697,6 +697,7 @@
   }
 
   async function openResult(resultId) {
+    nav.lastResultId = resultId;
     // The details panel closes with the result it belonged to: opening another
     // attempt should show that attempt's headline, not inherit the last one's
     // expanded state.
@@ -7892,6 +7893,7 @@
    * they were already there.
    */
   function render() {
+    navTrack();
     const kept = [...root.querySelectorAll('[data-keep][id]')].map(el => ({
       id: el.id,
       value: el.value,
@@ -7958,6 +7960,159 @@
    * one check, so gating it here is what stops any of them from being a
    * side door past a gate that is otherwise enforced.
    */
+  // ------------------------------------------------------------ Orqaga (back)
+  //
+  // One step back, like any app (Jamshid, 2026-11-06). The site is one page,
+  // so the phone's Back button (and the browser's) used to leave it — in the
+  // Android app that meant straight out to the start. Now every place a
+  // student moves to is remembered, Back returns to the place before it, and
+  // a round ← arrow at the top does the same on every page that is not one of
+  // the five main tabs. Back first closes whatever is open on top (a photo, a
+  // menu, a sheet, the emoji panel), and never leaves a running exam.
+
+  const nav = { stack: [], current: null, restoring: null, ignorePops: 0, backIntent: 0, lastResultId: null };
+  const NAV_SKIP = new Set(['landing', 'login', 'signup', 'verify-email', 'code-login', 'forgot-password', 'exam', 'submitted', 'writing-exam', 'briefing']);
+  const VR_RUN = new Set(['question', 'reveal', 'waiting', 'lobby', 'live', 'setup', 'podium', 'finished-you']);
+
+  function navPlace() {
+    const s = state.screen;
+    const p = { screen: s };
+    if (s === 'mocks') p.folder = state.folder || 'speaking';
+    else if (s === 'parts') p.part = state.partsPart ?? null;
+    else if (s === 'result') p.id = nav.lastResultId;
+    else if (s === 'writing-result') p.id = state.writingResult?.id || nav.writingId || null;
+    else if (s === 'speak') { p.tab = ch.tab; if (ch.tab === 'chat' && ch.view === 'room' && ch.room) p.room = ch.room; }
+    else if (s === 'vr') { p.phase = VR_RUN.has(vr.phase) ? 'run' : vr.phase; if (vr.phase === 'mist-book') p.book = vr.mistBook; }
+    else if (s === 'inbox') p.sel = state.inboxSel || null;
+    else if (s === 'dm') p.id = so.withId;
+    else if (s === 'person') p.id = so.personId;
+    p.key = JSON.stringify(p);
+    return p;
+  }
+
+  const navIsRoot = p => ['dashboard', 'social', 'rank', 'profile', 'writing'].includes(p.screen)
+    || (p.screen === 'mocks' && p.folder === 'speaking')
+    || (p.screen === 'speak' && !p.room);
+  // The chat screens (a Do'stlar chat, a club chat room) have their own ← in their header.
+  const navShowsArrow = () => Boolean(state.user) && isStudentShell() && canLeave()
+    && !NAV_SKIP.has(state.screen) && state.screen !== 'dm' && !navIsRoot(navPlace()) && !navPlace().room;
+
+  /** Called on every render: a new place is remembered (and a history entry made for the phone's Back). */
+  function navTrack() {
+    if (!state.user || !isStudentShell()) { nav.stack = []; nav.current = null; return; }
+    const cur = navPlace();
+    if (!nav.current) { nav.current = cur; try { history.replaceState({ eh: 0 }, ''); } catch { /* fine */ } return; }
+    if (cur.key === nav.current.key) return;
+    if (nav.restoring) {
+      if (cur.screen === nav.restoring.screen || Date.now() > nav.restoring.until) nav.restoring = null;
+      nav.current = cur;
+      return;
+    }
+    // An in-page "← back" link that leads exactly where the student came from counts as Back.
+    const top = nav.stack[nav.stack.length - 1];
+    if (nav.backIntent && top && top.key === cur.key) {
+      nav.backIntent = 0;
+      nav.stack.pop();
+      nav.current = cur;
+      nav.ignorePops += 1;
+      try { history.back(); } catch { nav.ignorePops -= 1; }
+      return;
+    }
+    nav.backIntent = 0;
+    if (!NAV_SKIP.has(nav.current.screen)) {
+      nav.stack.push(nav.current);
+      if (nav.stack.length > 60) nav.stack.shift();
+      try { history.pushState({ eh: nav.stack.length }, ''); } catch { /* fine */ }
+    }
+    nav.current = cur;
+  }
+
+  /** Whatever is open on top of the page; true if something was closed. */
+  function navCloseOverlay() {
+    if (emo.el) { closeEmoji(); return true; }
+    if (so.viewer || so.zoom || so.compose || so.confirm || so.edit || so.menu || so.msgMenu) {
+      Object.assign(so, { viewer: null, zoom: null, compose: null, confirm: null, edit: null, menu: null, msgMenu: null });
+      render(); return true;
+    }
+    if (wl.zoom) { wl.zoom = null; render(); return true; }
+    if (state.openAttempt) { setState({ openAttempt: null }); return true; }
+    if (state.criteriaOpen) { setState({ criteriaOpen: false }); return true; }
+    return false;
+  }
+
+  function navRestore(p) {
+    nav.restoring = { screen: p.screen, until: Date.now() + 6000 };
+    if (state.screen === 'writing-exam') saveWritingNow();
+    switch (p.screen) {
+      case 'dashboard': return loadDashboard();
+      case 'mocks': return go('mocks', { folder: p.folder || 'speaking' });
+      case 'parts': return openParts(p.part);
+      case 'result': return p.id ? openResult(p.id) : go('results');
+      case 'writing': return loadWritingHome();
+      case 'writing-check': return openWritingCheck();
+      case 'writing-result': return p.id ? openWritingResult(p.id) : loadWritingHome();
+      case 'speak':
+        if (state.screen === 'speak' && ch.view === 'room' && !p.room) { backToRooms(); return render(); }
+        if (p.room) { openVoice('chat'); return openChatRoom(p.room); }
+        return openVoice(p.tab);
+      case 'duel': return openDuel();
+      case 'vr':
+        openVocabRace();
+        if (p.phase === 'mist-book' && p.book) return openMistakeBook(p.book);
+        if (['hw-units', 'solo-setup', 'mist', 'join'].includes(p.phase)) {
+          vr.phase = p.phase;
+          if (p.phase === 'solo-setup' && !vr.packsList) loadVocabRacePacks();
+          return render();
+        }
+        return undefined;
+      case 'rank': return openRank();
+      case 'profile': return openProfile();
+      case 'topup': return openTopup();
+      case 'install': return openInstall();
+      case 'inbox': return openInbox(p.sel || null);
+      case 'support': return openSupport();
+      case 'wall': return openWall();
+      case 'my-results': return openMyResults();
+      case 'social': return openSocial();
+      case 'dm': return p.id ? openDm(p.id) : openSocial('chats');
+      case 'person': return p.id ? openPerson(p.id) : openSocial();
+      default: return go(p.screen);
+    }
+  }
+
+  /** The phone's Back (or the browser's). */
+  window.addEventListener('popstate', () => {
+    if (nav.ignorePops > 0) { nav.ignorePops -= 1; return; }
+    if (!state.user || !isStudentShell()) return;
+    const stay = () => { try { history.pushState({ eh: nav.stack.length }, ''); } catch { /* fine */ } };
+    if (navCloseOverlay()) return stay();
+    if (!canLeave()) { stay(); setState({ notice: 'Imtihon davom etmoqda — javobni tugating.' }); return; }
+    const prev = nav.stack.pop();
+    if (prev) return navRestore(prev);
+    // Nothing remembered (e.g. opened from a notification): Home first, then out.
+    if (state.screen !== 'dashboard') { nav.restoring = { screen: 'dashboard', until: Date.now() + 6000 }; loadDashboard(); }
+  });
+
+  /** The ← arrow at the top. */
+  function navBack() {
+    if (navCloseOverlay()) return;
+    if (!canLeave()) return;
+    if (nav.stack.length) { try { history.back(); return; } catch { /* below */ } }
+    const prev = nav.stack.pop();
+    if (prev) return navRestore(prev);
+    nav.restoring = { screen: 'dashboard', until: Date.now() + 6000 };
+    loadDashboard();
+  }
+
+  // In-page "← …" links (Profil, Xabarlar, Orqaga…) are Back when they lead where the student came from.
+  root.addEventListener('click', event => {
+    const el = event.target.closest('[data-nav-back], .crumb, .cx-back, [data-so="back-chats"], [data-so="back-social"], [data-inbox-back]');
+    if (!el || !root.contains(el)) return;
+    if (el.hasAttribute('data-nav-back')) { event.preventDefault(); event.stopPropagation(); navBack(); return; }
+    nav.backIntent = 1;
+    setTimeout(() => { nav.backIntent = 0; }, 3000);
+  }, true);
+
   function canLeave() {
     if (state.screen === 'exam') return !['prep', 'answer', 'saving'].includes(run.phase);
     if (state.screen === 'verify-email') return !needsVerification();
@@ -8072,7 +8227,9 @@
     const me = { name: pr.state?.name || state.user.firstName || '', premium: pr.state?.active, avatar: pr.state?.avatar };
 
     const pageTitle = tab && tab !== 'home' ? TABS.find(t => t.id === tab).label : '';
-    return `<nav class="nav nav-student ${pageTitle ? 'has-title' : ''}">
+    const back = navShowsArrow();
+    return `<nav class="nav nav-student ${pageTitle ? 'has-title' : ''} ${back ? 'has-back' : ''}">
+      ${back ? `<button class="nav-back" data-nav-back aria-label="Orqaga" title="Orqaga">${icon('left')}</button>` : ''}
       ${brandMarkup()}
       ${pageTitle ? `<span class="nav-title">${pageTitle}</span>` : ''}
       <div class="nav-links nav-desktop">${links}</div>
