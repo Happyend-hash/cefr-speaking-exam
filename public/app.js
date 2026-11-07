@@ -8369,6 +8369,7 @@
         <h2 style="margin-bottom:18px">${isSignup ? 'Create your account' : 'Welcome back'}</h2>
         ${google.clientId ? `
         <div class="google-sign">
+          ${inAppBrowser() ? `<p class="google-inapp">⚠️ Telegram / Instagram ichida Google orqali kirish ishlamaydi. Yuqoridagi <b>⋮</b> menyusidan <b>«Brauzerda ochish»</b> (Chrome) ni tanlang yoki pochta va parol bilan kiring.</p>` : ''}
           <div id="google-btn" class="google-btn" aria-label="Sign in with Google"></div>
           <div class="auth-or"><span>${isSignup ? 'or sign up with email' : 'or sign in with email'}</span></div>
         </div>` : ''}
@@ -11307,6 +11308,10 @@
    */
   const google = { clientId: '', script: null };
 
+  /** Messaging apps' own browsers, where Google does not allow signing in. */
+  const inAppBrowser = () => /Telegram|FBAN|FBAV|FB_IAB|Instagram|Line\/|; wv\)|WebView/i.test(navigator.userAgent || '')
+    && !document.referrer.startsWith('android-app://uz.englishhub');
+
   async function loadGoogleConfig() {
     try {
       const cfg = await api('/auth/google/config');
@@ -11340,7 +11345,15 @@
         callback: onGoogleCredential,
         ux_mode: 'popup',
         context: state.screen === 'signup' ? 'signup' : 'signin',
-        itp_support: true
+        itp_support: true,
+        // 2026-11-07: students got stuck on a white Google page after choosing
+        // their Gmail — the popup could not hand the sign-in back (the Android
+        // app and some phones open it as a separate tab). With FedCM, Chrome
+        // (computer M125+, Android M128+, and so the app) shows its own account
+        // chooser on top of the page: no popup window at all. Other browsers
+        // keep the popup.
+        use_fedcm_for_button: true,
+        button_auto_select: false
       });
       g.accounts.id.renderButton(box, {
         type: 'standard', theme: 'outline', size: 'large', shape: 'pill',
