@@ -329,6 +329,9 @@
     { key: 'news', icon: 'doc', tone: 'violet', title: 'Site news', desc: 'News on the students’ Home screen: changes, updates, events and results.',
       body: () => newsAdminCard(),
       meta: () => (state.newsAdmin ? `${plural(state.newsAdmin.news.length, 'item')} · ${state.newsAdmin.audience === 'all' ? 'every student' : 'test profile only'}` : 'Sayt yangiliklari') },
+    { key: 'materials', icon: 'doc', tone: 'green', title: 'Materials', desc: 'Study files for students: Speaking, Writing, Reading, Listening and more.',
+      body: () => materialsAdminCard(),
+      meta: () => (state.mtAdmin ? `${plural(state.mtAdmin.items.length, 'material')} · ${state.mtAdmin.items.reduce((n, i) => n + i.views, 0)} opens` : 'PDFs, Word files, audio and links') },
     { key: 'wall', icon: 'star', tone: 'sky', title: 'Results wall', desc: 'Reviews you add, and exam certificates students upload — approve them for the public page.',
       body: () => wallCard(),
       badge: () => state.wall?.pending || 0,
@@ -1121,6 +1124,158 @@
     catch (error) { state.newsError = error.message; }
     state.newsLoading = false;
     render();
+  }
+
+  // ------------------------------------------------------------ Materials
+  //
+  // "Materiallar" for students (2026-11-07): upload a file or paste a link,
+  // file it in a folder (Speaking, Writing, Reading, Listening …) and a
+  // sub-folder, and students find it under Testlar → Materiallar.
+
+  const MT_KIND_ICON = { pdf: '📄', word: '📝', slides: '📊', sheet: '📈', image: '🖼', audio: '🎧', video: '🎬', link: '🔗' };
+  const mtBytes = b => (!b ? '' : b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+
+  async function loadMaterialsAdmin() {
+    state.mtLoading = true;
+    try { state.mtAdmin = await api('/admin/materials'); state.mtError = ''; }
+    catch (error) { state.mtError = error.message; }
+    state.mtLoading = false;
+    render();
+  }
+
+  function materialsAdminCard() {
+    if (!state.mtAdmin && !state.mtLoading && !state.mtError) loadMaterialsAdmin();
+    const d = state.mtAdmin;
+    if (!d) return `<div class="card" style="margin-top:20px">${state.mtError ? `<p class="error">${esc(state.mtError)}</p>` : '<p class="muted">Loading…</p>'}</div>`;
+    const f = state.mtForm;
+    const folderOf = key => d.folders.find(x => x.key === key) || d.folders[0];
+    const sectionsFor = key => [...new Set([...(folderOf(key).sections || []), ...d.items.filter(i => i.folder === key).map(i => i.section).filter(Boolean)])];
+    const levelSel = (id, v) => `<select id="${id}">${d.levels.map(l => `<option value="${l}" ${v === l ? 'selected' : ''}>${l === 'all' ? 'All levels' : l}</option>`).join('')}</select>`;
+    const form = f ? `<form class="wa-form mt-form" id="mt-form">
+        <h3 style="font-size:16px">Add a material</h3>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <label class="field" style="width:200px"><span>Folder</span><select id="mf-folder">${d.folders.map(x => `<option value="${x.key}" ${f.folder === x.key ? 'selected' : ''}>${x.icon} ${esc(x.title)}</option>`).join('')}</select></label>
+          <label class="field" style="flex:1;min-width:200px"><span>Sub-folder (choose or type a new one)</span>
+            <input id="mf-section" list="mf-sections" maxlength="60" value="${esc(f.section || '')}" placeholder="e.g. Part 3">
+            <datalist id="mf-sections">${sectionsFor(f.folder).map(s => `<option value="${esc(s)}">`).join('')}</datalist></label>
+          <label class="field" style="width:140px"><span>Level</span>${levelSel('mf-level', f.level || 'all')}</label>
+        </div>
+        <label class="field"><span>Title</span><input id="mf-title" maxlength="140" required value="${esc(f.title || '')}" placeholder="e.g. Part 3 — 50 useful linking phrases"></label>
+        <label class="field"><span>Short description (optional)</span><input id="mf-desc" maxlength="400" value="${esc(f.description || '')}"></label>
+        <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <label class="field" style="flex:1;min-width:220px"><span>File — PDF, Word, PowerPoint, Excel, picture (20 MB) · MP3/M4A audio, MP4 video (30 MB)</span>
+            <input type="file" id="mf-file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,image/*,.mp3,.m4a,.ogg,.wav,.mp4"></label>
+          <span class="muted" style="padding-bottom:10px">or</span>
+          <label class="field" style="flex:1;min-width:220px"><span>Link (YouTube, Telegram post, website)</span><input id="mf-url" type="url" placeholder="https://…" value="${esc(f.url || '')}"></label>
+        </div>
+        <div class="row" style="gap:16px;flex-wrap:wrap">
+          <label class="muted"><input type="checkbox" id="mf-premium" ${f.premium ? 'checked' : ''}> 👑 Premium students only</label>
+          <label class="muted"><input type="checkbox" id="mf-hidden" ${f.hidden ? 'checked' : ''}> Hidden for now</label>
+          <label class="muted"><input type="checkbox" id="mf-notify" ${f.notify ? 'checked' : ''}> 🔔 Notify students</label>
+        </div>
+        <div class="row" style="gap:8px"><button class="btn btn-sm" type="submit" ${state.mtBusy ? 'disabled' : ''}>${state.mtBusy ? 'Uploading…' : 'Add material'}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-mt-act="cancel">Cancel</button></div>
+      </form>` : `<button class="btn btn-sm" style="margin-top:12px" data-mt-act="new">＋ Add material</button>`;
+
+    const row = i => {
+      const editing = state.mtEdit === i.id;
+      const meta = [i.kind === 'link' ? 'Link' : (i.ext || '').toUpperCase(), mtBytes(i.size), i.level === 'all' ? 'All levels' : i.level, `${i.views} open${i.views === 1 ? '' : 's'} · ${i.students} student${i.students === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+      const edit = editing ? `<form class="mt-edit" data-mt-editform="${esc(i.id)}">
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            <input id="me-title" maxlength="140" value="${esc(i.title)}" style="flex:2;min-width:200px" aria-label="Title">
+            <input id="me-section" list="mf-sections-${esc(i.id)}" maxlength="60" value="${esc(i.section)}" style="flex:1;min-width:140px" aria-label="Sub-folder" placeholder="Sub-folder">
+            <datalist id="mf-sections-${esc(i.id)}">${sectionsFor(i.folder).map(s => `<option value="${esc(s)}">`).join('')}</datalist>
+            ${levelSel('me-level', i.level)}
+          </div>
+          <input id="me-desc" maxlength="400" value="${esc(i.description)}" placeholder="Short description" style="width:100%;margin-top:6px">
+          ${i.kind === 'link' ? `<input id="me-url" type="url" value="${esc(i.url)}" style="width:100%;margin-top:6px" aria-label="Link">` : ''}
+          <div class="row" style="gap:6px;margin-top:6px"><button class="btn btn-sm" type="submit">Save</button><button class="btn btn-ghost btn-sm" type="button" data-mt-act="edit-cancel">Cancel</button></div>
+        </form>` : '';
+      return `<div class="mt-arow ${i.hidden ? 'is-hidden' : ''}">
+          <span class="mt-aic">${MT_KIND_ICON[i.kind] || '📄'}</span>
+          <div class="mt-abody"><strong>${esc(i.title)}</strong>${i.premium ? ' <span class="tag" style="background:#fff6da;color:#a86400">👑 Premium</span>' : ''}${i.hidden ? ' <span class="tag tag-draft">hidden</span>' : ''}${i.isNew ? ' <span class="tag tag-live">new</span>' : ''}
+            <div class="muted" style="font-size:12px">${esc(meta)}</div>${edit}</div>
+          <div class="mt-aacts">
+            ${i.href ? `<a class="btn btn-ghost btn-sm" href="${esc(i.href)}" target="_blank" rel="noopener">Open</a>` : ''}
+            <button class="btn btn-ghost btn-sm" data-mt-act="up" data-id="${esc(i.id)}" title="Move up">↑</button>
+            <button class="btn btn-ghost btn-sm" data-mt-act="down" data-id="${esc(i.id)}" title="Move down">↓</button>
+            <button class="btn btn-ghost btn-sm" data-mt-act="edit" data-id="${esc(i.id)}">Edit</button>
+            <button class="btn btn-ghost btn-sm" data-mt-act="${i.hidden ? 'show' : 'hide'}" data-id="${esc(i.id)}">${i.hidden ? 'Show' : 'Hide'}</button>
+            <button class="btn btn-ghost btn-sm" data-mt-act="${i.premium ? 'free' : 'premium'}" data-id="${esc(i.id)}" title="${i.premium ? 'Open it to every student' : 'Premium students only'}">${i.premium ? 'Make free' : '👑'}</button>
+            <button class="btn btn-ghost btn-sm" data-mt-act="delete" data-id="${esc(i.id)}">Delete</button>
+          </div></div>`;
+    };
+    const lists = d.folders.map(fd => {
+      const items = d.items.filter(i => i.folder === fd.key);
+      if (!items.length) return '';
+      const secs = [...new Set(items.map(i => i.section))];
+      return `<div class="mt-afolder"><h3>${fd.icon} ${esc(fd.title)} <span class="muted" style="font-weight:400;font-size:13px">${plural(items.length, 'material')}</span></h3>
+        ${secs.map(s => `<div class="mt-asec">${s ? `<div class="mt-asec-t">${esc(s)}</div>` : ''}${items.filter(i => i.section === s).map(row).join('')}</div>`).join('')}</div>`;
+    }).join('');
+    return `<div class="card" style="margin-top:20px">
+        <h2 style="font-size:18px">Materials</h2>
+        <p class="muted" style="margin-top:6px;font-size:14px">Students find these under <b>Testlar → Materiallar</b>, in folders by skill. Only signed-in students can open them; 👑 items only Premium students.</p>
+        ${form}
+        <div class="mt-alist">${lists || '<p class="muted" style="margin-top:12px">No materials yet — add the first one.</p>'}</div>
+      </div>`;
+  }
+
+  function wireMaterialsAdmin() {
+    root.querySelectorAll('[data-mt-act]').forEach(el => el.addEventListener('click', async () => {
+      const act = el.dataset.mtAct;
+      const id = el.dataset.id;
+      if (act === 'new') return setState({ mtForm: { folder: 'speaking', level: 'all' } });
+      if (act === 'cancel') return setState({ mtForm: null });
+      if (act === 'edit') return setState({ mtEdit: id });
+      if (act === 'edit-cancel') return setState({ mtEdit: null });
+      const item = state.mtAdmin.items.find(i => i.id === id);
+      try {
+        if (act === 'up' || act === 'down') state.mtAdmin = await api(`/admin/materials/${id}/move`, { method: 'POST', body: { dir: act } });
+        else if (act === 'hide' || act === 'show') state.mtAdmin = await api(`/admin/materials/${id}`, { method: 'PATCH', body: { hidden: act === 'hide' } });
+        else if (act === 'premium' || act === 'free') state.mtAdmin = await api(`/admin/materials/${id}`, { method: 'PATCH', body: { premium: act === 'premium' } });
+        else if (act === 'delete') {
+          if (!window.confirm(`Delete “${item?.title || 'this material'}”? Students will no longer see it.`)) return;
+          state.mtAdmin = await api(`/admin/materials/${id}`, { method: 'DELETE' });
+        }
+        render();
+      } catch (error) { setState({ error: error.message }); }
+    }));
+    // The sub-folder suggestions follow the chosen folder.
+    document.getElementById('mf-folder')?.addEventListener('change', e => {
+      const keep = id => document.getElementById(id)?.value;
+      state.mtForm = { ...state.mtForm, folder: e.target.value, section: '', title: keep('mf-title'), description: keep('mf-desc'), url: keep('mf-url'), level: keep('mf-level') };
+      render();
+    });
+    document.getElementById('mt-form')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const v = id => document.getElementById(id);
+      const file = v('mf-file')?.files?.[0] || null;        // read before anything redraws the form
+      const url = v('mf-url').value.trim();
+      const fields = {
+        folder: v('mf-folder').value, section: v('mf-section').value, title: v('mf-title').value, description: v('mf-desc').value,
+        level: v('mf-level').value, premium: v('mf-premium').checked, hidden: v('mf-hidden').checked, notify: v('mf-notify').checked, url
+      };
+      if (!file && !url) return setState({ error: 'Choose a file or paste a link.' });
+      if (file && file.size > 30 * 1048576) return setState({ error: 'That file is bigger than 30 MB.' });
+      const form = new FormData();
+      for (const [k, val] of Object.entries(fields)) form.append(k, String(val));
+      if (file) form.append('file', file, file.name);
+      state.mtForm = fields;
+      setState({ mtBusy: true, error: '' });
+      try {
+        const out = await api('/admin/materials', { method: 'POST', form });
+        state.mtAdmin = { folders: out.folders, levels: out.levels, items: out.items };
+        setState({ mtBusy: false, mtForm: null, notice: `Added “${out.item.title}”${fields.notify && !fields.hidden ? ' — students are being notified.' : '.'}` });
+      } catch (error) { setState({ mtBusy: false, error: error.message }); }
+    });
+    root.querySelectorAll('[data-mt-editform]').forEach(form => form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const v = id => form.querySelector(`#${id}`);
+      const body = { title: v('me-title').value, section: v('me-section').value, level: v('me-level').value, description: v('me-desc').value };
+      if (v('me-url')) body.url = v('me-url').value;
+      try { state.mtAdmin = await api(`/admin/materials/${form.dataset.mtEditform}`, { method: 'PATCH', body }); setState({ mtEdit: null }); }
+      catch (error) { setState({ error: error.message }); }
+    }));
   }
 
   function newsAdminCard() {
@@ -2070,6 +2225,7 @@
     wireChatAdmin();
     wireTestPanel();
     if (state.folder === 'news') { wireNewsAdmin(); paintWallImages(); }
+    if (state.folder === 'materials') wireMaterialsAdmin();
     if (state.folder === 'wall') wireWallAdmin();
     if (state.folder === 'friends') { wireSocialAdmin(); paintWallImages(); }
     root.querySelectorAll('[data-unmarked-retry]').forEach(el =>

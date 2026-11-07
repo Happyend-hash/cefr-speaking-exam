@@ -82,6 +82,7 @@ import adminSupportRoutes from './routes/adminSupport.js';
 import socialRoutes, { adminRouter as socialAdminRoutes } from './routes/social.js';
 import newsRoutes, { adminRouter as newsAdminRoutes } from './routes/news.js';
 import pushRoutes from './routes/push.js';
+import materialRoutes, { fileRouter as materialFileRoutes, adminRouter as materialAdminRoutes } from './routes/materials.js';
 import { startStorySweep } from './services/Social.js';
 import { publicRouter as wallRoutes, studentRouter as wallStudentRoutes, adminRouter as wallAdminRoutes } from './routes/wall.js';
 import { noteGuest } from './services/UsageStats.js';
@@ -350,6 +351,9 @@ app.use('/api/support', authenticate, supportRoutes);
 app.use('/api/social', authenticate, requireVerifiedEmail, socialRoutes);
 app.use('/api/news', authenticate, newsRoutes);
 app.use('/api/push', authenticate, pushRoutes);
+// Materiallar: files by signed link first (no sign-in token), then the signed-in list.
+app.use('/api/materials/f', materialFileRoutes);
+app.use('/api/materials', authenticate, requireVerifiedEmail, materialRoutes);
 
 // Admin routes
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);
@@ -359,6 +363,7 @@ app.use('/api/admin/support', authenticate, adminSupportRoutes);
 app.use('/api/admin/wall', authenticate, wallAdminRoutes);
 app.use('/api/admin/social', authenticate, socialAdminRoutes);
 app.use('/api/admin/news', authenticate, newsAdminRoutes);
+app.use('/api/admin/materials', authenticate, materialAdminRoutes);
 app.use('/api/admin', authenticate, adminRoutes);
 
 // Health check

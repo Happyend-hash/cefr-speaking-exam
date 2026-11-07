@@ -7984,6 +7984,7 @@
     else if (s === 'speak') { p.tab = ch.tab; if (ch.tab === 'chat' && ch.view === 'room' && ch.room) p.room = ch.room; }
     else if (s === 'vr') { p.phase = VR_RUN.has(vr.phase) ? 'run' : vr.phase; if (vr.phase === 'mist-book') p.book = vr.mistBook; }
     else if (s === 'inbox') p.sel = state.inboxSel || null;
+    else if (s === 'materials') { p.folder = mt.folder || null; p.section = mt.section || ''; }
     else if (s === 'dm') p.id = so.withId;
     else if (s === 'person') p.id = so.personId;
     p.key = JSON.stringify(p);
@@ -7991,6 +7992,7 @@
   }
 
   const navIsRoot = p => ['dashboard', 'social', 'rank', 'profile', 'writing'].includes(p.screen)
+    || (p.screen === 'materials' && !p.folder)
     || (p.screen === 'mocks' && p.folder === 'speaking')
     || (p.screen === 'speak' && !p.room);
   // The chat screens (a Do'stlar chat, a club chat room) have their own ← in their header.
@@ -8035,6 +8037,7 @@
       render(); return true;
     }
     if (wl.zoom) { wl.zoom = null; render(); return true; }
+    if (state.screen === 'materials' && mt.zoom) { mt.zoom = null; render(); return true; }
     if (state.openAttempt) { setState({ openAttempt: null }); return true; }
     if (state.criteriaOpen) { setState({ criteriaOpen: false }); return true; }
     return false;
@@ -8073,6 +8076,7 @@
       case 'support': return openSupport();
       case 'wall': return openWall();
       case 'my-results': return openMyResults();
+      case 'materials': return openMaterials(p.folder || null, p.section || '');
       case 'social': return openSocial();
       case 'dm': return p.id ? openDm(p.id) : openSocial('chats');
       case 'person': return p.id ? openPerson(p.id) : openSocial();
@@ -8127,7 +8131,7 @@
 
   const TABS = [
     { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard', 'news'] },
-    { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'parts', 'writing', 'writing-check', 'briefing'] },
+    { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'parts', 'writing', 'writing-check', 'briefing', 'materials'] },
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'friends', go: 'social', label: "Do'stlar", icon: 'message', screens: ['social', 'dm', 'person'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
@@ -8298,7 +8302,8 @@
       person: personScreen,
       wall: wallScreen,
       'my-results': myResultsScreen,
-      news: newsScreen
+      news: newsScreen,
+      materials: materialsScreen
     }[state.screen] || landingScreen;
 
     const tabs = tabBarMarkup();
@@ -9523,6 +9528,7 @@
     else if (where === 'chats') openSocial('chats');
     else if (where === 'support') openSupport();
     else if (where === 'inbox') openInbox(params.get('id') || null);
+    else if (where === 'materials') openMaterials();
     else return false;
     return true;
   }
@@ -9674,6 +9680,7 @@
   function openTests(tab = 'speaking') {
     state.testsTab = tab;
     if (tab === 'writing') return loadWritingHome();
+    if (tab === 'materials') return openMaterials();
     go('mocks', { folder: 'speaking', mockSearch: '', mockStatus: 'all', mockSort: 'recommended' });
   }
 
@@ -9683,8 +9690,158 @@
     return `<div class="page-head">
         <h1>Testlar</h1>
       </div>
-      <div class="seg" role="group" aria-label="Bo'lim">${btn('speaking', 'Speaking')}${btn('writing', 'Writing')}</div>`;
+      <div class="seg" role="group" aria-label="Bo'lim">${btn('speaking', 'Speaking')}${btn('writing', 'Writing')}${btn('materials', 'Materiallar')}</div>`;
   }
+
+  // ------------------------------------------------------------ Materiallar
+  //
+  // Study materials (2026-11-07): the teacher's PDFs, Word files, pictures,
+  // audio and links, in folders by skill and sub-folders inside. Opening a
+  // file uses a signed link the server hands out with the list, so the
+  // phone's own PDF viewer, player and downloads work.
+
+  const MT_UZ = {
+    lead: 'Imtihonga tayyorlanish uchun foydali materiallar — bo‘limlar bo‘yicha.',
+    empty: 'Bu yerda hali material yo‘q. Tez orada qo‘shiladi!',
+    emptyFolder: 'Bu bo‘limda hali material yo‘q.',
+    all: 'Barchasi',
+    allLevels: 'Barcha darajalar',
+    search: 'Material qidirish…',
+    noMatch: 'Hech narsa topilmadi.',
+    items: n => `${n} ta material`,
+    fresh: n => `${n} ta yangi`,
+    open: 'Ochish', play: 'Tinglash', watch: 'Ko‘rish', download: 'Yuklab olish', visit: 'Havolani ochish',
+    isNew: 'Yangi', premium: 'Premium',
+    locked: 'Bu material faqat Premium a’zolar uchun. Premium — 15 000 so‘m, 30 kun.',
+    getPremium: 'Premium olish',
+    back: 'Materiallar'
+  };
+  const MT_KIND = {
+    pdf: ['📄', 'PDF'], word: ['📝', 'Word'], slides: ['📊', 'PowerPoint'], sheet: ['📈', 'Excel'],
+    image: ['🖼', 'Rasm'], audio: ['🎧', 'Audio'], video: ['🎬', 'Video'], link: ['🔗', 'Havola']
+  };
+  const mt = { data: null, loading: false, error: '', folder: null, section: '', level: 'all', q: '', play: null, zoom: null };
+
+  async function openMaterials(folder = null, section = '') {
+    state.testsTab = 'materials';
+    Object.assign(mt, { folder, section, play: null, zoom: null });
+    if (!folder) mt.q = '';
+    go('materials');
+    if (!mt.data || Date.now() - (mt.loadedAt || 0) > 30 * 60 * 1000) await loadMaterials();
+  }
+
+  async function loadMaterials() {
+    mt.loading = true; mt.error = '';
+    if (state.screen === 'materials') render();
+    try { mt.data = await api('/materials'); mt.loadedAt = Date.now(); }
+    catch (error) { mt.error = error.message; }
+    mt.loading = false;
+    if (state.screen === 'materials') render();
+  }
+
+  const mtSize = b => (!b ? '' : b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+
+  function mtItem(i) {
+    const [ic, label] = MT_KIND[i.kind] || ['📄', i.kind];
+    const meta = [label + (i.ext && i.kind !== 'link' && i.ext.toUpperCase() !== label.toUpperCase() ? ` · ${i.ext.toUpperCase()}` : ''), mtSize(i.size), i.level !== 'all' ? i.level : ''].filter(Boolean).join(' · ');
+    const tags = `${i.isNew ? `<span class="mt-tag is-new">${MT_UZ.isNew}</span>` : ''}${i.premium ? `<span class="mt-tag is-prem">👑 ${MT_UZ.premium}</span>` : ''}`;
+    let acts;
+    if (i.locked) acts = `<button class="btn btn-sm btn-gold" data-mt-locked>${MT_UZ.getPremium}</button>`;
+    else if (i.kind === 'link') acts = `<a class="btn btn-sm" href="${esc(i.href)}" target="_blank" rel="noopener" data-mt-open="${esc(i.id)}">${MT_UZ.visit}</a>`;
+    else if (i.kind === 'audio' || i.kind === 'video') acts = `<button class="btn btn-sm" data-mt-play="${esc(i.id)}">${i.kind === 'audio' ? MT_UZ.play : MT_UZ.watch}</button>
+        <a class="btn btn-ghost btn-sm" href="${esc(i.download)}" data-mt-open="${esc(i.id)}">${MT_UZ.download}</a>`;
+    else if (i.kind === 'image') acts = `<button class="btn btn-sm" data-mt-zoom="${esc(i.id)}">${MT_UZ.open}</button>
+        <a class="btn btn-ghost btn-sm" href="${esc(i.download)}" data-mt-open="${esc(i.id)}">${MT_UZ.download}</a>`;
+    else if (i.kind === 'pdf') acts = `<a class="btn btn-sm" href="${esc(i.href)}" target="_blank" rel="noopener" data-mt-open="${esc(i.id)}">${MT_UZ.open}</a>
+        <a class="btn btn-ghost btn-sm" href="${esc(i.download)}" data-mt-open="${esc(i.id)}">${MT_UZ.download}</a>`;
+    else acts = `<a class="btn btn-sm" href="${esc(i.download)}" data-mt-open="${esc(i.id)}">${MT_UZ.download}</a>`;
+    const player = mt.play === i.id && !i.locked
+      ? (i.kind === 'audio'
+        ? `<audio class="mt-player" controls autoplay preload="metadata" src="${esc(i.href)}"></audio>`
+        : `<video class="mt-player" controls autoplay playsinline preload="metadata" src="${esc(i.href)}"></video>`)
+      : '';
+    return `<article class="mt-item ${i.locked ? 'is-locked' : ''}">
+      <div class="mt-ic is-${esc(i.kind)}" aria-hidden="true">${i.locked ? '🔒' : ic}</div>
+      <div class="mt-body">
+        <div class="mt-title">${esc(i.title)} ${tags}</div>
+        ${i.description ? `<p class="mt-desc">${esc(i.description)}</p>` : ''}
+        <div class="mt-meta">${esc(meta)}</div>
+        ${player}
+      </div>
+      <div class="mt-acts">${acts}</div>
+    </article>`;
+  }
+
+  function materialsScreen() {
+    const d = mt.data;
+    const head = testsHeader('materials');
+    if (!d) return `${head}${mt.error ? `<div class="alert alert-error">${esc(mt.error)}</div>` : '<div class="center-note"><span class="spinner"></span></div>'}`;
+    const zoom = mt.zoom ? (d.items.find(i => i.id === mt.zoom) || null) : null;
+    const zoomHtml = zoom ? `<div class="so-zoom" data-mt-unzoom><img src="${esc(zoom.href)}" alt="${esc(zoom.title)}"></div>` : '';
+    const q = mt.q.trim().toLowerCase();
+    const matches = i => (!q || `${i.title} ${i.description} ${i.section}`.toLowerCase().includes(q))
+      && (mt.level === 'all' || i.level === 'all' || i.level === mt.level);
+    const search = `<div class="mt-tools">
+        <input id="mt-q" class="mt-search" type="search" data-keep placeholder="${esc(MT_UZ.search)}" value="${esc(mt.q)}" autocomplete="off">
+        <div class="mt-levels">${['all', 'B1', 'B2', 'C1'].map(l => `<button class="mt-chip ${mt.level === l ? 'is-on' : ''}" data-mt-level="${l}">${l === 'all' ? MT_UZ.allLevels : l}</button>`).join('')}</div>
+      </div>`;
+
+    if (!mt.folder) {
+      const folders = d.folders.filter(f => f.count > 0 || ['speaking', 'writing', 'reading', 'listening'].includes(f.key));
+      if (!d.items.length) return `${head}<p class="muted mt-lead">${MT_UZ.lead}</p><div class="card empty-state"><div class="mt-empty-ic">📚</div><p>${MT_UZ.empty}</p></div>`;
+      const found = q || mt.level !== 'all' ? d.items.filter(matches) : null;
+      return `${head}
+        <p class="muted mt-lead">${MT_UZ.lead}</p>
+        ${search}
+        ${found ? `<div class="mt-list">${found.map(mtItem).join('') || `<p class="muted">${MT_UZ.noMatch}</p>`}</div>`
+          : `<div class="mt-folders">${folders.map(f => `<button class="mt-folder is-${esc(f.key)}" data-mt-folder="${esc(f.key)}">
+              <span class="mt-folder-ic">${f.icon}</span>
+              <span class="mt-folder-t"><b>${esc(f.title)}</b><small>${MT_UZ.items(f.count)}${f.fresh ? ` · <em>${MT_UZ.fresh(f.fresh)}</em>` : ''}</small></span>
+              <span class="mt-folder-go">${icon('chevron')}</span></button>`).join('')}</div>`}
+        ${zoomHtml}`;
+    }
+
+    const f = d.folders.find(x => x.key === mt.folder) || { title: '', sections: [] };
+    const inFolder = d.items.filter(i => i.folder === mt.folder);
+    const shown = inFolder.filter(i => (!mt.section || i.section === mt.section) && matches(i));
+    const chips = f.sections.length > 1 || (f.sections.length === 1 && inFolder.some(i => !i.section))
+      ? `<div class="mt-sections">${[['', MT_UZ.all], ...f.sections.map(s => [s, s])].map(([s, l]) => `<button class="mt-chip ${mt.section === s ? 'is-on' : ''}" data-mt-section="${esc(s)}">${esc(l)}</button>`).join('')}</div>`
+      : '';
+    // Grouped by sub-folder when showing everything; one list when a sub-folder is picked.
+    const groups = mt.section ? [[mt.section, shown]] : [...f.sections, ''].map(s => [s, shown.filter(i => i.section === s)]).filter(([, l]) => l.length);
+    return `<button class="crumb" data-mt-back>${icon('left')} ${MT_UZ.back}</button>
+      <div class="page-head"><h1>${f.icon || ''} ${esc(f.title)}</h1></div>
+      ${search}${chips}
+      ${shown.length ? groups.map(([s, list]) => `${!mt.section && s ? `<h3 class="mt-group">${esc(s)}</h3>` : ''}<div class="mt-list">${list.map(mtItem).join('')}</div>`).join('')
+        : `<div class="card empty-state"><p>${inFolder.length ? MT_UZ.noMatch : MT_UZ.emptyFolder}</p></div>`}
+      ${zoomHtml}`;
+  }
+
+  root.addEventListener('click', event => {
+    const el = event.target.closest('[data-mt-folder], [data-mt-section], [data-mt-level], [data-mt-back], [data-mt-open], [data-mt-play], [data-mt-zoom], [data-mt-unzoom], [data-mt-locked]');
+    if (!el || !root.contains(el)) return;
+    const d = el.dataset;
+    if (d.mtOpen !== undefined) { api(`/materials/${encodeURIComponent(d.mtOpen)}/open`, { method: 'POST' }).catch(() => {}); return; }   // the link itself opens
+    event.preventDefault();
+    if (d.mtFolder !== undefined) return openMaterials(d.mtFolder);
+    if (d.mtBack !== undefined) return openMaterials();
+    if (d.mtSection !== undefined) { mt.section = d.mtSection; return render(); }
+    if (d.mtLevel !== undefined) { mt.level = d.mtLevel; return render(); }
+    if (d.mtPlay !== undefined) {
+      mt.play = mt.play === d.mtPlay ? null : d.mtPlay;
+      if (mt.play) api(`/materials/${encodeURIComponent(mt.play)}/open`, { method: 'POST' }).catch(() => {});
+      return render();
+    }
+    if (d.mtZoom !== undefined) { mt.zoom = d.mtZoom; api(`/materials/${encodeURIComponent(d.mtZoom)}/open`, { method: 'POST' }).catch(() => {}); return render(); }
+    if (d.mtUnzoom !== undefined) { mt.zoom = null; return render(); }
+    if (d.mtLocked !== undefined) return openTopup({ topupReason: 'premium', notice: MT_UZ.locked });
+  });
+  root.addEventListener('input', event => {
+    if (event.target.id !== 'mt-q') return;
+    mt.q = event.target.value;
+    clearTimeout(mt.qTimer);
+    mt.qTimer = setTimeout(() => { if (state.screen === 'materials') render(); }, 250);
+  });
 
   // ---------------------------------------------------------------- rank
 

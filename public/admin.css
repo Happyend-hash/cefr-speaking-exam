@@ -734,3 +734,17 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .gift-btn.is-on { background: #f5c451; border-color: #e3a008; }
 .gift-btn:focus-visible { outline: 2px solid #e3a008; outline-offset: 2px; }
 .cs-table .gift-btn, .gift-btn { width: 30px !important; min-width: 30px; max-width: 30px; height: 30px; padding: 0 !important; flex: none; }
+
+/* Materials (2026-11-07) */
+.mt-alist { margin-top: 16px; display: flex; flex-direction: column; gap: 18px; }
+.mt-afolder h3 { font-size: 16px; margin-bottom: 6px; }
+.mt-asec { margin-top: 6px; }
+.mt-asec-t { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #a86400; margin: 8px 0 4px; }
+.mt-arow { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.mt-arow.is-hidden { opacity: .6; }
+.mt-aic { font-size: 22px; width: 32px; text-align: center; }
+.mt-abody { flex: 1; min-width: 220px; }
+.mt-aacts { display: flex; gap: 4px; flex-wrap: wrap; }
+.mt-edit { margin-top: 8px; }
+.mt-edit input, .mt-edit select { padding: 6px 8px; }
+.mt-aacts a.btn { text-decoration: none; }
