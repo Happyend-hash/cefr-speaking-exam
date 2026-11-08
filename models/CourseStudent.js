@@ -150,6 +150,9 @@ const courseStudentSchema = new mongoose.Schema({
    * topshirish" in Vocabulary test and its results land here by themselves.
    */
   accountEmail: { type: String, trim: true, lowercase: true, default: '', index: true },
+  // The teacher's own reminder about this student (2026-11-08). Only the teacher panel shows it — never the parents' page.
+  teacherNote: { type: String, trim: true, maxlength: 1000, default: '' },
+  teacherNoteAt: { type: Date, default: null },
   /** "Removed" in the admin panel: hidden everywhere, but kept so its payments are never lost. */
   removedAt: { type: Date, default: null },
   /** Why they left, typed when removing (optional): shown in the archive. */

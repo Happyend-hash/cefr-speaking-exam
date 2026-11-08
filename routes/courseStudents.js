@@ -35,6 +35,8 @@ const row = (s, units = {}, books = {}, accounts = new Set(), mistakes = new Map
     id: String(s._id),
     name: s.name,
     level: s.level,
+    teacherNote: s.teacherNote || '',
+    teacherNoteAt: s.teacherNoteAt || null,
     family: familyOf(s),
     parentCode: s.parentCode,
     active: s.active,
@@ -132,7 +134,7 @@ router.get('/months/:ym', async (req, res, next) => {
   try {
     const month = String(req.params.ym || '');
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new APIError('Choose a month', 400);
-    const all = await withPeriods(await CourseStudent.find({}).select('name level active monthlyFee payments attendance results periods removedAt leftReason createdAt'));
+    const all = await withPeriods(await CourseStudent.find({}).select('name level active monthlyFee payments attendance results periods removedAt leftReason createdAt teacherNote'));
     res.json({ success: true, data: monthRegister(all, month, { levels: LEVELS }) });
   } catch (error) { next(error); }
 });
@@ -237,6 +239,10 @@ router.patch('/:id', async (req, res, next) => {
       changeTerms(s, { level });
     }
     if (req.body?.active !== undefined) s.active = Boolean(req.body.active);
+    if (req.body?.teacherNote !== undefined) {
+      s.teacherNote = String(req.body.teacherNote || '').replace(/\r\n/g, '\n').trim().slice(0, 1000);
+      s.teacherNoteAt = s.teacherNote ? new Date() : null;
+    }
     if (req.body?.accountEmail !== undefined) {
       const email = String(req.body.accountEmail || '').trim().toLowerCase();
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new APIError('Enter the student\u2019s account email, e.g. name@gmail.com', 400);

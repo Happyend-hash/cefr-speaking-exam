@@ -748,3 +748,11 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .mt-edit { margin-top: 8px; }
 .mt-edit input, .mt-edit select { padding: 6px 8px; }
 .mt-aacts a.btn { text-decoration: none; }
+
+/* The teacher's note about a course student (2026-11-08) */
+.cs-note-line { margin-top: 3px; max-width: 420px; font-size: 12.5px; font-weight: 500; color: #8a5a00; background: #fff6da; border-radius: 8px; padding: 2px 8px; display: block; width: fit-content; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-tnote { margin: 12px 0 4px; padding: 12px 14px; border-radius: 12px; background: #fffaeb; border: 1px solid #f6dc95; display: flex; flex-direction: column; gap: 8px; }
+.cs-tnote label { font-weight: 700; font-size: 14px; }
+.cs-tnote label .muted { font-weight: 400; font-size: 12.5px; }
+.cs-tnote textarea { width: 100%; resize: vertical; min-height: 54px; padding: 8px 10px; border-radius: 10px; border: 1px solid #ecd28c; font: inherit; background: #fff; }
+.cs-tnote-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

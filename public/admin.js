@@ -2554,7 +2554,7 @@
             const open = state.csSel === s.id;
             return `<tr class="cs-tr ${open ? 'is-open' : ''} ${s.active ? '' : 'is-paused'}" data-cs-sel="${esc(s.id)}" tabindex="0">
                 <td>${csFace(s, 36)}</td>
-                <td><strong>${esc(s.name)}</strong> ${giftToggle(`cs-${s.id}`)}${s.active ? '' : ' <span class="tag">paused</span>'}${familySize(s.family) > 1 ? ' <span class="cs-fam" title="Shares the parent code with brothers/sisters">family</span>' : ''}</td>
+                <td><strong>${esc(s.name)}</strong> ${giftToggle(`cs-${s.id}`)}${s.active ? '' : ' <span class="tag">paused</span>'}${familySize(s.family) > 1 ? ' <span class="cs-fam" title="Shares the parent code with brothers/sisters">family</span>' : ''}${csNoteLine(s.teacherNote)}</td>
                 <td class="cs-num ${csBand(s.month.percent)}">${csPct(s.month.percent)}</td>
                 <td class="cs-num">${s.month.homeworks}</td>
                 <td class="cs-num">${s.attendance.lessons ? `${s.attendance.attended}/${s.attendance.lessons}${s.attendance.absent ? ` <span class="cs-miss">${s.attendance.absent} missed</span>` : ''}` : '<span class="muted">—</span>'}</td>
@@ -2680,7 +2680,7 @@
         <div class="cs-table-wrap"><table class="cs-table cs-mtable">
           <thead><tr><th>Student</th><th class="cs-num">Fee</th><th class="cs-num">Paid</th><th>Payment</th><th class="cs-num">Came</th><th class="cs-num">Late</th><th class="cs-num">Missed</th><th class="cs-num">Homework</th></tr></thead>
           <tbody>${g.rows.map(r => `<tr class="cs-tr ${r.removed && !r.leftNow ? 'is-gone' : ''}" data-cs-goto="${esc(r.id)}" data-removed="${r.removed ? '1' : ''}" tabindex="0" title="Open ${esc(r.name)}">
-              <td><strong>${esc(r.name)}</strong> ${csEvents(r)}</td>
+              <td><strong>${esc(r.name)}</strong> ${csEvents(r)}${csNoteLine(r.teacherNote)}</td>
               <td class="cs-num">${r.fee ? esc(csMoney(r.fee).replace(' so‘m', '')) : '<span class="muted">—</span>'}</td>
               <td class="cs-num">${r.paid ? esc(csMoney(r.paid).replace(' so‘m', '')) : '<span class="muted">—</span>'}</td>
               <td>${csStatusWord(r)}${r.left && r.paid ? ` <span class="cs-miss">${esc(csMoney(r.left).replace(' so‘m', ''))} left</span>` : ''}</td>
@@ -2783,7 +2783,7 @@
     if (!st) return;
     state.csGroups.add(st.level);
     const y = Number(month.slice(0, 4)), m = Number(month.slice(5));
-    setState({ csView: 'groups', csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined,
+    setState({ csView: 'groups', csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined, csNote: undefined,
       csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: month, csPayYear: m >= 9 ? y : y - 1, csFee: undefined });
     setTimeout(() => document.querySelector(`[data-cs-sel="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
   }
@@ -3062,6 +3062,9 @@
     </div>`;
   }
 
+  // The teacher's own note about a student (2026-11-08): one line in the lists, editable in the panel.
+  const csNoteLine = note => (note ? `<div class="cs-note-line" title="${esc(note)}">📝 ${esc(note.length > 110 ? `${note.slice(0, 110)}…` : note)}</div>` : '');
+
   /** The panel under a clicked student: today's homework, then details. */
   function studentPanel(s, { levelOptions, familyOptions }) {
     const types = state.csTypes;
@@ -3084,6 +3087,15 @@
           <div class="muted" style="font-size:13px">${s.results.length} homework${s.results.length === 1 ? '' : 's'} in total · parents ${s.lastParentVisit ? `last opened ${esc(new Date(s.lastParentVisit).toLocaleDateString())}` : 'have not opened it yet'}</div>
         </div>
       </div>
+      <form class="cs-tnote" data-cs-note="${esc(s.id)}">
+        <label for="cs-note-input">📝 My note about ${esc(s.name)} <span class="muted">— only you see this, never the parents</span></label>
+        <textarea id="cs-note-input" rows="2" maxlength="1000" placeholder="e.g. Weak in Part 3 — practise linkers. Pays on the 15th. Mother: +998 …">${esc(state.csNote ?? s.teacherNote ?? '')}</textarea>
+        <div class="cs-tnote-foot">
+          <button class="btn btn-sm" type="submit" ${state.csNote === undefined || state.csNote.trim() === (s.teacherNote || '') ? 'disabled' : ''}>Save note</button>
+          ${s.teacherNote && (state.csNote === undefined || state.csNote.trim() === s.teacherNote) ? `<button class="btn btn-ghost btn-sm" type="button" data-cs-note-clear="${esc(s.id)}">Clear</button>` : ''}
+          <span class="muted" style="font-size:12px">${s.teacherNoteAt ? `Saved ${esc(new Date(s.teacherNoteAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}` : ''}</span>
+        </div>
+      </form>
       ${state.giftOpen?.[`cs-${s.id}`] ? giftBox({
         key: `cs-${s.id}`, name: s.name, email: s.accountEmail,
         blocked: !s.accountEmail ? 'Link this student’s website account (Gmail) in the details below first — the gift goes to that account.'
@@ -3379,12 +3391,30 @@
       setState(patch);
     }));
 
+    // the teacher's note
+    document.getElementById('cs-note-input')?.addEventListener('input', e => {
+      state.csNote = e.target.value;
+      const st = state.cs?.students.find(x => x.id === state.csSel);
+      const btn = e.target.closest('form')?.querySelector('button[type="submit"]');
+      if (btn) btn.disabled = e.target.value.trim() === (st?.teacherNote || '');
+    });
+    root.querySelectorAll('[data-cs-note]').forEach(form => form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const id = form.dataset.csNote;
+      const text = form.querySelector('#cs-note-input').value;
+      await csCall(`/admin/course-students/${id}`, { method: 'PATCH', body: { teacherNote: text } }, 'Note saved.', { csNote: undefined });
+    }));
+    root.querySelectorAll('[data-cs-note-clear]').forEach(el => el.addEventListener('click', async () => {
+      if (!window.confirm('Clear this note?')) return;
+      await csCall(`/admin/course-students/${el.dataset.csNoteClear}`, { method: 'PATCH', body: { teacherNote: '' } }, 'Note cleared.', { csNote: undefined });
+    }));
+
     // opening a student
     root.querySelectorAll('[data-cs-sel]').forEach(el => {
       const open = () => {
         const id = el.dataset.csSel;
         const st = state.cs?.students.find(x => x.id === id);
-        setState(state.csSel === id ? { csSel: null, csMove: null } : { csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined, csMove: null });
+        setState(state.csSel === id ? { csSel: null, csMove: null } : { csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined, csNote: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined, csMove: null });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });

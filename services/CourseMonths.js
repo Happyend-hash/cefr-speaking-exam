@@ -183,6 +183,7 @@ export function monthRow(student, month, now = Date.now()) {
   return {
     id: String(student._id),
     name: student.name,
+    teacherNote: student.teacherNote || '',
     level: p.level,
     fee: feeFor(student, month),
     paid: pay.paid,
