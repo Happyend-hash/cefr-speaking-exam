@@ -2669,10 +2669,15 @@
     const i = months.indexOf(month);
     const t = reg.totals;
     const tile = (label, value, note = '', cls = '') => `<div class="cs-mtile ${cls}"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ''}</div>`;
-    const groups = reg.groups.map(g => `<div class="cs-mgroup">
+    // Students in the archive show only in the Archive (2026-11-08) — here only on request.
+    const showArch = Boolean(state.csShowArchived);
+    const archivedCount = reg.groups.reduce((n, g) => n + g.rows.filter(r => r.removed).length, 0);
+    const groups = reg.groups.map(g => ({ ...g, all: g.rows, rows: showArch ? g.rows : g.rows.filter(r => !r.removed) }))
+      .filter(g => g.rows.length)
+      .map(g => `<div class="cs-mgroup">
         <div class="cs-mgroup-head">
           <span class="tag">${esc(g.level)}</span>
-          <strong>${g.totals.students} student${g.totals.students === 1 ? '' : 's'}</strong>
+          <strong>${g.rows.length} student${g.rows.length === 1 ? '' : 's'}</strong>${!showArch && g.all.length > g.rows.length ? ` <span class="muted" style="font-size:12px">(+${g.all.length - g.rows.length} in archive)</span>` : ''}
           <span class="muted">${csMoney(g.totals.paid)}${g.totals.fees ? ` of ${csMoney(g.totals.fees)}` : ''} collected</span>
           ${g.totals.owed ? `<span class="cs-miss">${csMoney(g.totals.owed)} owed</span>` : ''}
           ${g.totals.attendance !== null ? `<span class="muted">attendance ${g.totals.attendance}%</span>` : ''}
@@ -2696,10 +2701,11 @@
         <button type="button" class="btn btn-ghost btn-sm" data-cs-mstep="1" ${i >= months.length - 1 ? 'disabled' : ''} aria-label="Previous month">‹</button>
         <select id="cs-month-pick" aria-label="Month">${months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${esc(csMonthName(m))}</option>`).join('')}</select>
         <button type="button" class="btn btn-ghost btn-sm" data-cs-mstep="-1" ${i <= 0 ? 'disabled' : ''} aria-label="Next month">›</button>
-        <span class="muted">Every group as it was in ${esc(csMonthName(month))} — including students who have left since. Tap a student to open them.</span>
+        <span class="muted">Every group as it was in ${esc(csMonthName(month))}. Tap a student to open them.</span>
+        ${archivedCount ? `<button type="button" class="btn btn-ghost btn-sm" data-cs-showarch>${showArch ? 'Hide students in the archive' : `Show ${archivedCount} student${archivedCount === 1 ? '' : 's'} in the archive`}</button>` : ''}
       </div>
       <div class="cs-mtiles">
-        ${tile('Students', t.students, [t.joined ? `+${t.joined} new` : '', t.left ? `${t.left} left` : ''].filter(Boolean).join(' · '))}
+        ${tile('Students', showArch ? t.students : t.students - archivedCount, [t.joined ? `+${t.joined} new` : '', t.left ? `${t.left} left` : '', !showArch && archivedCount ? `+${archivedCount} in archive` : ''].filter(Boolean).join(' · '))}
         ${tile('Collected', esc(csMoney(t.paid)), t.fees ? `of ${esc(csMoney(t.fees))} in fees` : 'no fees set')}
         ${tile('Still owed', esc(csMoney(t.owed)), t.unpaid ? `${t.unpaid} student${t.unpaid === 1 ? '' : 's'} not fully paid` : 'everyone has paid', t.owed ? 'is-warn' : 'is-ok')}
         ${tile('Attendance', t.attendance === null ? '—' : `${t.attendance}%`, t.attendance === null ? 'no attendance taken' : 'of all lessons')}
@@ -3235,6 +3241,7 @@
       if (view === 'archive') loadArchive();
     }));
     $('cs-month-pick')?.addEventListener('change', e => { setState({ csMonth: e.target.value }); loadRegister(e.target.value); });
+    root.querySelector('[data-cs-showarch]')?.addEventListener('click', () => setState({ csShowArchived: !state.csShowArchived }));
     root.querySelectorAll('[data-cs-mstep]').forEach(el => el.addEventListener('click', () => {
       const months = state.csReg?.months || [];
       const next = months[months.indexOf(state.csMonth) + Number(el.dataset.csMstep)];
@@ -3491,7 +3498,7 @@
       csCall(`/admin/course-students/${el.dataset.csNewcode}/code`, { method: 'POST' }, 'New code made — send it to the parents.');
     }));
     root.querySelectorAll('[data-cs-delete]').forEach(el => el.addEventListener('click', () => {
-      const reason = prompt(`Remove ${el.dataset.name} from the group?\n\nThey move to the Archive with every month of payments and attendance kept, and still count in this month's register. You can bring them back later.\n\nWhy are they leaving? (optional — e.g. moved, finished the course)`, '');
+      const reason = prompt(`Remove ${el.dataset.name} from the group?\n\nThey move to the Archive with every month of payments and attendance kept, and leave the group lists. You can bring them back later.\n\nWhy are they leaving? (optional — e.g. moved, finished the course)`, '');
       if (reason === null) return;
       csCall(`/admin/course-students/${el.dataset.csDelete}`, { method: 'DELETE', body: { reason } }, `${el.dataset.name} moved to the Archive.`, { csSel: null, csArch: null });
     }));
