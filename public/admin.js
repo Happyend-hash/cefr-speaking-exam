@@ -81,6 +81,7 @@
     csPayMonth: null,        // the month whose payment form is open ("2026-11")
     csPayNote: '',
     csUnit: null,            // vocabulary: the unit being entered (a number) or 'general'
+    csSpk: null,             // speaking mocks: the mock whose attempts are open
     csUnitVal: '', csUnitDate: '',
     csGenVals: {}, csGenOverall: '', csGenDate: '',
     csUnitsOpen: false,      // the "units per level" setting
@@ -2536,20 +2537,22 @@
       const scored = list.map(s => s.month.percent).filter(v => typeof v === 'number');
       const avg = scored.length ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length) : null;
       const toPay = list.filter(s => s.active && (s.payment?.status === 'due' || s.payment?.status === 'overdue' || s.payment?.status === 'partial')).length;
+      const linked = list.filter(s => s.accountEmail);
+      const mocked = linked.filter(s => s.speaking?.thisMonth > 0).length;
       return `<div class="cs-level ${isOpen ? 'is-open' : ''}">
         <div class="cs-level-head">
           <button type="button" class="cs-group-toggle" data-cs-group="${level}" aria-expanded="${isOpen}" aria-controls="cs-group-${level}">
             <span class="cs-chev" aria-hidden="true">▸</span>
             <span class="tag">${level}</span>
             <span class="cs-group-count">${list.length} student${list.length === 1 ? '' : 's'}</span>
-            <span class="cs-group-meta">${avg === null ? '' : `<span class="${csBand(avg)}">avg ${avg}%</span>`}${toPay ? `<span class="cs-miss">${toPay} to pay</span>` : ''}</span>
+            <span class="cs-group-meta">${avg === null ? '' : `<span class="${csBand(avg)}">avg ${avg}%</span>`}${toPay ? `<span class="cs-miss">${toPay} to pay</span>` : ''}${linked.length ? `<span class="cs-spk-meta" title="Students who handed in a speaking mock this month">🎙 ${mocked}/${linked.length} mocked</span>` : ''}</span>
           </button>
           ${isOpen ? `<button class="btn btn-sm ${state.csRoll === level ? 'btn-ghost' : ''}" data-cs-roll="${level}">${state.csRoll === level ? 'Close attendance' : '✓ Take attendance'}</button>` : ''}
         </div>
         ${isOpen ? `<div id="cs-group-${level}" class="cs-group-body">
         ${state.csRoll === level ? rollCall(level, list) : ''}
         <div class="cs-table-wrap"><table class="cs-table">
-          <thead><tr><th></th><th>Name</th><th>${esc(csMonthName(data.month).split(' ')[0])} average</th><th>Homeworks</th><th>Attendance</th><th>Payment</th><th>Parent code</th></tr></thead>
+          <thead><tr><th></th><th>Name</th><th>${esc(csMonthName(data.month).split(' ')[0])} average</th><th>Homeworks</th><th>Speaking mocks</th><th>Attendance</th><th>Payment</th><th>Parent code</th></tr></thead>
           <tbody>${list.map(s => {
             const open = state.csSel === s.id;
             return `<tr class="cs-tr ${open ? 'is-open' : ''} ${s.active ? '' : 'is-paused'}" data-cs-sel="${esc(s.id)}" tabindex="0">
@@ -2557,11 +2560,12 @@
                 <td><strong>${esc(s.name)}</strong> ${giftToggle(`cs-${s.id}`)}${s.active ? '' : ' <span class="tag">paused</span>'}${familySize(s.family) > 1 ? ' <span class="cs-fam" title="Shares the parent code with brothers/sisters">family</span>' : ''}${csNoteLine(s.teacherNote)}</td>
                 <td class="cs-num ${csBand(s.month.percent)}">${csPct(s.month.percent)}</td>
                 <td class="cs-num">${s.month.homeworks}</td>
+                <td>${csSpeakingCell(s)}</td>
                 <td class="cs-num">${s.attendance.lessons ? `${s.attendance.attended}/${s.attendance.lessons}${s.attendance.absent ? ` <span class="cs-miss">${s.attendance.absent} missed</span>` : ''}` : '<span class="muted">—</span>'}</td>
                 <td>${csPayBadge(s.payment)}</td>
                 <td class="cs-code-cell">${csCode(s)}</td>
               </tr>
-              ${open ? `<tr class="cs-panel-row"><td colspan="7">${studentPanel(s, { levelOptions, familyOptions, byId })}</td></tr>` : ''}`;
+              ${open ? `<tr class="cs-panel-row"><td colspan="8">${studentPanel(s, { levelOptions, familyOptions, byId })}</td></tr>` : ''}`;
           }).join('')}</tbody>
         </table></div>
         </div>` : ''}
@@ -2789,7 +2793,7 @@
     if (!st) return;
     state.csGroups.add(st.level);
     const y = Number(month.slice(0, 4)), m = Number(month.slice(5));
-    setState({ csView: 'groups', csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined, csNote: undefined,
+    setState({ csView: 'groups', csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csSpk: null, csName: undefined, csAccount: undefined, csNote: undefined,
       csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: month, csPayYear: m >= 9 ? y : y - 1, csFee: undefined });
     setTimeout(() => document.querySelector(`[data-cs-sel="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
   }
@@ -3000,6 +3004,87 @@
       </div>`;
   }
 
+  // ------------------------------------------------- speaking mocks (2026-11-10)
+  //
+  // Every speaking mock the student's linked website account hands in, kept on
+  // the card like vocabulary: each mock with its current score and the one it
+  // replaced, every attempt under it, and how the score has moved.
+
+  const CS_SPK_PARTS = [['part11', '1.1'], ['part12', '1.2'], ['part2', '2'], ['part3', '3']];
+  // the exam's own levels on the 75-point scale: B2 from 51, B1 from 38
+  const spkBand = v => (v === null || v === undefined ? '' : v >= 51 ? 'is-good' : v >= 38 ? 'is-mid' : 'is-low');
+  const spkDay = d => (d ? new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
+  const spkShort = t => String(t || 'Mock').replace(/^Speaking\s+/i, '');
+  const spkBands = b => CS_SPK_PARTS.filter(([k]) => typeof b?.[k] === 'number').map(([k, n]) => `${n}: ${b[k]}`).join(' · ');
+
+  /** In the group table: how many mocks, and the latest score. */
+  function csSpeakingCell(s) {
+    const sp = s.speaking;
+    if (!s.accountEmail) return '<span class="muted" title="Website account not linked">—</span>';
+    if (!sp?.submitted) return '<span class="muted">0</span>';
+    const last = sp.latestScore;
+    return `<span class="cs-spk-cell" title="${sp.submitted} handed in · ${sp.thisMonth} this month${last ? ` · latest ${last.score} ${esc(last.level)}` : ''}"><span>${sp.submitted} mock${sp.submitted === 1 ? '' : 's'}${last ? ` · <b class="${spkBand(last.score)}">${last.score}</b> <small>${esc(last.level)}</small>` : ''}</span>${sp.thisMonth ? `<span class="cs-spk-new">+${sp.thisMonth} this month</span>` : ''}${sp.marking ? '<span class="cs-spk-mark">⏳ marking</span>' : ''}</span>`;
+  }
+
+  function csSpeaking(s) {
+    const sp = s.speaking || { submitted: 0, mocks: [], progress: [], practice: { count: 0, thisMonth: 0, recent: [] } };
+    const head = (stats = '') => `<div class="cs-box-head"><strong>🎙 Speaking mocks</strong>${stats}</div>`;
+    if (!s.accountEmail) {
+      return `<div class="cs-box cs-spk">${head()}<p class="muted" style="font-size:13px;margin:0">Link ${esc(s.name)}’s website account (Gmail) in the details below — every speaking mock they hand in then shows here by itself.</p></div>`;
+    }
+    if (!sp.submitted && !sp.practice.count) {
+      return `<div class="cs-box cs-spk">${head()}<p class="muted" style="font-size:13px;margin:0">${s.accountFound
+        ? 'No speaking mock handed in yet. Each one shows here as soon as it is submitted, and its score once it is marked.'
+        : `No website account with ${esc(s.accountEmail)} yet — mocks show here once the student signs up with it.`}</p></div>`;
+    }
+    const month = csMonthName(state.cs?.month || csToday().slice(0, 7)).split(' ')[0];
+    const stats = `<span class="cs-vocab-stats">
+        <span><b>${sp.submitted}</b> handed in</span>
+        <span><b>${sp.thisMonth}</b> in ${esc(month)}</span>
+        <span>${sp.mocksTaken} different mock${sp.mocksTaken === 1 ? '' : 's'}</span>
+        ${sp.best ? `<span>Best <b class="${spkBand(sp.best.score)}">${sp.best.score}</b> ${esc(sp.best.level)}</span>` : ''}
+        ${sp.marking ? `<span>⏳ ${sp.marking} being marked</span>` : ''}
+      </span>`;
+    const progress = sp.progress.length > 1
+      ? `<p class="cs-spk-progress"><span class="muted">Progress:</span> ${sp.progress.map(p => `<b class="${spkBand(p.score)}" title="${esc(`${p.title} · ${spkDay(p.at)} · ${p.level}`)}">${p.score}</b>`).join('<span class="cs-spk-arrow">→</span>')}</p>`
+      : '';
+    const sel = state.csSpk;
+    const chips = sp.mocks.map(m => {
+      const key = m.exam || m.title;
+      const cur = m.current;
+      const marking = m.latest.status === 'marking';
+      return `<button type="button" class="cs-unit cs-spk-chip ${spkBand(cur?.score)} ${cur ? '' : 'is-empty'} ${sel === key ? 'is-sel' : ''}" data-cs-spk="${esc(key)}" aria-pressed="${sel === key}">
+        <span class="cs-unit-no">${esc(spkShort(m.title))}${m.attempts.length > 1 ? ` <span class="cs-spk-times">×${m.attempts.length}</span>` : ''}</span>
+        <strong>${cur ? `${cur.score} <small class="cs-spk-lvl">${esc(cur.level)}</small>` : '—'}</strong>
+        <small>${marking ? '⏳ new attempt being marked' : m.previous ? `was ${m.previous.score} · ${esc(spkDay(m.latest.at))}` : esc(spkDay(m.latest.at))}</small>
+      </button>`;
+    }).join('');
+    const open = sp.mocks.find(m => (m.exam || m.title) === sel);
+    const list = open ? `<div class="cs-unit-form cs-spk-open">
+        <div class="cs-unit-form-top"><strong>${esc(open.title)}</strong><span class="muted">${open.attempts.length} attempt${open.attempts.length === 1 ? '' : 's'}, newest first</span></div>
+        <ul class="cs-unit-hist">${open.attempts.map((t, i) => `<li class="${i === 0 ? 'is-now' : ''}">
+          <span>${esc(new Date(t.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }))}</span>
+          <strong class="${spkBand(t.score)}">${t.score ?? '—'}</strong>
+          <span>${esc(t.level || (t.status === 'marking' ? 'being marked' : ''))}</span>
+          <span class="muted">${esc(spkBands(t.bands))}${t.expert ? ' · ✓ expert' : ''}${t.deleted ? ' · deleted by the student' : ''}${i === 0 ? ' · latest' : ''}</span>
+          ${t.deleted ? '' : `<a class="cs-link" href="/?result=${esc(t.id)}" target="_blank" rel="noopener">open</a>`}</li>`).join('')}</ul>
+      </div>` : '';
+    const pr = sp.practice;
+    const practice = pr.count ? `<p class="cs-att-line"><span class="muted">Part practice:</span> ${pr.count} part${pr.count === 1 ? '' : 's'}${pr.thisMonth ? ` (${pr.thisMonth} in ${esc(month)})` : ''} — ${pr.recent.slice(0, 5).map(p => {
+        const name = (CS_SPK_PARTS.find(([k]) => k === p.part) || [])[1] || p.part || '?';
+        const band = typeof p.bands?.[p.part] === 'number' ? p.bands[p.part] : null;
+        return `<span class="cs-spk-pp">Part ${esc(name)}${band !== null ? ` <b>${band}</b>` : p.status === 'marking' ? ' ⏳' : ''} <small>${esc(spkDay(p.at))}</small></span>`;
+      }).join(' ')}</p>` : '';
+    return `<div class="cs-box cs-spk">
+      ${head(stats)}
+      ${progress}
+      ${sp.mocks.length ? `<div class="cs-units cs-spk-units">${chips}</div>` : '<p class="muted" style="font-size:13px;margin:0">No full mock yet.</p>'}
+      ${list || (sp.mocks.length ? '<p class="muted" style="font-size:12px;margin:0">Tap a mock to see every attempt. A retaken mock shows its newest score, with the one before it.</p>' : '')}
+      ${practice}
+      <div><button type="button" class="btn btn-ghost btn-sm" data-cs-spk-refresh>↻ Refresh</button></div>
+    </div>`;
+  }
+
   /**
    * "Xatolarim" of the student's linked website account (2026-10-28): the
    * words they got wrong in vocabulary tests and have not learnt yet, per
@@ -3132,6 +3217,8 @@
       </form>
 
       ${vocabUnits(s)}
+
+      ${csSpeaking(s)}
 
       ${csMistakes(s)}
 
@@ -3333,6 +3420,11 @@
       await csCall(`/admin/course-students/${id}`, { method: 'PATCH', body: { accountEmail: email } },
         email ? `${st?.name || 'Student'} linked to ${email}.` : `${st?.name || 'Student'} unlinked from the website account.`, { csAccount: undefined });
     });
+    root.querySelectorAll('[data-cs-spk]').forEach(el => el.addEventListener('click', () => {
+      const key = el.dataset.csSpk;
+      setState({ csSpk: state.csSpk === key ? null : key });
+    }));
+    root.querySelector('[data-cs-spk-refresh]')?.addEventListener('click', () => loadCourse({}));
     root.querySelectorAll('[data-cs-unit]').forEach(el => el.addEventListener('click', () => {
       const raw = el.dataset.csUnit;
       const unit = raw === 'general' ? 'general' : Number(raw);
@@ -3421,7 +3513,7 @@
       const open = () => {
         const id = el.dataset.csSel;
         const st = state.cs?.students.find(x => x.id === id);
-        setState(state.csSel === id ? { csSel: null, csMove: null } : { csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csName: undefined, csAccount: undefined, csNote: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined, csMove: null });
+        setState(state.csSel === id ? { csSel: null, csMove: null } : { csSel: id, ...csFormFor(st, csHwDay || csToday()), csUnit: null, csSpk: null, csName: undefined, csAccount: undefined, csNote: undefined, csPayAmount: undefined, csPayDate: '', csPayNote: '', csPayMonth: null, csFee: undefined, csMove: null });
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });

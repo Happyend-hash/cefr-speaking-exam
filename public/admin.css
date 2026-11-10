@@ -756,3 +756,24 @@ button.u-tile:hover .u-more, button.u-tile.is-open .u-more, button.u-tile:focus-
 .cs-tnote label .muted { font-weight: 400; font-size: 12.5px; }
 .cs-tnote textarea { width: 100%; resize: vertical; min-height: 54px; padding: 8px 10px; border-radius: 10px; border: 1px solid #ecd28c; font: inherit; background: #fff; }
 .cs-tnote-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Speaking mocks on the course card (2026-11-10) */
+.cs-spk { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.cs-spk .cs-box-head { flex-wrap: wrap; gap: 6px 14px; }
+.cs-spk .cs-vocab-stats b { color: var(--ink); }
+.cs-spk .cs-vocab-stats b.is-good, .cs-spk-progress b.is-good, .cs-spk-cell b.is-good { color: #15803d; }
+.cs-spk .cs-vocab-stats b.is-mid, .cs-spk-progress b.is-mid, .cs-spk-cell b.is-mid { color: #b45309; }
+.cs-spk .cs-vocab-stats b.is-low, .cs-spk-progress b.is-low, .cs-spk-cell b.is-low { color: #b91c1c; }
+.cs-spk-units { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+.cs-spk-chip strong { display: flex; align-items: baseline; gap: 5px; }
+.cs-spk-lvl { font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.cs-spk-times { font-weight: 600; color: var(--indigo-700); text-transform: none; }
+.cs-spk-progress { margin: 0; font-size: 14px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; font-variant-numeric: tabular-nums; }
+.cs-spk-arrow { color: var(--ink-faint); }
+.cs-spk-open .cs-unit-hist li { flex-wrap: wrap; }
+.cs-spk-pp { display: inline-flex; gap: 4px; align-items: baseline; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; margin: 2px 2px 0 0; font-size: 12px; }
+.cs-spk-cell { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; max-width: 150px; font-variant-numeric: tabular-nums; }
+.cs-spk-cell > span { white-space: nowrap; }
+.cs-spk-cell small { color: var(--ink-soft); font-weight: 600; }
+.cs-spk-new { font-size: 11px; font-weight: 700; color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 999px; padding: 1px 7px; }
+.cs-spk-meta { color: var(--indigo-700); font-weight: 600; }

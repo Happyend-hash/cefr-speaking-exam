@@ -121,6 +121,29 @@ const periodSchema = new mongoose.Schema({
   fee: { type: Number, min: 0, default: null }
 });
 
+/**
+ * One speaking attempt of the student's linked website account (2026-11-10),
+ * copied here so the teacher's record stays even if the student deletes the
+ * attempt on the website. Kept current from the attempt itself (re-marks,
+ * expert reviews) by services/CourseSpeaking.js.
+ */
+const speakingSchema = new mongoose.Schema({
+  result: { type: mongoose.Schema.Types.ObjectId, required: true },
+  user: { type: mongoose.Schema.Types.ObjectId },
+  exam: { type: mongoose.Schema.Types.ObjectId },
+  title: { type: String, default: '' },
+  mode: { type: String, enum: ['mock', 'practice'], default: 'mock' },
+  part: { type: String, default: '' },
+  status: { type: String, enum: ['marking', 'completed'], default: 'marking' },
+  score: { type: Number, default: null },
+  level: { type: String, default: '' },
+  bands: { part11: Number, part12: Number, part2: Number, part3: Number },
+  expert: { type: Boolean, default: false },
+  at: Date,
+  /** The student deleted it on the website; the teacher still sees it. */
+  deletedAt: { type: Date, default: null }
+}, { _id: false });
+
 const courseStudentSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, maxlength: 80 },
   level: { type: String, enum: LEVELS, default: 'A1' },
@@ -143,6 +166,7 @@ const courseStudentSchema = new mongoose.Schema({
   payments: [paymentSchema],
   vocab: [vocabResultSchema],
   vocabTests: [vocabTestSchema],
+  speaking: [speakingSchema],
   lastParentVisit: Date,
   /**
    * The student's website account (Gmail), typed in by the teacher. Links the

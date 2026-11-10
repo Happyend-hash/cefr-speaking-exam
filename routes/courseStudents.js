@@ -10,6 +10,7 @@ import { authorize } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { sendPaymentReport } from '../services/PaymentReport.js';
 import { recordUnitResult, recordGeneralTest } from '../services/CourseVocab.js';
+import { syncCourseSpeaking, speakingSummary } from '../services/CourseSpeaking.js';
 import User from '../models/User.js';
 
 /**
@@ -75,7 +76,9 @@ const row = (s, units = {}, books = {}, accounts = new Set(), mistakes = new Map
     accountFound: Boolean(s.accountEmail && accounts.has(s.accountEmail)),
     // "Xatolarim" of the linked account: words still to learn per book, and the hardest ones
     mistakes: (s.accountEmail && mistakes.get(s.accountEmail)) || null,
-    lastParentVisit: s.lastParentVisit || null
+    lastParentVisit: s.lastParentVisit || null,
+    // speaking mocks handed in from the linked account (2026-11-10): kept here even if deleted on the website
+    speaking: speakingSummary(s.speaking || [])
   };
 };
 
@@ -104,6 +107,7 @@ async function overview() {
   const emails = list.map(s => s.accountEmail).filter(Boolean);
   const users = emails.length ? await User.find({ email: { $in: emails } }).select('email').lean() : [];
   const accounts = new Set(users.map(u => u.email));
+  await syncCourseSpeaking(list, new Map(users.map(u => [u.email, u._id])));
   const byUser = await mistakesForUsers(users.map(u => String(u._id)));
   const mistakes = new Map(users.filter(u => byUser.has(String(u._id))).map(u => [u.email, byUser.get(String(u._id))]));
   return {

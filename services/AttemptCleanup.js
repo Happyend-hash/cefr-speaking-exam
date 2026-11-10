@@ -1,4 +1,5 @@
 import AudioStorageService from './AudioStorageService.js';
+import { keepBeforeDelete } from './CourseSpeaking.js';
 
 /**
  * Deleting an attempt, in one place.
@@ -28,6 +29,8 @@ export async function removeResult(result) {
     return { ok: false, reason: `${failed.length} of ${keys.length} recordings could not be deleted` };
   }
 
+  // The teacher's course card keeps its own copy of a handed-in attempt.
+  await keepBeforeDelete(result);
   await result.deleteOne();
   return { ok: true, recordingsDeleted: keys.length };
 }
