@@ -85,6 +85,7 @@ import pushRoutes from './routes/push.js';
 import materialRoutes, { fileRouter as materialFileRoutes, adminRouter as materialAdminRoutes } from './routes/materials.js';
 import { startStorySweep } from './services/Social.js';
 import { publicRouter as wallRoutes, studentRouter as wallStudentRoutes, adminRouter as wallAdminRoutes } from './routes/wall.js';
+import { router as shareRoutes, publicRouter as sharePublicRoutes } from './routes/share.js';
 import { noteGuest } from './services/UsageStats.js';
 import { resumeStuckMarking } from './routes/exam.js';
 import { retryAll, RETRY_EVERY_MS } from './services/MarkingRetry.js';
@@ -329,6 +330,9 @@ app.use('/api/parent', parentRoutes);
 // The public wall of reviews and real exam results — no sign-in needed to read it.
 app.use('/api/wall/me', authenticate, requireVerifiedEmail, wallStudentRoutes);
 app.use('/api/wall', wallRoutes);
+// Shared mock results (2026-11-10): the public check behind the score sheet's QR, and the student's own sharing.
+app.use('/api/r', rateLimit({ windowMs: 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false }), sharePublicRoutes);
+app.use('/api/share', authenticate, requireVerifiedEmail, shareRoutes);
 // Daily usage statistics: a browser that opened the site without signing in
 // says so once a day, with a random id it made up (nothing personal).
 app.post('/api/visit', (req, res) => {
@@ -434,6 +438,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get(['/parent', '/ota-ona'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'parent.html')));
 // Privacy policy (needed for Sign in with Google and payment providers).
 app.get(['/privacy', '/maxfiylik'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
+
+// A shared result's page (/r/CODE): never listed by search engines.
+app.use('/r/', (req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); next(); });
 
 // Any non-API GET falls through to the client, so deep links and reloads work.
 // Declared after express.static so real files always win.

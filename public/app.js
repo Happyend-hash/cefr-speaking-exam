@@ -1685,7 +1685,9 @@
         ${hero}
         ${r.emailed ? `<p class="muted" style="margin-top:10px;font-size:13px">${esc(WR_UZ.emailed)}</p>` : ''}
         ${r.expertReviewed ? `<p class="expert-badge">✓ Reviewed by an expert examiner</p>` : ''}
+        ${shareButton('writing', r)}
       </div>
+      ${sharePanel('writing', r.id)}
 
       ${r.overallFeedback ? `<div class="card">
         <p>${esc(r.overallFeedback)}</p>
@@ -5727,6 +5729,460 @@
     paintVoice();
   }
 
+  // ========================================================= SHARE A RESULT
+  //
+  // "Natijani ulashish" (Jamshid, 2026-11-10): a finished full mock becomes a
+  // score sheet — always the same design, the site's own colours — drawn here
+  // on the student's phone, with a QR that opens englishhub.uz/r/CODE, where
+  // anyone can check the score is real. With "audio and feedback" chosen, that
+  // page also plays the recordings and shows the feedback, for 30 days.
+
+  const SH_UZ = {
+    btn: 'Natijani ulashish',
+    title: 'Natijani ulashish',
+    sub: "O'qituvchingiz yoki do'stlaringizga natija varaqasini yuboring. Undagi QR kod natija haqiqiy ekanini ko'rsatadi.",
+    plain: 'Faqat ball',
+    plainBody: 'Natija varaqasi: umumiy ball, daraja va har bir qism. QR havola faqat shuni ko‘rsatadi.',
+    full: { speaking: 'Ball + audio + izohlar', writing: 'Ball + tekshirilgan matn + izohlar' },
+    fullBody: {
+      speaking: "Varaqa bilan birga havola orqali yozuvlaringiz, aytganlaringiz va izohlar ham ochiladi — 30 kun.",
+      writing: "Varaqa bilan birga havola orqali tekshirilgan matningiz, xatolar va izohlar ham ochiladi — 30 kun."
+    },
+    make: 'Natija varaqasini tayyorlash',
+    making: 'Tayyorlanmoqda…',
+    share: 'Ulashish',
+    download: 'Rasmni yuklab olish',
+    copy: 'Havolani nusxalash',
+    copied: '✓ Nusxalandi',
+    friend: "Do'stga yuborish",
+    pickFriend: "Kimga yuboramiz?",
+    noFriends: "Hali do'stlaringiz yo'q — Do'stlar bo'limida do'st qo'shing.",
+    sent: name => `✓ ${name}ga yuborildi`,
+    link: 'Havola',
+    views: n => `${n} marta ochilgan`,
+    until: d => `audio va izohlar ${d} gacha ochiq`,
+    stop: "Ulashishni to'xtatish",
+    stopSure: "Havola va yuborilgan varaqalardagi QR kod ishlamay qoladi. To'xtatilsinmi?",
+    stopped: "Ulashish to'xtatildi. Yangi havola uchun qayta ulashing.",
+    close: 'Yopish',
+    shareText: (s) => `${s.title}: ${s.score}/75 (${s.level}). Tekshirish: https://${s.url}`,
+    friendText: s => `My ${s.title} result: ${s.score}/75 (${s.level})`,
+    // the public page
+    verified: "Haqiqiy natija — englishhub.uz tasdiqlagan",
+    verifiedSub: 'Bu natija English Hub saytida topshirilgan mockdan olingan va o‘zgartirilmagan.',
+    gone: 'Bu havola ishlamaydi',
+    expired: "Audio va izohlarni ko'rish muddati tugagan — faqat ball ko'rsatiladi.",
+    detailsUntil: d => `Audio va izohlar ${d} gacha ochiq.`,
+    answers: 'Javoblar',
+    question: n => `${n}-savol`,
+    said: 'Aytilgani',
+    overall: 'Umumiy izoh',
+    strengths: 'Kuchli tomonlar',
+    improve: 'Ustida ishlash kerak',
+    marked: 'Tekshirilgan matn',
+    cta: 'Siz ham darajangizni bilib oling',
+    loading: 'Yuklanmoqda…'
+  };
+  const SH_LEVEL = {
+    'B1dan quyi': ['B1dan quyi', '0–37 ball'], B1: ['B1 — o‘rta', '38–50 ball'],
+    B2: ['B2 — o‘rtadan yuqori', '51–64 ball'], C1: ['C1 — ilg‘or', '65–75 ball']
+  };
+
+  const SH_MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+  const shDay = d => { const x = new Date(d); return `${x.getDate()}-${SH_MONTHS[x.getMonth()]}`; };
+  const sh = { key: '', kind: '', id: '', details: false, share: null, sheet: null, img: '', busy: false, error: '', notice: '', friends: null, pick: false, copied: false };
+  const shKey = (kind, id) => `${kind}:${id}`;
+
+  /** The button on a result, for the student who owns a finished full mock. */
+  function shareButton(kind, r) {
+    if (!state.user || state.user.role === 'admin') return '';
+    const ok = kind === 'speaking'
+      ? r.status === 'completed' && r.mode !== 'practice' && typeof r.overallScore === 'number'
+      : r.status === 'completed' && r.mode === 'mock' && r.complete;
+    if (!ok) return '';
+    return `<button class="btn btn-ghost sh-open" data-sh="open" data-kind="${kind}" data-id="${esc(r.id)}">${icon('share')} ${SH_UZ.btn}</button>`;
+  }
+
+  function sharePanel(kind, id) {
+    if (sh.key !== shKey(kind, id)) return '';
+    const opt = (val, title, body) => `<label class="sh-opt ${sh.details === val ? 'is-on' : ''}">
+        <input type="radio" name="sh-details" value="${val ? '1' : '0'}" ${sh.details === val ? 'checked' : ''}>
+        <span><strong>${title}</strong><small>${body}</small></span></label>`;
+    const s = sh.share;
+    const until = s?.detailsUntil ? shDay(s.detailsUntil) : '';
+    return `<section class="card sh-card" id="sh-card">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+        <div><h2>${SH_UZ.title}</h2><p class="muted" style="margin-top:4px">${SH_UZ.sub}</p></div>
+        <button class="sh-x" data-sh="close" aria-label="${SH_UZ.close}">✕</button>
+      </div>
+      <div class="sh-opts">${opt(false, SH_UZ.plain, SH_UZ.plainBody)}${opt(true, SH_UZ.full[kind], SH_UZ.fullBody[kind])}</div>
+      ${sh.error ? `<div class="alert alert-error">${esc(sh.error)}</div>` : ''}
+      ${sh.notice ? `<div class="alert alert-ok">${esc(sh.notice)}</div>` : ''}
+      ${sh.img ? `<img class="sh-preview" src="${sh.img}" alt="Natija varaqasi">
+        <div class="sh-actions">
+          <button class="btn" data-sh="share">📤 ${SH_UZ.share}</button>
+          <button class="btn btn-ghost" data-sh="download">⬇ ${SH_UZ.download}</button>
+          <button class="btn btn-ghost" data-sh="copy">${sh.copied ? SH_UZ.copied : `🔗 ${SH_UZ.copy}`}</button>
+          <button class="btn btn-ghost" data-sh="friend">💬 ${SH_UZ.friend}</button>
+        </div>
+        ${sh.pick ? `<div class="sh-friends"><strong>${SH_UZ.pickFriend}</strong>${sh.friends === null ? `<span class="spinner"></span>`
+          : sh.friends.length ? `<div class="sh-friend-list">${sh.friends.map(f => `<button class="sh-friend" data-sh="send" data-to="${esc(f.id)}" data-name="${esc(f.name)}">${esc(f.name)}</button>`).join('')}</div>`
+          : `<p class="muted">${SH_UZ.noFriends}</p>`}</div>` : ''}`
+      : `<button class="btn btn-lg btn-block" data-sh="make" ${sh.busy ? 'disabled' : ''}>${sh.busy ? SH_UZ.making : SH_UZ.make}</button>`}
+      ${s ? `<p class="sh-status">${SH_UZ.link}: <code>${esc(s.url)}</code> · ${esc(SH_UZ.views(s.views))}${s.details && until ? ` · ${esc(SH_UZ.until(until))}` : ''}
+        <button class="link-inline sh-stop" data-sh="stop">${SH_UZ.stop}</button></p>` : ''}
+    </section>`;
+  }
+
+  async function openShare(kind, id) {
+    Object.assign(sh, { key: shKey(kind, id), kind, id, share: null, sheet: null, img: '', busy: false, error: '', notice: '', pick: false, copied: false, details: false });
+    render();
+    document.getElementById('sh-card')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    try {
+      const { share } = await api(`/share/${kind}/${id}`);
+      if (sh.key !== shKey(kind, id)) return;
+      sh.share = share;
+      sh.details = Boolean(share?.details);
+      render();
+    } catch { /* the panel works without it */ }
+  }
+
+  async function makeSheet() {
+    if (sh.busy) return;
+    sh.busy = true; sh.error = ''; sh.notice = ''; render();
+    try {
+      const data = await api('/share', { method: 'POST', body: { kind: sh.kind, id: sh.id, details: sh.details } });
+      sh.share = data.share; sh.sheet = data.sheet;
+      const canvas = await drawSheet(data.sheet);
+      sh.canvas = canvas;
+      sh.img = canvas.toDataURL('image/png');
+    } catch (error) {
+      sh.error = error.message;
+    }
+    sh.busy = false;
+    render();
+  }
+
+  const shBlob = () => new Promise(resolve => sh.canvas.toBlob(resolve, 'image/png'));
+  const shFileName = () => `English-Hub-${String(sh.sheet?.title || 'natija').replace(/[^A-Za-z0-9]+/g, '-')}.png`;
+
+  async function shDownload() {
+    const blob = await shBlob();
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href: url, download: shFileName() });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  async function shShare() {
+    const blob = await shBlob();
+    const file = new File([blob], shFileName(), { type: 'image/png' });
+    const text = SH_UZ.shareText(sh.sheet);
+    try {
+      if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], text });
+      if (navigator.share) { await shDownload(); return await navigator.share({ text }); }
+    } catch (error) {
+      if (error?.name === 'AbortError') return; // the student closed the share menu
+    }
+    await shDownload();
+  }
+
+  async function shCopy() {
+    try { await navigator.clipboard.writeText(`https://${sh.share.url}`); } catch { window.prompt(SH_UZ.copy, `https://${sh.share.url}`); return; }
+    sh.copied = true; render();
+    setTimeout(() => { sh.copied = false; if (sh.key) render(); }, 1800);
+  }
+
+  async function shFriends() {
+    sh.pick = !sh.pick; render();
+    if (!sh.pick || sh.friends) return;
+    try { sh.friends = (await api('/social/friends')).friends || []; } catch { sh.friends = []; }
+    render();
+  }
+
+  async function shSend(to, name) {
+    sh.error = ''; sh.notice = '';
+    try {
+      // a JPEG keeps the photo well under the chat's size limit
+      const photo = sh.canvas.toDataURL('image/jpeg', 0.9);
+      await api(`/social/chats/${to}`, { method: 'POST', body: { photo, text: SH_UZ.friendText(sh.sheet) } });
+      sh.notice = SH_UZ.sent(name); sh.pick = false;
+    } catch (error) {
+      sh.error = error.message;
+    }
+    render();
+  }
+
+  async function shStop() {
+    if (!sh.share || !window.confirm(SH_UZ.stopSure)) return;
+    try {
+      await api(`/share/${sh.share.code}`, { method: 'DELETE' });
+      Object.assign(sh, { share: null, sheet: null, img: '', canvas: null, notice: SH_UZ.stopped, pick: false });
+    } catch (error) { sh.error = error.message; }
+    render();
+  }
+
+  root.addEventListener('click', event => {
+    const el = event.target.closest('[data-sh]');
+    if (!el || !root.contains(el)) return;
+    const a = el.dataset.sh;
+    if (a === 'open') { event.preventDefault(); return openShare(el.dataset.kind, el.dataset.id); }
+    if (a === 'close') { sh.key = ''; return render(); }
+    if (a === 'make') return makeSheet();
+    if (a === 'share') return shShare();
+    if (a === 'download') return shDownload();
+    if (a === 'copy') return shCopy();
+    if (a === 'friend') return shFriends();
+    if (a === 'send') return shSend(el.dataset.to, el.dataset.name);
+    if (a === 'stop') return shStop();
+  });
+  root.addEventListener('change', event => {
+    if (event.target.name !== 'sh-details') return;
+    sh.details = event.target.value === '1';
+    // a sheet already made follows the new choice (same link, same QR)
+    if (sh.img) { sh.img = ''; sh.canvas = null; makeSheet(); } else render();
+  });
+
+  // ------------------------------------------------------ the score sheet
+
+  /** Letters drawn one by one with extra space between them (canvas letterSpacing is not everywhere yet). */
+  function spaced(g, text, x, y, spacing, align = 'left') {
+    const chars = [...text];
+    const width = chars.reduce((w, ch) => w + g.measureText(ch).width, 0) + spacing * (chars.length - 1);
+    let cx = align === 'right' ? x - width : align === 'center' ? x - width / 2 : x;
+    const keep = g.textAlign; g.textAlign = 'left';
+    for (const ch of chars) { g.fillText(ch, cx, y); cx += g.measureText(ch).width + spacing; }
+    g.textAlign = keep;
+    return width;
+  }
+  const spacedWidth = (g, text, spacing) => [...text].reduce((w, ch) => w + g.measureText(ch).width, 0) + spacing * ([...text].length - 1);
+
+  function roundRect(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  }
+  const goldGrad = (g, x0, y0, x1, y1) => { const gr = g.createLinearGradient(x0, y0, x1, y1); gr.addColorStop(0, '#ffe08a'); gr.addColorStop(1, '#e9a514'); return gr; };
+
+  /** The English Hub mark (the same paths as the site's logo), at x, y, size s. */
+  function drawMark(g, x, y, s, house = '#f5c451', mic = '#fff', tick = '#e9a514') {
+    g.save(); g.translate(x, y); g.scale(s / 100, s / 100);
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    g.strokeStyle = house; g.lineWidth = 7;
+    g.stroke(new Path2D('M10 46L50 12L90 46')); g.stroke(new Path2D('M20 40V88H80V40'));
+    g.translate(22, 34); g.scale(0.56, 0.56);
+    g.fillStyle = mic; roundRect(g, 33, 8, 34, 54, 17); g.fill();
+    g.lineWidth = 6; g.strokeStyle = tick; g.stroke(new Path2D('M41 35L48 42L60 27'));
+    g.strokeStyle = mic; g.stroke(new Path2D('M22 44A28 28 0 0 0 78 44')); g.stroke(new Path2D('M50 72V86M38 88H62'));
+    g.restore();
+  }
+
+  async function drawSheet(d) {
+    const fonts = ['800 60px Sora', '700 30px Sora', '600 30px Sora', '500 20px Manrope', '600 20px Manrope', '700 20px Manrope', '800 20px Manrope'];
+    try { await Promise.all(fonts.map(f => document.fonts.load(f))); } catch { /* the fallback font still draws */ }
+    const W = 1080, H = 1350, L = 72, R = 1008;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    const lav = '#d4d0ff', lav2 = '#bdb8f5', lav3 = '#a9a4e8', gold = '#f5c451', ink = '#0f0d33';
+
+    // ground: the site's indigo, gold light top right, violet bottom left, fine dots
+    const dx = Math.sin(158 * Math.PI / 180), dy = -Math.cos(158 * Math.PI / 180);
+    const half = (Math.abs(W * dx) + Math.abs(H * dy)) / 2;
+    const bg = g.createLinearGradient(W / 2 - dx * half, H / 2 - dy * half, W / 2 + dx * half, H / 2 + dy * half);
+    bg.addColorStop(0, '#3b34b5'); bg.addColorStop(0.4, '#241f8c'); bg.addColorStop(0.76, '#16134f'); bg.addColorStop(1, '#0d0b2b');
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    const glow = (x, y, r, color) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, W, H); };
+    glow(994, -54, 520, 'rgba(245,196,81,0.26)');
+    glow(-86, 1404, 600, 'rgba(110,100,255,0.5)');
+    g.fillStyle = 'rgba(255,255,255,0.06)';
+    for (let y = 12; y < H; y += 24) for (let x = 12; x < W; x += 24) { g.beginPath(); g.arc(x, y, 1.3, 0, Math.PI * 2); g.fill(); }
+
+    g.textBaseline = 'alphabetic';
+    // header
+    drawMark(g, L, 64, 64);
+    g.font = '800 34px Sora'; g.fillStyle = '#fff'; g.fillText('English ', 150, 96);
+    g.fillStyle = gold; g.fillText('Hub', 150 + g.measureText('English ').width, 96);
+    g.font = '800 13px Manrope'; spaced(g, 'FAMILY', 151, 120, 6);
+    g.font = '700 15px Manrope';
+    const pillW = spacedWidth(g, 'NATIJA VARAQASI', 3) + 36;
+    roundRect(g, R - pillW, 77, pillW, 38, 19); g.fillStyle = 'rgba(245,196,81,0.08)'; g.fill();
+    g.lineWidth = 1.5; g.strokeStyle = 'rgba(245,196,81,0.6)'; g.stroke();
+    g.fillStyle = gold; spaced(g, 'NATIJA VARAQASI', R - pillW + 18, 101, 3);
+    const rule = g.createLinearGradient(L, 0, R, 0); rule.addColorStop(0, gold); rule.addColorStop(0.6, 'rgba(245,196,81,0.15)'); rule.addColorStop(1, 'rgba(245,196,81,0)');
+    g.fillStyle = rule; g.fillRect(L, 158, R - L, 2);
+
+    // module tag
+    const tag = `${d.module === 'writing' ? 'WRITING' : 'SPEAKING'} · TO‘LIQ MOCK`;
+    g.font = '800 15px Manrope';
+    const tagW = spacedWidth(g, tag, 2.5) + 32 + 28;
+    roundRect(g, L, 194, tagW, 38, 10); g.fillStyle = goldGrad(g, L, 194, L + tagW, 232); g.fill();
+    g.save(); g.translate(L + 16, 204); g.strokeStyle = ink; g.lineWidth = 2.4; g.lineCap = 'round'; g.lineJoin = 'round'; g.scale(0.75, 0.75);
+    if (d.module === 'writing') g.stroke(new Path2D('M4 20h4L19 9l-4-4L4 16z'));
+    else { roundRect(g, 9, 3, 6, 11, 3); g.stroke(); g.stroke(new Path2D('M5 11a7 7 0 0 0 14 0M12 18v3')); }
+    g.restore();
+    g.fillStyle = ink; spaced(g, tag, L + 44, 219, 2.5);
+
+    // name (shrinks to fit), mock and date
+    let size = 60;
+    g.font = `800 ${size}px Sora`;
+    while (g.measureText(d.name).width > R - L && size > 36) { size -= 2; g.font = `800 ${size}px Sora`; }
+    let name = d.name;
+    while (g.measureText(name).width > R - L && name.length > 4) name = `${name.slice(0, -2)}…`;
+    g.fillStyle = '#fff'; g.fillText(name, L, 302);
+    g.font = '700 25px Manrope'; g.fillStyle = '#fff'; g.fillText(d.title, L, 350);
+    const tw = g.measureText(d.title).width;
+    g.font = '600 25px Manrope'; g.fillStyle = lav; g.fillText(` · ${d.date}`, L + tw, 350);
+
+    // the score
+    const card = (y, h) => { roundRect(g, L, y, R - L, h, 30); g.fillStyle = 'rgba(255,255,255,0.07)'; g.fill(); g.lineWidth = 1.5; g.strokeStyle = 'rgba(255,255,255,0.14)'; g.stroke(); };
+    card(397, 203);
+    g.font = '800 150px Sora';
+    const num = String(d.score);
+    const nGrad = g.createLinearGradient(0, 440, 0, 560); nGrad.addColorStop(0, '#ffe9a8'); nGrad.addColorStop(0.55, gold); nGrad.addColorStop(1, '#e9a514');
+    g.fillStyle = nGrad; spaced(g, num, 112, 555, -5);
+    const nw = spacedWidth(g, num, -5);
+    g.font = '700 36px Sora'; g.fillStyle = lav2; g.fillText('/ 75', 112 + nw + 10, 555);
+    const X = 410, SW = 968 - X;
+    g.font = '800 46px Sora';
+    const bw = g.measureText(d.level).width + 44;
+    g.save(); g.shadowColor = 'rgba(233,165,20,0.35)'; g.shadowBlur = 30; g.shadowOffsetY = 10;
+    roundRect(g, X, 433, bw, 74, 20); g.fillStyle = goldGrad(g, X, 433, X + bw, 507); g.fill(); g.restore();
+    g.fillStyle = ink; g.fillText(d.level, X + 22, 487);
+    const lt = SH_LEVEL[d.level] || [d.level, ''];
+    g.font = '700 22px Sora'; g.fillStyle = '#fff'; g.fillText(lt[0], X + bw + 16, 463);
+    g.font = '600 19px Manrope'; g.fillStyle = lav; g.fillText(`${lt[1]} · CEFR`, X + bw + 16, 491);
+    const parts = [38, 13, 14, 11], gap = 3, unit = (SW - gap * 3) / 76;
+    const idx = { 'B1dan quyi': 0, B1: 1, B2: 2, C1: 3 }[d.level] ?? -1;
+    let sx = X;
+    const ticks = ['B1dan quyi', 'B1 · 38', 'B2 · 51', 'C1 · 65'];
+    g.font = '700 14px Manrope';
+    parts.forEach((p, i) => {
+      roundRect(g, sx, 525, p * unit, 14, 4); g.fillStyle = i <= idx ? gold : 'rgba(255,255,255,0.14)'; g.fill();
+      g.fillStyle = lav3; g.fillText(ticks[i], sx, 561);
+      sx += p * unit + gap;
+    });
+    // the marker sits in its level's own segment: 0–37, 38–50, 51–64, 65–75
+    const sc = Math.min(75, Math.max(0, d.score));
+    const mx = X + (sc + 0.5) * unit + (sc >= 65 ? 3 : sc >= 51 ? 2 : sc >= 38 ? 1 : 0) * gap - 3;
+    roundRect(g, mx - 4, 512, 14, 40, 7); g.fillStyle = 'rgba(255,255,255,0.25)'; g.fill();
+    roundRect(g, mx, 516, 6, 32, 3); g.fillStyle = '#fff'; g.fill();
+
+    // each part
+    const top = 628, bottom = 1128;
+    card(top, bottom - top);
+    const rows = d.parts.length || 1, rh = (bottom - top - 24) / rows;
+    d.parts.forEach((p, i) => {
+      const cy = top + 12 + rh * i + rh / 2;
+      if (i) { g.fillStyle = 'rgba(255,255,255,0.1)'; g.fillRect(112, top + 12 + rh * i, SW + (X - 112), 1); }
+      g.font = '700 29px Sora'; g.fillStyle = '#fff'; g.fillText(p.name, 112, cy - 2);
+      g.font = '600 19px Manrope'; g.fillStyle = lav2; g.fillText(p.desc, 112, cy + 26);
+      const pipsW = p.max * 30 + (p.max - 1) * 6, px0 = 968 - 150 - 22 - pipsW;
+      for (let k = 0; k < p.max; k++) {
+        const x = px0 + k * 36;
+        roundRect(g, x, cy - 7, 30, 14, 4); g.fillStyle = 'rgba(255,255,255,0.14)'; g.fill();
+        const fill = Math.max(0, Math.min(1, p.band - k));
+        if (fill > 0) { g.save(); roundRect(g, x, cy - 7, 30, 14, 4); g.clip(); g.fillStyle = gold; g.fillRect(x, cy - 7, 30 * fill, 14); g.restore(); }
+      }
+      g.textAlign = 'right';
+      g.font = '700 20px Sora'; g.fillStyle = lav2; const ofText = ` / ${p.max}`; g.fillText(ofText, 968, cy + 4);
+      const ofW = g.measureText(ofText).width;
+      g.font = '800 36px Sora'; g.fillStyle = '#fff'; g.fillText(String(p.band), 968 - ofW, cy + 4);
+      g.font = '700 17px Manrope'; g.fillStyle = gold;
+      let label = p.label; while (g.measureText(label).width > 260 && label.length > 4) label = `${label.slice(0, -2)}…`;
+      g.fillText(label, 968, cy + 30);
+      g.textAlign = 'left';
+    });
+
+    // check it: QR, link and code
+    roundRect(g, L, 1158, 132, 132, 18); g.fillStyle = '#fff'; g.fill();
+    const n = d.qr.length, cell = 108 / n;
+    g.fillStyle = '#16134f';
+    d.qr.forEach((row, y) => [...row].forEach((bit, x) => {
+      if (bit === '1') {
+        const x0 = Math.round(L + 12 + x * cell), y0 = Math.round(1170 + y * cell);
+        g.fillRect(x0, y0, Math.round(L + 12 + (x + 1) * cell) - x0, Math.round(1170 + (y + 1) * cell) - y0);
+      }
+    }));
+    g.font = '700 21px Sora'; g.fillStyle = gold; g.fillText('Haqiqiyligini tekshiring', 230, 1206);
+    g.font = '600 17px Manrope'; g.fillStyle = lav; g.fillText('QR kodni skanerlang yoki oching:', 230, 1236);
+    const chip = (text, x) => {
+      g.font = '800 17px Manrope';
+      const w = spacedWidth(g, text, 2) + 16;
+      roundRect(g, x, 1249, w, 26, 6); g.fillStyle = 'rgba(255,255,255,0.1)'; g.fill();
+      g.fillStyle = '#fff'; spaced(g, text, x + 8, 1268, 2);
+      return w;
+    };
+    let fx = 230 + chip(d.url, 230) + 8;
+    g.font = '600 17px Manrope'; g.fillStyle = lav; g.fillText('· kod', fx, 1268);
+    fx += g.measureText('· kod').width + 8;
+    chip(d.code, fx);
+    g.textAlign = 'right';
+    g.font = '800 24px Sora'; g.fillStyle = '#fff'; g.fillText('englishhub.uz', R, 1216);
+    g.font = '700 17px Manrope'; g.fillStyle = lav3; g.fillText('CEFR Speaking & Writing', R, 1242);
+    g.textAlign = 'left';
+    return c;
+  }
+
+  // -------------------------------------------- englishhub.uz/r/CODE (public)
+
+  const shPub = { code: '', data: null, error: '', img: '' };
+
+  async function openShared(code) {
+    shPub.code = code; shPub.data = null; shPub.error = ''; shPub.img = '';
+    go('shared');
+    try {
+      shPub.data = await api(`/r/${encodeURIComponent(code)}`);
+      shPub.img = (await drawSheet(shPub.data.sheet)).toDataURL('image/png');
+    } catch (error) {
+      shPub.error = error.message;
+    }
+    if (state.screen === 'shared') render();
+  }
+
+  function sharedScreen() {
+    const cta = state.user ? '' : `<section class="card sh-cta"><strong>${SH_UZ.cta}</strong><p class="muted">englishhub.uz — CEFR Speaking va Writing mocklari, rasmiy 75 ballik shkala bo‘yicha.</p><button class="btn" data-go="signup">Boshlash</button></section>`;
+    if (shPub.error) return `<section class="card sh-gone"><h2>${SH_UZ.gone}</h2><p class="muted" style="margin-top:6px">${esc(shPub.error)}</p></section>${cta}`;
+    const d = shPub.data;
+    if (!d) return `<div class="center-note"><span class="spinner"></span><p style="margin-top:12px">${SH_UZ.loading}</p></div>`;
+    const s = d.sheet;
+    const det = d.details;
+    const until = d.detailsUntil ? shDay(d.detailsUntil) : '';
+    const list = (title, items) => (items?.length ? `<div style="margin-top:12px"><div class="section-title">${title}</div><ul class="pill-list">${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '');
+    let details = '';
+    if (det && s.module === 'speaking') {
+      details = `${det.feedback ? `<section class="card"><h2>${SH_UZ.overall}</h2><p style="margin-top:8px">${esc(det.feedback)}</p>${det.reasoning ? `<p class="muted" style="margin-top:10px">${esc(det.reasoning)}</p>` : ''}${list(SH_UZ.strengths, det.strengths)}${list(SH_UZ.improve, det.improvements)}</section>` : ''}
+        <h2 class="sh-h2">${SH_UZ.answers}</h2>
+        ${det.answers.map(a => `<section class="card sh-answer">
+          <div class="row" style="justify-content:space-between;gap:8px"><strong>${SH_UZ.question(a.n)}</strong>${a.part ? `<span class="badge">Part ${esc(a.part)}</span>` : ''}</div>
+          ${a.question ? `<p class="sh-q">${esc(a.question)}</p>` : ''}
+          ${a.audio ? `<audio controls preload="none" src="${esc(a.audio)}"></audio>` : ''}
+          ${a.said ? `<div class="section-title" style="margin-top:10px">${SH_UZ.said}</div><div class="transcript" style="margin-top:6px">${esc(a.said)}</div>` : ''}
+          ${a.feedback ? `<p class="muted" style="margin-top:10px">${esc(a.feedback)}</p>` : ''}
+        </section>`).join('')}`;
+    } else if (det && s.module === 'writing') {
+      details = `${det.feedback ? `<section class="card"><h2>${SH_UZ.overall}</h2><p style="margin-top:8px">${esc(det.feedback)}</p>${list(SH_UZ.strengths, det.strengths)}${list(SH_UZ.improve, det.improvements)}</section>` : ''}
+        ${det.parts.map(p => `<section class="card wr-part">
+          <div class="row" style="justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+            <div><h3>${esc(p.name)}</h3><div class="muted" style="font-size:13px">${esc(p.desc)} · ${p.words} so‘z</div></div>
+            <div class="wr-band"><strong>${p.band}</strong><span class="muted"> / ${p.max}</span><div class="muted" style="font-size:13px;text-align:right">${esc(p.label)}</div></div>
+          </div>
+          ${p.task ? `<p class="muted" style="margin-top:12px;font-size:14px"><strong>Topshiriq:</strong> ${esc(p.task)}</p>` : ''}
+          <div style="margin-top:14px"><div class="section-title">${SH_UZ.marked}</div><div class="wr-script">${markedScript(p.segments || [])}</div></div>
+          ${p.reasoning ? `<p style="margin-top:12px">${esc(p.reasoning)}</p>` : ''}
+          ${p.feedback ? `<p class="muted" style="margin-top:8px">${esc(p.feedback)}</p>` : ''}
+        </section>`).join('')}`;
+    }
+    return `<div class="sh-page">
+      <div class="sh-verified">✓ <span><strong>${SH_UZ.verified}</strong><small>${SH_UZ.verifiedSub}</small></span></div>
+      ${shPub.img ? `<img class="sh-sheet" src="${shPub.img}" alt="${esc(`${s.name} — ${s.title}: ${s.score}/75, ${s.level}`)}">` : ''}
+      ${det && until ? `<p class="muted sh-note">${esc(SH_UZ.detailsUntil(until))}</p>` : d.detailsExpired ? `<p class="muted sh-note">${SH_UZ.expired}</p>` : ''}
+      ${details}
+      ${cta}
+    </div>`;
+  }
+
   // ============================================================ AI USTOZ
   //
   // A live voice speaking coach (Google Gemini Live). The browser opens a
@@ -8301,6 +8757,7 @@
       dm: dmScreen,
       person: personScreen,
       wall: wallScreen,
+      shared: sharedScreen,
       'my-results': myResultsScreen,
       news: newsScreen,
       materials: materialsScreen
@@ -8425,6 +8882,7 @@
    * of whatever contains it, so tiles and buttons need no icon-specific colours.
    */
   const ICONS = {
+    share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
     copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -11050,6 +11508,7 @@
         <div style="margin-top:12px">
           <span class="badge ${r.isPassed ? 'badge-pass' : 'badge-fail'}">${r.isPassed ? 'Passed' : 'Not yet passed'}</span>
         </div>
+        ${shareButton('speaking', r)}
         ${r.markingMethod === 'average-fallback'
           // The whole-performance pass failed and this is the average of the
           // answers instead — usually lower. Say so, so nobody takes it as final.
@@ -11057,6 +11516,7 @@
                so this is an estimate from your individual answers. Your teacher can re-mark it.</p>`
           : ''}
       </div>
+      ${sharePanel('speaking', r.id)}
 
       ${criteriaCard()}
       ${r.status === 'completed' ? expertForm('speaking',
@@ -11690,6 +12150,13 @@
     const token = store.get('token');
     const user = store.get('user');
     if (!token) countGuestVisit();
+    // /r/CODE — a shared result's check page, signed in or not (2026-11-10).
+    const sharedCode = (window.location.pathname.match(/^\/r\/([A-Za-z0-9]{6,12})\/?$/) || [])[1];
+    if (sharedCode) {
+      if (token && user) { try { state.token = token; state.user = JSON.parse(user); } catch { /* fine */ } }
+      openShared(sharedCode.toUpperCase());
+      return;
+    }
     // ?page=wall — the public "Natijalar va fikrlar" page, signed in or not (a link to share).
     if (new URLSearchParams(window.location.search).get('page') === 'wall') {
       if (token && user) { try { state.token = token; state.user = JSON.parse(user); } catch { /* fine */ } }
