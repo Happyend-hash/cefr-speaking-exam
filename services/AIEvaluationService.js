@@ -67,6 +67,24 @@ export function firstJsonObject(text) {
   return null;
 }
 
+/**
+ * The model for the per-answer comments (Jamshid, 2026-11-10).
+ *
+ * A speaking mock was costing ~$0.21 in Claude, and about 40% of it was the
+ * eight per-answer comments — supporting detail that does not decide the
+ * level (the whole-performance pass on the main model does; the per-answer
+ * scores are only averaged if that pass fails). Haiku writes them at a small
+ * fraction of the price. CLAUDE_ANSWER_MODEL overrides it; "same" (or "main")
+ * puts the comments back on the main model.
+ */
+export const DEFAULT_ANSWER_MODEL = 'claude-haiku-5-5';
+export function answerModelFromEnv(value) {
+  const v = String(value ?? '').trim();
+  if (!v) return DEFAULT_ANSWER_MODEL;
+  if (/^(same|main|none|off)$/i.test(v)) return null;
+  return v;
+}
+
 class AIEvaluationService {
   constructor() {
     this.apiKey = process.env.CLAUDE_API_KEY;
@@ -87,7 +105,7 @@ class AIEvaluationService {
      * calibration check is for. Unset, both use the same model and nothing
      * changes.
      */
-    this.answerModel = process.env.CLAUDE_ANSWER_MODEL || null;
+    this.answerModel = answerModelFromEnv(process.env.CLAUDE_ANSWER_MODEL);
 
     /** Tokens spent since boot, so the cost is measured rather than estimated. */
     this.spend = { calls: 0, input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
@@ -961,7 +979,7 @@ Mark as the official examiner would: neither severe nor generous.`;
 THE STUDENT'S ANSWER (transcribed):
 "${transcription}"`;
 
-    return { cached, user, model: this.answerModel };
+    return { cached, user, model: this.answerModel || null };
   }
 
   /**
@@ -998,6 +1016,18 @@ THE STUDENT'S ANSWER (transcribed):
       }
 
       const status = error.status || error.response?.status;
+
+      // The cheaper answer model refused outright (a model name this key
+      // cannot use, or a setting it does not accept): mark with the main model
+      // instead, and stop asking the cheaper one until the next deploy. A
+      // comment from the better model is worth more than no comment at all.
+      const isSplitPrompt = prompt && typeof prompt === 'object';
+      if (isSplitPrompt && prompt.model && prompt.model !== this.model && (status === 400 || status === 404)) {
+        console.warn(`Answer model "${prompt.model}" refused (${status}); using ${this.model} for per-answer comments from now on: ${error.message}`);
+        if (this.answerModel === prompt.model) this.answerModel = null;
+        return this.callClaudeAPI({ ...prompt, model: null }, attempt);
+      }
+
       const retryable =
         status === 429 || status === 529 || (status >= 500 && status < 600) ||
         // No status at all means the connection itself failed.
@@ -1147,7 +1177,7 @@ THE STUDENT'S ANSWER (transcribed):
 
       const hint =
         status === 401 ? ' — CLAUDE_API_KEY is invalid'
-        : status === 404 ? ` — model "${this.model}" does not exist; set CLAUDE_MODEL to one your key can use`
+        : status === 404 ? ` — model "${payload.model}" does not exist; set CLAUDE_MODEL (or CLAUDE_ANSWER_MODEL) to one your key can use`
         : status === 400 ? ' — the request was rejected; check CLAUDE_MODEL, CLAUDE_MAX_TOKENS and CLAUDE_TEMPERATURE'
         : status === 429 ? ' — rate limited or out of credit'
         : '';

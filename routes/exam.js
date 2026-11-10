@@ -1212,9 +1212,40 @@ export async function trialMark(resultId) {
   ));
 }
 
-export async function markTwice(markOnce) {
+/**
+ * How long the second examiner waits for the first (Jamshid, 2026-11-10).
+ *
+ * Both examiners send the same long rubric and calibration samples, marked
+ * for the prompt cache. Started at the same instant, neither could read what
+ * the other was still writing, so both paid the cache-write premium and
+ * nothing was read. The cache entry exists once the first request is under
+ * way, so the second starts a few seconds later (or as soon as the first has
+ * finished) and reads the rubric at a tenth of the price, without doubling
+ * the student's wait the way running them one after the other would.
+ */
+export const MARKER_STAGGER_MS = 8000;
+const markerStagger = () => {
+  const ms = Number(process.env.SPEAKING_MARKER_STAGGER_MS);
+  return Number.isFinite(ms) && ms >= 0 ? ms : MARKER_STAGGER_MS;
+};
+const settle = promise => promise.then(value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason }));
+function pause(ms) {
+  let timer;
+  const done = new Promise(resolve => { timer = setTimeout(resolve, ms); });
+  return { done, cancel: () => clearTimeout(timer) };
+}
+
+export async function markTwice(markOnce, { staggerMs = markerStagger() } = {}) {
   const wanted = Number(process.env.SPEAKING_MARKERS) === 1 ? 1 : 2;
-  const settled = await Promise.allSettled(Array.from({ length: wanted }, () => markOnce()));
+  const first = settle(Promise.resolve().then(markOnce));
+  const later = [];
+  for (let i = 1; i < wanted; i++) {
+    const wait = pause(staggerMs);
+    await Promise.race([first, wait.done]);
+    wait.cancel();
+    later.push(settle(Promise.resolve().then(markOnce)));
+  }
+  const settled = [await first, ...(await Promise.all(later))];
   const verdicts = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
   if (!verdicts.length) throw settled[0].reason;
 
@@ -1336,7 +1367,7 @@ export async function markAttempt(resultId) {
 
         taskResult.aiEvaluation = {
           ...evaluation,
-          aiModel: process.env.CLAUDE_MODEL || 'claude-opus-5-20250805',
+          aiModel: AIEvaluationService.answerModel || AIEvaluationService.model,
           evaluatedAt: new Date()
         };
         taskResult.finalScore = evaluation.score;

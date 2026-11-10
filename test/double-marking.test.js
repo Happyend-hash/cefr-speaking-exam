@@ -87,3 +87,27 @@ test('the JSON object is found even with prose and braces after it', () => {
   assert.equal(firstJsonObject('Here: {not json} then {"score": 40, "criteria": {}}'), '{"score": 40, "criteria": {}}');
   assert.equal(firstJsonObject('no object here'), null);
 });
+
+test('the second examiner starts after the first, so it can read the cached rubric', async () => {
+  const started = [];
+  let release;
+  const firstDone = new Promise(r => { release = r; });
+  const t0 = Date.now();
+  const run = markTwice(async () => {
+    started.push(Date.now() - t0);
+    if (started.length === 1) { await firstDone; }
+    return v(5, 4, 3, 3);
+  }, { staggerMs: 60 });
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(started.length, 1, 'only the first examiner is running');
+  await new Promise(r => setTimeout(r, 80));
+  assert.equal(started.length, 2, 'the second starts after the stagger, even while the first is still running');
+  release();
+  const out = await run;
+  assert.equal(out.markers.length, 2);
+
+  // A first examiner that finishes early lets the second start at once.
+  const t1 = Date.now();
+  await markTwice(async () => v(5, 4, 3, 3), { staggerMs: 10000 });
+  assert.ok(Date.now() - t1 < 1000, 'no waiting out the stagger when the first is done');
+});
