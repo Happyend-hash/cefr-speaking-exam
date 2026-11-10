@@ -6072,6 +6072,13 @@
     // each part
     const top = 628, bottom = 1128;
     card(top, bottom - top);
+    if (!d.parts.length) {
+      // older mocks were marked before the site kept a score for each part
+      g.textAlign = 'center';
+      g.font = '700 26px Sora'; g.fillStyle = '#fff'; g.fillText('Qismlar bo‘yicha ball yo‘q', W / 2, (top + bottom) / 2 - 8);
+      g.font = '600 19px Manrope'; g.fillStyle = lav2; g.fillText('Bu mock qismlar bo‘yicha ball saqlanishidan oldin tekshirilgan.', W / 2, (top + bottom) / 2 + 26);
+      g.textAlign = 'left';
+    }
     const rows = d.parts.length || 1, rh = (bottom - top - 24) / rows;
     d.parts.forEach((p, i) => {
       const cy = top + 12 + rh * i + rh / 2;
