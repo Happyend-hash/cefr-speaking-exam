@@ -140,6 +140,7 @@ router.post('/click/checkout', authenticate, async (req, res, next) => {
       params.set('return_url', `${appUrl()}/?topup=done`);
     }
 
+    console.log(`Click checkout: order=${transaction.merchantTransId} package=${pkg.key} amount=${pkg.price}`);
     res.json({
       url: `${CLICK_PAY_URL}?${params.toString()}`,
       transactionId: transaction.merchantTransId
@@ -202,11 +203,16 @@ function completeSignature(body) {
  */
 router.post('/click/prepare', async (req, res) => {
   const body = req.body || {};
-  const reply = extra => res.json({
-    click_trans_id: body.click_trans_id,
-    merchant_trans_id: body.merchant_trans_id,
-    ...extra
-  });
+  // One log line per Click call and our answer (no secrets), so a failed
+  // payment can be traced in the Railway logs: "Click prepare: …".
+  const reply = extra => {
+    console.log(`Click prepare: click_trans_id=${body.click_trans_id} order=${body.merchant_trans_id} amount=${body.amount} action=${body.action} click_error=${body.error ?? '-'} -> ${extra.error} ${extra.error_note}`);
+    return res.json({
+      click_trans_id: body.click_trans_id,
+      merchant_trans_id: body.merchant_trans_id,
+      ...extra
+    });
+  };
 
   try {
     if (String(body.sign_string || '').toLowerCase() !== prepareSignature(body)) {
@@ -267,11 +273,16 @@ router.post('/click/prepare', async (req, res) => {
  */
 router.post('/click/complete', async (req, res) => {
   const body = req.body || {};
-  const reply = extra => res.json({
-    click_trans_id: body.click_trans_id,
-    merchant_trans_id: body.merchant_trans_id,
-    ...extra
-  });
+  // One log line per Click call and our answer (no secrets), so a failed
+  // payment can be traced in the Railway logs: "Click complete: …".
+  const reply = extra => {
+    console.log(`Click complete: click_trans_id=${body.click_trans_id} order=${body.merchant_trans_id} amount=${body.amount} action=${body.action} click_error=${body.error ?? '-'} -> ${extra.error} ${extra.error_note}`);
+    return res.json({
+      click_trans_id: body.click_trans_id,
+      merchant_trans_id: body.merchant_trans_id,
+      ...extra
+    });
+  };
 
   try {
     if (String(body.sign_string || '').toLowerCase() !== completeSignature(body)) {
