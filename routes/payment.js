@@ -2,7 +2,9 @@ import express from 'express';
 import crypto from 'crypto';
 import User from '../models/User.js';
 import PaymentTransaction from '../models/PaymentTransaction.js';
-import { findPackage, PACKAGES, WRITING_PACKAGES, PREMIUM_OFFER } from '../content/packages.js';
+import { findPackage, PACKAGES, WRITING_PACKAGES, PREMIUM_OFFER, PREMIUM_KEY } from '../content/packages.js';
+import { extendPremium } from '../services/Premium.js';
+import { invalidate as invalidateLeaderboard } from '../services/Leaderboard.js';
 import { authenticate } from '../middleware/auth.js';
 import { APIError } from '../middleware/errorHandler.js';
 
@@ -51,11 +53,47 @@ function appUrl() {
 const CLICK_ERROR = {
   SUCCESS: 0,
   SIGN_FAILED: -1,
+  BAD_AMOUNT: -2,
+  ACTION_NOT_FOUND: -3,
   TRANSACTION_NOT_FOUND: -6,
   ALREADY_PAID: -4,
   USER_NOT_FOUND: -5,
   TRANSACTION_CANCELLED: -9
 };
+
+const uzDay = d => {
+  const t = new Date(new Date(d).getTime() + 5 * 3600e3); // Tashkent
+  return `${String(t.getUTCDate()).padStart(2, '0')}.${String(t.getUTCMonth() + 1).padStart(2, '0')}.${t.getUTCFullYear()}`;
+};
+
+/**
+ * Give the student what they paid for (2026-11-12): speaking mocks, writing
+ * mocks or Premium days, by the package's kind. Rows from before kinds
+ * existed are speaking. Sets the notice the student sees on Home.
+ */
+export function fulfil(student, transaction, now = Date.now()) {
+  if (!student.access) student.access = {};
+  if (!student.subscription) student.subscription = {};
+  const kind = transaction.kind || 'speaking';
+  let message;
+  if (kind === 'premium') {
+    const until = extendPremium(student, transaction.days || PREMIUM_OFFER.days, now);
+    message = `To'lovingiz qabul qilindi. Premium faollashtirildi 👑 ${uzDay(until)} gacha amal qiladi.`;
+  } else if (kind === 'writing') {
+    student.subscription.writingRemaining = (student.subscription.writingRemaining || 0) + transaction.mocks;
+    student.access.totalWritingGranted = (student.access.totalWritingGranted || 0) + transaction.mocks;
+    message = `To'lovingiz qabul qilindi. Hisobingizga ${transaction.mocks} ta writing mock qo'shildi.`;
+  } else {
+    student.subscription.examsRemaining = (student.subscription.examsRemaining || 0) + transaction.mocks;
+    student.access.totalGranted = (student.access.totalGranted || 0) + transaction.mocks;
+    message = `To'lovingiz qabul qilindi. Hisobingizga ${transaction.mocks} ta speaking mock qo'shildi.`;
+  }
+  student.access.lastGrantedAt = new Date(now);
+  student.access.lastGrantedBy = 'Click';
+  student.access.message = message;
+  student.access.messageAt = new Date(now);
+  return message;
+}
 
 /**
  * @route   POST /api/payment/click/checkout
@@ -76,7 +114,9 @@ router.post('/click/checkout', authenticate, async (req, res, next) => {
     const transaction = await PaymentTransaction.create({
       student: student._id,
       packageKey: pkg.key,
+      kind: pkg.kind,
       mocks: pkg.mocks,
+      days: pkg.days || 0,
       amount: pkg.price,
       status: 'pending',
       // Placeholder, replaced right below with the doc's own real id —
@@ -117,7 +157,7 @@ router.post('/click/checkout', authenticate, async (req, res, next) => {
  *          now" cards once it is.
  */
 router.get('/packages', (req, res) => {
-  res.json({ packages: PACKAGES, writing: WRITING_PACKAGES, premium: PREMIUM_OFFER, live: clickConfigured() });
+  res.json({ packages: PACKAGES, writing: WRITING_PACKAGES, premium: { ...PREMIUM_OFFER, key: PREMIUM_KEY }, live: clickConfigured() });
 });
 
 /**
@@ -184,8 +224,17 @@ router.post('/click/prepare', async (req, res) => {
     if (transaction.status === 'cancelled') {
       return reply({ merchant_prepare_id: null, error: CLICK_ERROR.TRANSACTION_CANCELLED, error_note: 'Transaction cancelled' });
     }
+    if (String(body.action) !== '0') {
+      return reply({ merchant_prepare_id: null, error: CLICK_ERROR.ACTION_NOT_FOUND, error_note: 'Action not found' });
+    }
     if (Number(body.amount) !== transaction.amount) {
-      return reply({ merchant_prepare_id: null, error: CLICK_ERROR.USER_NOT_FOUND, error_note: 'Amount mismatch' });
+      return reply({ merchant_prepare_id: null, error: CLICK_ERROR.BAD_AMOUNT, error_note: 'Incorrect parameter amount' });
+    }
+
+    // Click asking again for the same payment: give back the same reservation,
+    // so its Complete still matches.
+    if (transaction.status === 'prepared' && transaction.merchantPrepareId && transaction.clickTransId === String(body.click_trans_id)) {
+      return reply({ merchant_prepare_id: transaction.merchantPrepareId, error: CLICK_ERROR.SUCCESS, error_note: 'Success' });
     }
 
     transaction.status = 'prepared';
@@ -241,6 +290,20 @@ router.post('/click/complete', async (req, res) => {
       return reply({ merchant_confirm_id: transaction.merchantPrepareId, error: CLICK_ERROR.ALREADY_PAID, error_note: 'Already confirmed' });
     }
 
+    if (String(body.action) !== '1') {
+      return reply({ merchant_confirm_id: null, error: CLICK_ERROR.ACTION_NOT_FOUND, error_note: 'Action not found' });
+    }
+    if (transaction.status === 'cancelled' || transaction.status === 'failed') {
+      return reply({ merchant_confirm_id: null, error: CLICK_ERROR.TRANSACTION_CANCELLED, error_note: 'Transaction cancelled' });
+    }
+    // Complete must answer the Prepare we accepted: same reservation, same amount.
+    if (transaction.status !== 'prepared' || String(body.merchant_prepare_id) !== String(transaction.merchantPrepareId)) {
+      return reply({ merchant_confirm_id: null, error: CLICK_ERROR.TRANSACTION_NOT_FOUND, error_note: 'Transaction does not exist' });
+    }
+    if (Number(body.amount) !== transaction.amount) {
+      return reply({ merchant_confirm_id: null, error: CLICK_ERROR.BAD_AMOUNT, error_note: 'Incorrect parameter amount' });
+    }
+
     const clickError = Number(body.error);
     if (clickError !== 0) {
       // The charge itself failed on Click's side — nothing was withdrawn.
@@ -259,15 +322,9 @@ router.post('/click/complete', async (req, res) => {
     try {
       const student = await User.findById(transaction.student);
       if (student) {
-        if (!student.access) student.access = {};
-        student.subscription.examsRemaining = (student.subscription.examsRemaining || 0) + transaction.mocks;
-        student.access.totalGranted = (student.access.totalGranted || 0) + transaction.mocks;
-        // Premium is sold on its own since 2026-11-03: mocks no longer include it.
-        student.access.lastGrantedAt = new Date();
-        student.access.lastGrantedBy = 'Click';
-        student.access.message = `To'lovingiz qabul qilindi. Hisobingizga ${transaction.mocks} ta mock qo'shildi.`;
-        student.access.messageAt = new Date();
+        fulfil(student, transaction);
         await student.save();
+        if (transaction.kind === 'premium') invalidateLeaderboard();
       } else {
         console.error(`Click complete: transaction ${transaction._id} paid but student ${transaction.student} not found`);
       }

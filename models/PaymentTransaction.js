@@ -24,7 +24,10 @@ const paymentTransactionSchema = new mongoose.Schema(
     },
 
     packageKey: { type: String, required: true },
+    // What the package buys (2026-11-12). Older rows have no kind: speaking.
+    kind: { type: String, enum: ['speaking', 'writing', 'premium'], default: 'speaking' },
     mocks: { type: Number, required: true },
+    days: { type: Number, default: 0 }, // Premium days, for kind 'premium'
     amount: { type: Number, required: true }, // so'm
 
     status: {

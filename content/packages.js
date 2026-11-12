@@ -36,6 +36,19 @@ export const WRITING_PACKAGES = [
 /** Premium (2026-11-03): sold on its own — mocks no longer include it. */
 export const PREMIUM_OFFER = { price: 15000, days: 30 };
 
+/**
+ * Everything Click can sell (Jamshid, 2026-11-12): speaking packages, writing
+ * packages and Premium, each tagged with what it buys so the Complete webhook
+ * credits the right balance.
+ */
+export const PREMIUM_KEY = 'premium30';
 export function findPackage(key) {
-  return PACKAGES.find(p => p.key === key) || null;
+  const speaking = PACKAGES.find(p => p.key === key);
+  if (speaking) return { ...speaking, kind: 'speaking', days: 0 };
+  const writing = WRITING_PACKAGES.find(p => p.key === key);
+  if (writing) return { ...writing, kind: 'writing', days: 0 };
+  if (key === PREMIUM_KEY) {
+    return { key: PREMIUM_KEY, kind: 'premium', mocks: 0, days: PREMIUM_OFFER.days, price: PREMIUM_OFFER.price, label: `Premium ${PREMIUM_OFFER.days} kun` };
+  }
+  return null;
 }

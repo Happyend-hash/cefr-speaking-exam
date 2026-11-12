@@ -8593,12 +8593,12 @@
   // computer. Teachers keep their own short menu.
 
   const TABS = [
-    { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard', 'news'] },
+    { id: 'home', go: 'dashboard', label: 'Asosiy', icon: 'home', screens: ['dashboard', 'news', 'topup'] },
     { id: 'tests', go: 'tests', label: 'Testlar', icon: 'tests', screens: ['mocks', 'parts', 'writing', 'writing-check', 'briefing', 'materials'] },
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'friends', go: 'social', label: "Do'stlar", icon: 'message', screens: ['social', 'dm', 'person'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
-    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'topup', 'install', 'inbox', 'support', 'wall', 'my-results'] }
+    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'install', 'inbox', 'support', 'wall', 'my-results'] }
   ];
   const currentTab = () => TABS.find(t => t.screens.includes(state.screen))?.id || '';
   const isStudentShell = () => Boolean(state.user) && state.user.role !== 'admin';
@@ -8891,6 +8891,7 @@
   const ICONS = {
     share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+    bag: '<path d="M5 8h14l-1.2 12H6.2L5 8z"/><path d="M9 8V7a3 3 0 0 1 6 0v1"/>',
     copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
@@ -9238,109 +9239,109 @@
    * next rather than a red bar. "Keyinroq" leaves without paying, on purpose —
    * their results are still theirs to read.
    */
+  /**
+   * "Paket sotib olish" (Jamshid, 2026-11-12): one place to buy everything.
+   *
+   * Three big choices — Speaking, Writing, Premium — and the packages of the
+   * chosen one underneath, each bought through Click in one tap. The old way
+   * (card transfer and a receipt) lives in Profil → "Karta orqali to'lash",
+   * for anyone who cannot pay by Click.
+   */
+  const SHOP_UZ = {
+    title: "Paket sotib olish",
+    sub: "Bo'limni tanlang. To'lov Click orqali — mock yoki Premium darhol hisobingizga qo'shiladi.",
+    speaking: 'Speaking', writing: 'Writing', premium: 'Premium',
+    speakingHint: 'Ovozli mock imtihon',
+    writingHint: 'Yozma mock imtihon',
+    premiumHint: '30 kunlik imkoniyatlar',
+    from: n => `${n.toLocaleString('uz-UZ')} so'm dan`,
+    balance: 'Hisobingizda',
+    mocks: n => `${n} ta mock`,
+    each: n => `${n.toLocaleString('uz-UZ')} so'm / mock`,
+    som: n => `${n.toLocaleString('uz-UZ')} so'm`,
+    buy: 'Sotib olish',
+    buying: "Click'ga o'tilmoqda…",
+    premiumFor: d => `${d} kun`,
+    premiumOn: d => `Premium ${d} gacha faol. Sotib olsangiz, yana 30 kun qo'shiladi.`,
+    premiumBuy: 'Premium olish',
+    secure: "To'lov Click sahifasida amalga oshadi — karta ma'lumotlaringiz bizga kelmaydi.",
+    notLive: "Onlayn to'lov hozircha ishlamayapti. Karta orqali to'lash mumkin:",
+    manualLink: "Karta orqali to'lash (Profil)",
+    manualHint: "Click bilan to'lay olmaysizmi?",
+    later: 'Keyinroq',
+    checking: "To'lovingiz tekshirilmoqda… Bir necha soniyada hisobingizga qo'shiladi."
+  };
+
   function topupScreen() {
     const access = state.access || {};
-    const blocked = Boolean(access.blocked);
-    const contact = access.contact || '';
-    const card = access.card || {};
-    // Arrived from "Premium bo'ling", not from running out of mocks.
-    const forPremium = state.topupReason === 'premium' && !blocked;
+    if (access.blocked) {
+      return `
+      <div class="card form-card" style="max-width:560px">
+        <h2 style="margin-bottom:8px">${ACCESS_UZ.blockedTitle}</h2>
+        <p class="muted">${ACCESS_UZ.blockedBody}</p>
+        <button class="btn btn-ghost btn-block" style="margin-top:14px" data-go="dashboard">${ACCESS_UZ.toDashboard}</button>
+      </div>`;
+    }
     state.topupReason = '';
+    const d = state.prices || {};
+    const speaking = d.packages || [];
+    const writing = d.writing || [];
+    const prem = d.premium || { price: 15000, days: 30, key: 'premium30' };
+    const live = Boolean(state.clickLive);
+    const tab = ['speaking', 'writing', 'premium'].includes(state.shopTab) ? state.shopTab : 'speaking';
+    const isPrem = Boolean(pr.state?.active);
+    const until = pr.state?.until ? (x => `${String(x.getDate()).padStart(2, '0')}.${String(x.getMonth() + 1).padStart(2, '0')}.${x.getFullYear()}`)(new Date(pr.state.until)) : '';
+    const minPrice = list => list.length ? Math.min(...list.map(p => Math.round(p.price / p.mocks))) : 0;
 
-    const contactLink = contact
-      ? `<a class="btn btn-lg" href="${esc(
-          contact.startsWith('http') ? contact : `https://t.me/${contact.replace(/^@/, '')}`
-        )}" target="_blank" rel="noopener noreferrer">${esc(contact)}</a>`
+    const choice = (key, iconHtml, name, hint, price) => `<button class="shop-choice is-${key}${tab === key ? ' is-on' : ''}" data-shop-tab="${key}" role="tab" aria-selected="${tab === key}">
+        <span class="shop-choice-ic">${iconHtml}</span>
+        <b>${name}</b><small>${hint}</small><em>${price}</em>
+      </button>`;
+
+    const buyBtn = (key, label = SHOP_UZ.buy) => live
+      ? `<button class="btn btn-block shop-buy" data-buy-pkg="${esc(key)}" ${state.buyingPkg ? 'disabled' : ''}>${state.buyingPkg === key ? esc(SHOP_UZ.buying) : esc(label)}</button>`
       : '';
 
-    const packages = Array.isArray(state.clickPackages) ? state.clickPackages : [];
+    const pkgGrid = (list, kind) => `<div class="shop-grid">
+        ${list.map(p => `<div class="shop-pkg is-${kind}${p.badge ? ' is-pop' : ''}">
+          ${p.badge ? `<span class="shop-badge">${esc(p.badge)}</span>` : ''}
+          <div class="shop-pkg-n">${esc(SHOP_UZ.mocks(p.mocks))}</div>
+          <div class="shop-pkg-p">${esc(SHOP_UZ.som(p.price))}</div>
+          <div class="shop-pkg-e">${p.mocks > 1 ? esc(SHOP_UZ.each(Math.round(p.price / p.mocks))) : '&nbsp;'}</div>
+          ${buyBtn(p.key)}
+        </div>`).join('')}
+      </div>`;
 
-    // Click checkout cards. Only shown once the server has real Click
-    // credentials (state.clickLive) — until then this whole block is simply
-    // absent and the manual card-transfer flow below is the only way to top
-    // up.
-    const clickBlock = !blocked && state.clickLive && packages.length
-      ? `<div style="margin-top:18px">
-          <h3 style="font-size:15px;margin-bottom:4px">${ACCESS_UZ.onlineTitle}</h3>
-          <p class="muted" style="margin-bottom:12px">${ACCESS_UZ.onlineSub}</p>
-          <div class="pkg-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
-            ${packages.map(pkg => `
-              <div class="card pkg-card" style="position:relative;padding:16px 12px;text-align:center">
-                ${pkg.badge ? `<span class="chip chip-speaking" style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);white-space:nowrap">${esc(pkg.badge)}</span>` : ''}
-                <div style="font-weight:700;font-size:16px">${esc(ACCESS_UZ.mocksLabel(pkg.mocks))}</div>
-                <div style="font-size:19px;font-weight:800;margin:4px 0">${esc(ACCESS_UZ.som(pkg.price))}</div>
-                <div class="muted" style="font-size:12px;margin-bottom:10px">${esc(ACCESS_UZ.perMock(Math.round(pkg.price / pkg.mocks)))}</div>
-                <button class="btn btn-block" data-buy-pkg="${esc(pkg.key)}" ${state.buyingPkg ? 'disabled' : ''}>
-                  ${state.buyingPkg === pkg.key ? esc(ACCESS_UZ.buying) : esc(ACCESS_UZ.buyNow)}
-                </button>
-              </div>`).join('')}
-          </div>
-        </div>`
-      : '';
+    const premiumPanel = `<div class="shop-prem">
+        <div class="shop-prem-top"><span class="shop-prem-crown">${CROWN}</span>
+          <div><b>${SHOP_UZ.premium}</b><span>${esc(SHOP_UZ.som(prem.price))} · ${esc(SHOP_UZ.premiumFor(prem.days))}</span></div></div>
+        <ul>${PR_UZ.perks.map(t => `<li>${icon('check')}<span>${esc(t)}</span></li>`).join('')}</ul>
+        ${isPrem && until ? `<p class="shop-prem-on">${esc(SHOP_UZ.premiumOn(until))}</p>` : ''}
+        ${buyBtn(prem.key || 'premium30', SHOP_UZ.premiumBuy)}
+      </div>`;
 
-    // Manual card-transfer flow — the primary way to pay right now. Shown
-    // whenever the teacher has set PAYMENT_CARD_NUMBER; a compact price
-    // table so the student knows the exact amount to send, the card itself
-    // with a copy button, then where to send the proof.
-    const cardBlock = !blocked && card.number
-      ? `<div style="margin-top:18px">
-          <h3 style="font-size:15px;margin-bottom:4px">${ACCESS_UZ.cardTitle}</h3>
-          ${(packages.length || state.prices?.writing?.length) ? `
-            <div class="pkg-table" style="margin:10px 0;border:1px solid var(--line,#e5e7eb);border-radius:10px;overflow:hidden">
-              ${[[ACCESS_UZ.speakingTitle, packages], [ACCESS_UZ.writingTitle, state.prices?.writing || []]].filter(([, list]) => list.length).map(([title, list]) => `
-                <div style="padding:8px 12px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:var(--surface-2,rgba(0,0,0,.03))">${esc(title)}</div>
-                ${list.map(pkg => `
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-top:1px solid var(--line,#e5e7eb);font-size:14px">
-                  <span>${esc(ACCESS_UZ.mocksLabel(pkg.mocks))}${pkg.badge ? ` <span class="chip chip-speaking" style="font-size:11px;padding:1px 8px">${esc(pkg.badge)}</span>` : ''}</span>
-                  <span style="font-weight:700;font-variant-numeric:tabular-nums">${esc(ACCESS_UZ.som(pkg.price))}</span>
-                </div>`).join('')}`).join('')}
-              ${state.prices?.premium ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-top:1px solid var(--line,#e5e7eb);font-size:14px">
-                  <span>${ACCESS_UZ.premiumRow}</span>
-                  <span style="font-weight:700;font-variant-numeric:tabular-nums">${esc(ACCESS_UZ.som(state.prices.premium.price))}</span></div>` : ''}
-            </div>` : ''}
-          <p class="muted" style="margin-bottom:6px">${ACCESS_UZ.cardSub}</p>
-          <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px">
-            <div>
-              <div style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:0.5px">${esc(card.number)}</div>
-              ${card.holder ? `<div class="muted" style="font-size:13px;margin-top:2px">${esc(card.holder)}</div>` : ''}
-            </div>
-            <button class="btn btn-ghost btn-sm" data-copy-card="${esc(card.number)}">
-              ${state.cardCopied ? esc(ACCESS_UZ.copied) : esc(ACCESS_UZ.copyCard)}
-            </button>
-          </div>
-          <p style="margin-top:14px">${ACCESS_UZ.sendProof}</p>
-          <button class="btn btn-gold btn-block" style="margin-top:10px" data-pc-receipt>${PRICE_UZ.sendReceipt}</button>
-          ${contact ? `<p class="muted" style="margin-top:10px;font-size:13px">${ACCESS_UZ.orContact} ${contactLink || `<strong>${esc(contact)}</strong>`}</p>` : ''}
-        </div>`
-      : '';
-
-    // Neither the card nor a Click checkout is configured yet, and there's
-    // no Telegram contact either — nothing to show but "ask your teacher".
-    const nothingConfigured = !blocked && !clickBlock && !cardBlock && !contact;
+    const panel = tab === 'premium' ? premiumPanel : pkgGrid(tab === 'writing' ? writing : speaking, tab);
+    const sp = access.credits ?? access.remaining;
 
     return `
-      <div class="card form-card" style="max-width:560px">
-        <h2 style="margin-bottom:8px">${blocked ? ACCESS_UZ.blockedTitle : forPremium ? ACCESS_UZ.premiumTitle : ACCESS_UZ.outTitle}</h2>
-        <p class="muted">${blocked ? ACCESS_UZ.blockedBody : forPremium ? ACCESS_UZ.premiumBody : ACCESS_UZ.outBody}</p>
-        ${blocked ? '' : `<p class="pr-topup" style="margin-top:10px">${CROWN} ${ACCESS_UZ.premiumLine}</p>`}
-
-        ${clickBlock}
-        ${cardBlock}
-
-        ${blocked || cardBlock || nothingConfigured ? '' : `
-          <h3 style="font-size:15px;margin-top:22px">${ACCESS_UZ.how}</h3>
-          <ol style="margin:10px 0 0 18px;line-height:1.7">
-            <li>${ACCESS_UZ.step1}</li>
-            <li>${ACCESS_UZ.step2}</li>
-            <li>${ACCESS_UZ.step3} <strong>${esc(state.user?.email || '')}</strong></li>
-          </ol>
-          <div style="margin-top:20px">${contactLink}</div>`}
-
-        ${nothingConfigured ? `<p class="muted" style="margin-top:16px">${ACCESS_UZ.noContact}</p>` : ''}
-
-        <button class="btn btn-ghost btn-block" style="margin-top:14px" data-go="dashboard">
-          ${ACCESS_UZ.later}
-        </button>
+      <div class="shop">
+        <div class="shop-head">
+          <span class="shop-head-ic">${icon('bag')}</span>
+          <div><h1>${SHOP_UZ.title}</h1><p>${SHOP_UZ.sub}</p></div>
+        </div>
+        ${typeof sp === 'number' ? `<p class="shop-bal">${SHOP_UZ.balance}: <b>speaking ${esc(String(sp))}</b> · <b>writing ${esc(String(access.writing?.credits ?? 0))}</b>${isPrem ? ` · <b class="shop-bal-prem">${CROWN} Premium</b>` : ''}</p>` : ''}
+        <div class="shop-choices" role="tablist">
+          ${choice('speaking', icon('mic'), SHOP_UZ.speaking, SHOP_UZ.speakingHint, SHOP_UZ.from(minPrice(speaking) || 3500))}
+          ${choice('writing', icon('pen'), SHOP_UZ.writing, SHOP_UZ.writingHint, SHOP_UZ.from(minPrice(writing) || 1500))}
+          ${choice('premium', CROWN, SHOP_UZ.premium, SHOP_UZ.premiumHint, SHOP_UZ.som(prem.price))}
+        </div>
+        <section class="card shop-panel is-${tab}" role="tabpanel">
+          ${live ? '' : `<p class="alert alert-warn" style="margin-bottom:12px">${SHOP_UZ.notLive} <button class="link-more" style="margin:0" data-go="profile">${SHOP_UZ.manualLink}</button></p>`}
+          ${panel}
+          ${live ? `<p class="shop-secure">${icon('lock')} ${SHOP_UZ.secure}</p>` : ''}
+        </section>
+        ${live ? `<p class="shop-alt">${SHOP_UZ.manualHint} <button data-go="profile">${SHOP_UZ.manualLink}</button></p>` : ''}
+        <button class="btn btn-ghost btn-block" style="margin-top:6px" data-go="dashboard">${SHOP_UZ.later}</button>
       </div>`;
   }
 
@@ -9352,7 +9353,8 @@
    * without a price table.
    */
   async function openTopup(patch = {}) {
-    go('topup', patch);
+    const tab = patch.shopTab || (patch.topupReason === 'premium' ? 'premium' : state.shopTab || 'speaking');
+    go('topup', { ...patch, shopTab: tab });
     try {
       const d = await api('/payment/packages');
       const { packages, live } = d;
@@ -9362,6 +9364,7 @@
     } catch {
       state.clickLive = false;
     }
+    if (!pr.state) pr.state = await api('/user/premium').catch(() => null);
     if (state.screen === 'topup') render();
   }
 
@@ -9387,6 +9390,29 @@
    * the actual crediting happens server-side via the Prepare/Complete
    * webhooks once the charge clears.
    */
+  /**
+   * Just back from Click: the payment is confirmed to the server by Click
+   * itself, usually within seconds. Say so, and refresh the balance until the
+   * package shows up (or give up quietly after about half a minute).
+   */
+  async function watchPayment() {
+    const was = JSON.stringify([state.access?.credits ?? state.access?.remaining, state.access?.writing?.credits, state.access?.messageAt, pr.state?.until]);
+    if (!state.access?.message) setState({ notice: SHOP_UZ.checking });
+    for (let i = 0; i < 8; i++) {
+      await new Promise(r => setTimeout(r, 4000));
+      const profile = await api('/user/profile').catch(() => null);
+      const acc = profile?.access;
+      if (!acc) continue;
+      if (profile?.premium) pr.state = profile.premium;
+      const now = JSON.stringify([acc.credits ?? acc.remaining, acc.writing?.credits, acc.messageAt, pr.state?.until]);
+      if (now !== was) {
+        setState({ access: acc, notice: state.notice === SHOP_UZ.checking ? '' : state.notice });
+        return;
+      }
+    }
+    if (state.notice === SHOP_UZ.checking) setState({ notice: '' });
+  }
+
   async function buyPackage(key) {
     if (state.buyingPkg) return;
     setState({ buyingPkg: key, error: '' });
@@ -9576,7 +9602,7 @@
     startSpeaking: 'Speaking mock',
     startWriting: 'Writing mock',
     balance: (sp, wr) => `Balans: speaking ${sp} · writing ${wr}`,
-    buy: 'Paket olish',
+    buy: 'Paket sotib olish',
     parts: 'Qismlar',
     writing: 'Writing',
     club: 'Klub',
@@ -9698,11 +9724,11 @@
               </button>
             </section>
             ${balance}
+            ${shopEntry()}
             ${/* Qismlar, Vocabulary test, Klub and Reyting tiles removed (2026-11-03):
                  each is a tab away — Testlar (part practice), Klub (Vocabulary test
                  and games), Klub, Reyting. */ ''}
             ${pushBanner()}
-            ${priceCard()}
             ${wlInvite()}
             ${adSlot('home')}
           </div>
@@ -10020,7 +10046,8 @@
   // profile picture) saying what it was for.
 
   const PRICE_UZ = {
-    title: 'Narxlar va Premium',
+    title: "Karta orqali to'lash",
+    titleSub: "Click ishlamasa: kartaga o'tkazing va chekni yuboring",
     speaking: 'Speaking mock',
     writing: 'Writing mock',
     each: n => `${n.toLocaleString('uz-UZ')} so'm / dona`,
@@ -10053,7 +10080,7 @@
     const card = state.access?.card || {};
     const isPrem = Boolean(pr.state?.active);
     // Premium students see the card folded; everyone else sees it open (until they fold it).
-    const open = pc.open ?? (store.get('pricesFolded') !== '1' && !isPrem);
+    const open = pc.open ?? false;
     const table = (title, list, tone) => `<div class="pc-table is-${tone}">
         <h4>${title}</h4>
         ${list.map(p => `<div class="pc-row"><span>${PRICE_UZ.mocks(p.mocks)}${p.badge ? ` <i class="pc-badge">${esc(p.badge)}</i>` : ''}</span>
@@ -10062,7 +10089,7 @@
     const until = pr.state?.until ? (d => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`)(new Date(pr.state.until)) : '';
     const head = `<button class="pc-head" data-pc-toggle aria-expanded="${open}">
         <span class="pc-head-ic">💳</span><span class="pc-head-t"><b>${PRICE_UZ.title}</b>
-        <small>Speaking ${PRICE_UZ.som(speaking[0]?.price || 5000)} · Writing ${PRICE_UZ.som(writing[0]?.price || 2000)} · Premium ${PRICE_UZ.som(prem.price)}</small></span>
+        <small>${PRICE_UZ.titleSub}</small></span>
         <span class="pc-chev">${icon('chevron')}</span></button>`;
     if (!open) return `<section class="card pc is-folded">${head}</section>`;
     return `<section class="card pc">
@@ -10093,15 +10120,39 @@
     if (!el || !root.contains(el)) return;
     event.preventDefault();
     if (el.hasAttribute('data-pc-toggle')) {
-      const open = !(pc.open ?? (store.get('pricesFolded') !== '1' && !pr.state?.active));
-      pc.open = open;
-      store.set('pricesFolded', open ? '0' : '1');
+      pc.open = !(pc.open ?? false);
       return render();
     }
     // Straight to the support chat with "To'lov cheki" chosen.
     sp.kind = 'payment';
     openSupport();
   });
+
+  /**
+   * "Paket sotib olish" on Home (2026-11-12): the one way in to buying, with
+   * the three kinds and their starting prices; a tap on a kind opens the shop
+   * on it.
+   */
+  function shopEntry() {
+    if (!isStudentShell() || state.access?.blocked) return '';
+    const d = state.prices || {};
+    const per = list => (list || []).length ? Math.min(...list.map(p => Math.round(p.price / p.mocks))) : 0;
+    const prem = d.premium || { price: 15000 };
+    const pill = (key, iconHtml, name, price) => `<span class="shop-pill is-${key}" data-shop="${key}" role="button" tabindex="0">
+        ${iconHtml}<b>${name}</b><small>${price}</small></span>`;
+    return `<section class="card shop-entry" data-go="topup" role="button" tabindex="0">
+        <div class="shop-entry-top">
+          <span class="shop-entry-ic">${icon('bag')}</span>
+          <span class="shop-entry-t"><b>${SHOP_UZ.title}</b><small>Speaking · Writing · Premium — Click orqali</small></span>
+          ${icon('chevron')}
+        </div>
+        <div class="shop-pills">
+          ${pill('speaking', icon('mic'), 'Speaking', SHOP_UZ.from(per(d.packages) || 3500))}
+          ${pill('writing', icon('pen'), 'Writing', SHOP_UZ.from(per(d.writing) || 1500))}
+          ${pill('premium', CROWN, 'Premium', SHOP_UZ.som(prem.price))}
+        </div>
+      </section>`;
+  }
 
   /** The three latest attempts, as rows — pending ones say they are being marked. */
   function homeRecent() {
@@ -10335,7 +10386,7 @@
     balance: 'Balans',
     speaking: 'Speaking',
     writing: 'Writing',
-    buy: 'Paket olish',
+    buy: 'Paket sotib olish',
     results: 'Natijalarim',
     resultsSub: n => (n ? `${n} ta urinish` : "Hali natija yo'q"),
     writingResults: 'Writing natijalari',
@@ -10392,6 +10443,7 @@
     try {
       pr.state = await api('/user/premium');
     } catch { /* the strip simply does not show */ }
+    if (!state.prices) await api('/payment/packages').then(d => { state.prices = d; }).catch(() => {});
     if (state.screen === 'profile') render();
   }
 
@@ -10423,6 +10475,7 @@
       ${accountCard()}
       ${premiumStrip()}
       ${balance}
+      ${priceCard()}
       <section class="card menu-card">
         ${row('data-go="results"', 'chart', PROF_UZ.results, PROF_UZ.resultsSub(done))}
         ${row('data-go="writing"', 'pen', PROF_UZ.writingResults, PROF_UZ.writingResultsSub, 'is-green')}
@@ -11746,6 +11799,12 @@
     root.querySelectorAll('[data-buy-pkg]').forEach(el =>
       el.addEventListener('click', () => buyPackage(el.dataset.buyPkg)));
 
+    root.querySelectorAll('[data-shop-tab]').forEach(el =>
+      el.addEventListener('click', () => setState({ shopTab: el.dataset.shopTab })));
+
+    root.querySelectorAll('[data-shop]').forEach(el =>
+      el.addEventListener('click', event => { event.stopPropagation(); openTopup({ shopTab: el.dataset.shop }); }));
+
     root.querySelectorAll('[data-copy-email]').forEach(el =>
       el.addEventListener('click', copyEmail));
 
@@ -12213,6 +12272,13 @@
 
         // ?open=dm&id=… / friends / support / inbox — a tapped notification.
         const link = new URLSearchParams(window.location.search);
+        // Back from Click's payment page (return_url): Click tells the server
+        // a moment later, so watch for the package to land.
+        if (link.get('topup') === 'done') {
+          try { history.replaceState(null, '', window.location.pathname); } catch { /* fine */ }
+          loadDashboard().then(watchPayment);
+          return;
+        }
         if (link.get('open')) {
           loadDashboard().then(() => openFromLink(link));
           return;
