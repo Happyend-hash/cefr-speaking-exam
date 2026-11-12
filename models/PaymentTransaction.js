@@ -40,7 +40,10 @@ const paymentTransactionSchema = new mongoose.Schema(
     merchantTransId: { type: String, required: true, unique: true },
 
     // Click's own ids, filled in as the webhooks arrive.
-    clickTransId: { type: String, default: null, unique: true, sparse: true },
+    // No default (2026-11-12): a stored null counted as a value in the old
+    // unique+sparse index, so the second unpaid checkout failed with E11000.
+    // The index below only covers real ids.
+    clickTransId: { type: String },
     merchantPrepareId: { type: Number, default: null },
 
     // Click's error code from the Complete webhook, when it failed
@@ -52,5 +55,9 @@ const paymentTransactionSchema = new mongoose.Schema(
 );
 
 paymentTransactionSchema.index({ student: 1, createdAt: -1 });
+paymentTransactionSchema.index(
+  { clickTransId: 1 },
+  { unique: true, partialFilterExpression: { clickTransId: { $type: 'string' } } }
+);
 
 export default mongoose.model('PaymentTransaction', paymentTransactionSchema);

@@ -1,5 +1,6 @@
 import express from 'express';
 import mongoose from 'mongoose';
+import PaymentTransaction from './models/PaymentTransaction.js';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -260,6 +261,12 @@ mongoose.connect(MONGODB_URI)
 
     // Parent codes used to be unique per child; brothers and sisters now
     // share one. syncIndexes drops the old unique index and builds the new one.
+    // Click payments: replace the unique index that treated "no Click id yet"
+    // (null) as a value, which blocked every second checkout with E11000.
+    PaymentTransaction.syncIndexes()
+      .then(dropped => { if (dropped?.length) console.log(`Payment transactions: indexes updated (${dropped.join(', ')})`); })
+      .catch(error => console.error('Payment transactions: index update failed:', error.message));
+
     CourseStudent.syncIndexes()
       .then(dropped => { if (dropped?.length) console.log(`Course students: indexes updated (${dropped.join(', ')})`); })
       .catch(error => console.error('Course students: index update failed:', error.message));
