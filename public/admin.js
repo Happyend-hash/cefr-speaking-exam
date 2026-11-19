@@ -3158,7 +3158,7 @@
       <div class="cs-panel-head">
         <label class="cs-face-edit" title="Change photo">
           ${csFace(s, 72)}
-          <span class="cs-face-cam">${s.hasPhoto ? 'Change' : '+ Photo'}</span>
+          <span class="cs-face-cam">${s.photoFrom === 'teacher' ? 'Change' : '+ Photo'}</span>
           <input type="file" accept="image/jpeg,image/png,image/webp" data-cs-photo="${esc(s.id)}" style="display:none">
         </label>
         <div class="cs-panel-who">
@@ -3166,7 +3166,8 @@
             <input type="text" id="cs-name-input" maxlength="80" value="${esc(state.csName ?? s.name)}" aria-label="Student's name" required>
             <button class="btn btn-sm" type="submit" ${state.csName === undefined || state.csName.trim() === s.name ? 'disabled' : ''}>Save name</button>
           </form>
-          ${s.hasPhoto ? `<button type="button" class="cs-link" data-cs-unphoto="${esc(s.id)}">Remove photo</button>` : ''}
+          ${s.photoFrom === 'teacher' ? `<button type="button" class="cs-link" data-cs-unphoto="${esc(s.id)}">Remove photo</button>` : ''}
+          ${s.photoFrom === 'account' ? `<span class="muted" style="font-size:12px">Photo from their website account</span>` : ''}
           <div class="muted" style="font-size:13px">${s.results.length} homework${s.results.length === 1 ? '' : 's'} in total · parents ${s.lastParentVisit ? `last opened ${esc(new Date(s.lastParentVisit).toLocaleDateString())}` : 'have not opened it yet'}</div>
         </div>
       </div>

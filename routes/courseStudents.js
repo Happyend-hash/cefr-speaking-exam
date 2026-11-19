@@ -12,6 +12,7 @@ import { sendPaymentReport } from '../services/PaymentReport.js';
 import { recordUnitResult, recordGeneralTest } from '../services/CourseVocab.js';
 import { syncCourseSpeaking, speakingSummary } from '../services/CourseSpeaking.js';
 import User from '../models/User.js';
+import { avatarStorage } from '../services/Premium.js';
 import { studentRow, buildWorkbook, exportFileName } from '../services/CourseExport.js';
 
 /**
@@ -31,8 +32,12 @@ async function load(id) {
 }
 
 /** What the admin list shows for one child (no photo bytes). */
-const row = (s, units = {}, books = {}, accounts = new Set(), mistakes = new Map()) => {
+const row = (s, units = {}, books = {}, accounts = new Set(), mistakes = new Map(), pictures = new Map()) => {
   const d = dashboard(s);
+  // The photo (2026-11-22): the one the teacher uploaded, or else the picture
+  // of the student's linked website account.
+  const own = Boolean(s.photo?.updatedAt);
+  const fromAccount = !own && s.accountEmail ? pictures.get(s.accountEmail) : null;
   return {
     id: String(s._id),
     name: s.name,
@@ -42,8 +47,9 @@ const row = (s, units = {}, books = {}, accounts = new Set(), mistakes = new Map
     family: familyOf(s),
     parentCode: s.parentCode,
     active: s.active,
-    hasPhoto: Boolean(s.photo?.updatedAt),
-    photoVersion: d.photoVersion,
+    hasPhoto: own || Boolean(fromAccount),
+    photoVersion: own ? d.photoVersion : fromAccount ? `a${fromAccount}` : 0,
+    photoFrom: own ? 'teacher' : fromAccount ? 'account' : null,
     latest: d.latest,
     month: d.month,
     results: d.results,
@@ -83,6 +89,11 @@ const row = (s, units = {}, books = {}, accounts = new Set(), mistakes = new Map
   };
 };
 
+/** email → when the account's picture was uploaded, for accounts that have one the teacher has not blocked. */
+const accountPictures = users => new Map(users
+  .filter(u => u.picture?.key && !u.pictureBlocked)
+  .map(u => [u.email, new Date(u.picture.at || 0).getTime() || 1]));
+
 const cleanName = v => String(v || '').replace(/\s+/g, ' ').trim().slice(0, 80);
 const cleanLevel = v => (LEVELS.includes(v) ? v : null);
 
@@ -106,8 +117,9 @@ async function overview() {
   const units = await unitsPerLevel();
   const books = await booksPerLevel();
   const emails = list.map(s => s.accountEmail).filter(Boolean);
-  const users = emails.length ? await User.find({ email: { $in: emails } }).select('email').lean() : [];
+  const users = emails.length ? await User.find({ email: { $in: emails } }).select('email picture pictureBlocked').lean() : [];
   const accounts = new Set(users.map(u => u.email));
+  const pictures = accountPictures(users);
   await syncCourseSpeaking(list, new Map(users.map(u => [u.email, u._id])));
   const byUser = await mistakesForUsers(users.map(u => String(u._id)));
   const mistakes = new Map(users.filter(u => byUser.has(String(u._id))).map(u => [u.email, byUser.get(String(u._id))]));
@@ -120,7 +132,7 @@ async function overview() {
     // several books per level now: { B1: [{ key, title, units }], A1: [] }
     books: Object.fromEntries(Object.entries(books).map(([l, list]) => [l, list.map(b => ({ key: b.key, title: b.title, units: b.units.length }))])),
     bookChoices: bookChoices(),
-    students: list.map(s => row(s, units, books, accounts, mistakes)),
+    students: list.map(s => row(s, units, books, accounts, mistakes, pictures)),
     archived: await CourseStudent.countDocuments({ removedAt: { $ne: null } }),
     leaderboards: LEVELS.map(level => leaderboard(list, level, month)).filter(b => b.rows.length)
   };
@@ -347,10 +359,22 @@ router.delete('/:id/photo', async (req, res, next) => {
 router.get('/:id/photo', async (req, res, next) => {
   try {
     const s = await load(req.params.id);
-    if (!s.photo?.data?.length) return res.status(404).end();
-    res.set('Content-Type', s.photo.contentType || 'image/jpeg');
-    res.set('Cache-Control', 'private, max-age=86400');
-    res.send(s.photo.data);
+    if (s.photo?.data?.length) {
+      res.set('Content-Type', s.photo.contentType || 'image/jpeg');
+      res.set('Cache-Control', 'private, max-age=86400');
+      return res.send(s.photo.data);
+    }
+    // No photo of the teacher's own: the linked account's picture, if it has one.
+    const user = s.accountEmail ? await User.findOne({ email: s.accountEmail }).select('picture pictureBlocked').lean() : null;
+    if (!user?.picture?.key || user.pictureBlocked) return res.status(404).end();
+    res.set({
+      'Content-Type': user.picture.contentType || 'image/jpeg',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, max-age=86400'
+    });
+    avatarStorage.open(user.picture.key)
+      .on('error', () => { if (!res.headersSent) res.status(404).end(); else res.end(); })
+      .pipe(res);
   } catch (error) { next(error); }
 });
 
