@@ -12,6 +12,7 @@ import { sendPaymentReport } from '../services/PaymentReport.js';
 import { recordUnitResult, recordGeneralTest } from '../services/CourseVocab.js';
 import { syncCourseSpeaking, speakingSummary } from '../services/CourseSpeaking.js';
 import User from '../models/User.js';
+import { studentRow, buildWorkbook, exportFileName } from '../services/CourseExport.js';
 
 /**
  * The teacher's side of the parents' page: the course list by level, each
@@ -127,6 +128,29 @@ async function overview() {
 
 router.get('/', async (req, res, next) => {
   try { res.json({ success: true, data: await overview() }); } catch (error) { next(error); }
+});
+
+/**
+ * The course students as an Excel file (2026-11-19): summary, every student,
+ * one sheet per group, the school year's payments and the speaking mocks.
+ * Students in the archive are left out, like the Groups list.
+ */
+router.get('/export.xlsx', async (req, res, next) => {
+  try {
+    const list = await withPeriods(await CourseStudent.find({ removedAt: null }).select('-photo.data').sort({ name: 1 }));
+    const units = await unitsPerLevel();
+    const books = await booksPerLevel();
+    const emails = list.map(s => s.accountEmail).filter(Boolean);
+    const users = emails.length ? await User.find({ email: { $in: emails } }).select('email').lean() : [];
+    await syncCourseSpeaking(list, new Map(users.map(u => [u.email, u._id])));
+    const now = Date.now();
+    const wb = buildWorkbook(list.map(s => studentRow(s, { units, books, now })), { now });
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', `attachment; filename="${exportFileName(now)}"`);
+    res.set('Cache-Control', 'no-store');
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (error) { next(error); }
 });
 
 /**

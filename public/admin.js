@@ -2584,6 +2584,7 @@
       <div class="row" style="justify-content:space-between">
         <h2 style="font-size:18px">Course students &amp; homework (${data.students.length})</h2>
         <div class="row" style="gap:8px">
+          <button class="btn btn-ghost btn-sm" data-cs-excel title="Download every student as an Excel file: summary, groups, payments, speaking mocks">${state.csExcelBusy ? 'Preparing…' : '⬇ Excel'}</button>
           <button class="btn btn-ghost btn-sm" data-cs-report title="Emails who has paid and who hasn't, by group">✉ Payment report</button>
           <button class="btn btn-ghost btn-sm ${state.csUnitsOpen ? 'is-on' : ''}" data-cs-unitsopen aria-expanded="${state.csUnitsOpen}">Units per level</button>
           <button class="btn btn-ghost btn-sm cs-codes-toggle ${state.csShowCodes ? 'is-on' : ''}" data-cs-codes aria-pressed="${state.csShowCodes}">${state.csShowCodes ? '🙈 Hide codes' : '👁 Show codes'}</button>
@@ -3369,6 +3370,23 @@
         method: 'POST', body: { name: n.name, level: n.level, photo: n.photo || undefined, sameFamilyAs: n.family || undefined }
       }, `${n.name.trim()} added — open them below to copy the parent code.`);
       if (ok) { state.csNew = { name: '', level: n.level, family: '', photo: '' }; state.csGroups = new Set([...state.csGroups, n.level]); render(); }
+    });
+
+    // the students as an Excel file (2026-11-19)
+    root.querySelector('[data-cs-excel]')?.addEventListener('click', async () => {
+      if (state.csExcelBusy) return;
+      setState({ csExcelBusy: true, error: '', notice: '' });
+      try {
+        const res = await fetch(`${API}/admin/course-students/export.xlsx`, { headers: { Authorization: `Bearer ${state.token}` } });
+        if (res.status === 401) { signOut(); throw new Error('Session expired — sign in again.'); }
+        if (!res.ok) { let m = ''; try { m = (await res.json()).message; } catch {} throw new Error(m || `Download failed (${res.status})`); }
+        const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'English-Hub-students.xlsx';
+        const url = URL.createObjectURL(await res.blob());
+        const a = Object.assign(document.createElement('a'), { href: url, download: name });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        setState({ csExcelBusy: false, notice: `${name} downloaded.` });
+      } catch (error) { setState({ csExcelBusy: false, error: error.message }); }
     });
 
     // the payment email, on demand
