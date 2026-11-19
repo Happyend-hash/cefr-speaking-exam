@@ -143,20 +143,15 @@ router.get('/', async (req, res, next) => {
 });
 
 /**
- * The course students as an Excel file (2026-11-19): summary, every student,
- * one sheet per group, the school year's payments and the speaking mocks.
- * Students in the archive are left out, like the Groups list.
+ * The course students as an Excel file (2026-11-19, made simple 2026-11-22):
+ * one sheet with everyone and one per group — number, name and the monthly
+ * payments from September. Students in the archive are left out.
  */
 router.get('/export.xlsx', async (req, res, next) => {
   try {
-    const list = await withPeriods(await CourseStudent.find({ removedAt: null }).select('-photo.data').sort({ name: 1 }));
-    const units = await unitsPerLevel();
-    const books = await booksPerLevel();
-    const emails = list.map(s => s.accountEmail).filter(Boolean);
-    const users = emails.length ? await User.find({ email: { $in: emails } }).select('email').lean() : [];
-    await syncCourseSpeaking(list, new Map(users.map(u => [u.email, u._id])));
+    const list = await withPeriods(await CourseStudent.find({ removedAt: null }).select('name level monthlyFee payments periods createdAt removedAt').sort({ name: 1 }));
     const now = Date.now();
-    const wb = buildWorkbook(list.map(s => studentRow(s, { units, books, now })), { now });
+    const wb = buildWorkbook(list.map(s => studentRow(s, { now })), { now });
     res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.set('Content-Disposition', `attachment; filename="${exportFileName(now)}"`);
     res.set('Cache-Control', 'no-store');
