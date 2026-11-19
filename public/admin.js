@@ -2572,13 +2572,7 @@
       </div>`;
     }).join('');
 
-    // --- the ranking
-    const boards = (data.leaderboards || []).map(b => `<div class="cs-board">
-        <h4><span class="tag">${esc(b.level)}</span></h4>
-        <ol>${b.rows.map(r => `<li class="${r.rank === null ? 'is-unranked' : ''}">
-          <span class="cs-rank">${r.rank ?? '—'}</span><span class="cs-rank-name">${esc(r.name)}</span>
-          <span class="tag">${esc(r.level)}</span><span class="cs-rank-pct ${csBand(r.percent)}">${r.percent === null ? '<small>no homework</small>' : csPct(r.percent)}</span></li>`).join('')}</ol>
-      </div>`).join('');
+    // The ranking under the groups was removed from the panel (Jamshid, 2026-11-22).
 
     return `<div class="card" style="margin-top:28px">
       <div class="row" style="justify-content:space-between">
@@ -2609,10 +2603,7 @@
         <div><button class="btn btn-sm" type="submit">Save</button></div>
       </form>` : ''}
       ${addForm}
-      ${tables || '<p class="muted" style="margin-top:12px">No students yet. Add the first one above.</p>'}
-      ${boards ? `<h3 class="cs-board-title">Ranking — ${esc(csMonthName(data.month))}</h3>
-        <p class="muted" style="font-size:13px">Average of every homework percent this month, per level. Parents see their child's level ranking.</p>
-        <div class="cs-boards">${boards}</div>` : ''}`}
+      ${tables || '<p class="muted" style="margin-top:12px">No students yet. Add the first one above.</p>'}`}
     </div>`;
   }
 
