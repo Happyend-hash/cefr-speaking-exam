@@ -40,3 +40,10 @@ test('a short level band is topped up from the others', () => {
   const { picked } = selectPack(pool, { seed: 'u' });
   assert.equal(picked.length, PACK_SIZE, 'no below-B1 or C1 mocks, still 15');
 });
+
+test('with no C1 and few high B2 mocks, the gap is filled from B2 and B1, not below B1', () => {
+  const pool = [20, 25, 30, 33, 35, 36, 37, 40, 42, 44, 46, 47, 48, 49, 50, 51, 52, 53, 54, 54, 55, 56, 57, 59, 62].map(s => mock(s));
+  const { picked } = selectPack(pool, { seed: 'v' });
+  assert.equal(picked.length, PACK_SIZE);
+  assert.equal(picked.filter(p => p.stratum === 'below').length, 2, 'below B1 stays at 2');
+});

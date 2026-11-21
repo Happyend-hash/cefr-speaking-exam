@@ -101,7 +101,11 @@ export function selectPack(attempts, { seed = 'x', exclude = [] } = {}) {
     for (const r of list) { if (n < stratum.take && free(r)) { take(r, stratum); n += 1; } }
     for (const r of list) if (free(r) && !backups.some(b => b.r === r)) backups.push({ r, stratum: stratum.key });
   }
-  // Top up from the backups when a band was short.
+  // Top up from the backups when a band was short — from the B2 and B1 bands
+  // first, where the marking matters most, and below B1 last (2026-11-21:
+  // with no C1 mocks the first pack took 5 below B1).
+  const TOPUP = ['b2high', 'b2low', 'b1', 'c1', 'below'];
+  backups.sort((a, b) => TOPUP.indexOf(a.stratum) - TOPUP.indexOf(b.stratum));
   while (picked.length < PACK_SIZE && backups.length) {
     const i = backups.findIndex(b => free(b.r));
     if (i < 0) break;
