@@ -320,7 +320,7 @@
     { key: 'messages', icon: 'mail', tone: 'violet', title: 'Messages & gifts', desc: 'Write to students, announce updates and gift mocks.',
       body: () => messagesCard(), open: ['msg-open'], meta: () => 'Send to one, a few or everyone' },
     { key: 'marking', icon: 'check', tone: 'amber', title: 'Marking & reviews', desc: 'Review attempts, expert scores, marking accuracy, calibration and repairs.',
-      body: () => `${unmarkedCard()}${reviewCard()}${accuracyCard()}${calibrationCard()}${remarkCard()}${rescueCard()}${purgeCard()}`,
+      body: () => `${unmarkedCard()}${reviewCard()}${accuracyCard()}${expertPackCard()}${calibrationCard()}${remarkCard()}${rescueCard()}${purgeCard()}`,
       open: ['review-open', 'acc-open', 'calibration-open'],
       badge: () => (state.unmarked || []).length,
       meta: () => ((state.unmarked || []).length ? `${plural(state.unmarked.length, 'attempt')} not marked` : 'Everything is marked') },
@@ -1504,6 +1504,78 @@
    * teaches a scale: three samples at B1, B2 and C1 are worth more than ten all
    * sitting at C1, and a teacher can only collect what they can see is missing.
    */
+  /**
+   * Expert calibration pack (2026-11-21): 15 mocks for a certified examiner to
+   * mark blind in a Google Form. Picks them across the levels, downloads the
+   * ZIP for Google Drive (codes only) and the teacher's key.
+   */
+  function expertPackCard() {
+    const b = state.xp;
+    if (!state.xpOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Expert calibration pack</h2>
+        <p class="muted" style="margin-top:6px">15 mocks across the levels for a certified examiner to mark blind (Google Form + Drive).</p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-xp-open>Open</button>
+      </div>`;
+    }
+    const rows = (b?.items || []).map(i => `<tr>
+        <td><strong>${esc(i.code)}</strong></td><td>${esc(i.stratum)}</td>
+        <td>${esc(i.aiScore ?? '—')} <span class="muted">${esc(i.aiLevel || '')}</span></td>
+        <td class="muted">${['part11', 'part12', 'part2', 'part3'].map(k => i.aiBands?.[k] ?? '—').join(' / ')}</td>
+        <td>${esc(i.student)}</td><td class="muted">${esc(i.exam)}</td>
+        <td><button class="btn btn-ghost btn-sm" data-xp-swap="${esc(i.code)}" title="Replace with another mock from the same level">Swap</button></td></tr>`).join('');
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="font-size:18px">Expert calibration pack</h2>
+        <button class="btn btn-ghost btn-sm" data-xp-close>Close</button>
+      </div>
+      <p class="muted" style="margin-top:6px">Full mocks marked since 12 October, spread across the levels (2 below B1, 4 B1, 4 low B2, 3 high B2, 2 C1), one per student. The examiner sees codes only — no names, no AI scores, no transcripts.</p>
+      <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-sm" data-xp-new>${b ? 'Pick a new 15' : 'Pick 15 mocks'}</button>
+        ${b ? `<button class="btn btn-sm" data-xp-zip>${state.xpBusy === 'zip' ? 'Preparing the ZIP… (1–3 min)' : '⬇ Examiner pack (ZIP for Google Drive)'}</button>
+        <button class="btn btn-ghost btn-sm" data-xp-key>${state.xpBusy === 'key' ? 'Preparing…' : '⬇ Key — keep private'}</button>` : ''}
+      </div>
+      ${b ? `<p class="muted" style="margin-top:10px;font-size:13px">Picked ${esc(new Date(b.createdAt).toLocaleString())} from ${esc(b.available)} usable mocks. Listen to any you are unsure of first: use Swap for a bad recording.</p>
+      <div style="overflow-x:auto;margin-top:8px"><table class="table"><thead><tr><th>Code</th><th>Level band</th><th>AI score</th><th>AI bands 1.1 / 1.2 / 2 / 3</th><th>Student</th><th>Mock</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}
+    </div>`;
+  }
+
+  async function xpLoad() {
+    try { setState({ xp: await api('/admin/expert-pack') }); } catch (error) { setState({ error: error.message }); }
+  }
+
+  async function xpDownload(path, kind) {
+    if (state.xpBusy) return;
+    setState({ xpBusy: kind, error: '', notice: '' });
+    try {
+      const res = await fetch(`${API}/admin/expert-pack/${path}`, { headers: { Authorization: `Bearer ${state.token}` } });
+      if (res.status === 401) { signOut(); throw new Error('Session expired — sign in again.'); }
+      if (!res.ok) { let m = ''; try { m = (await res.json()).message; } catch {} throw new Error(m || `Download failed (${res.status})`); }
+      const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || path;
+      const url = URL.createObjectURL(await res.blob());
+      const a = Object.assign(document.createElement('a'), { href: url, download: name });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setState({ xpBusy: '', notice: `${name} downloaded.` });
+    } catch (error) { setState({ xpBusy: '', error: error.message }); }
+  }
+
+  function wireExpertPack() {
+    root.querySelector('[data-xp-open]')?.addEventListener('click', () => { setState({ xpOpen: true }); xpLoad(); });
+    root.querySelector('[data-xp-close]')?.addEventListener('click', () => setState({ xpOpen: false }));
+    root.querySelector('[data-xp-new]')?.addEventListener('click', async () => {
+      if (state.xp && !confirm('Pick a new set of 15? The current list (and its key) is replaced.')) return;
+      setState({ loading: true, error: '' });
+      try { setState({ loading: false, xp: await api('/admin/expert-pack', { method: 'POST' }) }); } catch (error) { setState({ loading: false, error: error.message }); }
+    });
+    root.querySelectorAll('[data-xp-swap]').forEach(el => el.addEventListener('click', async () => {
+      setState({ loading: true, error: '' });
+      try { setState({ loading: false, xp: await api(`/admin/expert-pack/swap/${el.dataset.xpSwap}`, { method: 'POST' }), notice: `${el.dataset.xpSwap} replaced.` }); } catch (error) { setState({ loading: false, error: error.message }); }
+    }));
+    root.querySelector('[data-xp-zip]')?.addEventListener('click', () => xpDownload('pack.zip', 'zip'));
+    root.querySelector('[data-xp-key]')?.addEventListener('click', () => xpDownload('key.csv', 'key'));
+  }
+
   function calibrationCard() {
     const cal = state.calibration;
 
@@ -2225,6 +2297,7 @@
     wireVoiceAdmin();
     wireChatAdmin();
     wireTestPanel();
+    if (state.folder === 'marking') wireExpertPack();
     if (state.folder === 'news') { wireNewsAdmin(); paintWallImages(); }
     if (state.folder === 'materials') wireMaterialsAdmin();
     if (state.folder === 'wall') wireWallAdmin();
