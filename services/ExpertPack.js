@@ -219,66 +219,124 @@ export const EXAMINER_NOTE = [
 ].join('\r\n');
 
 /**
+ * What the pack holds, worked out once and used both for the ZIP and for the
+ * Google script's private link: per candidate the answers (with their
+ * recording keys), the Part 1.2 pictures and the Part 3 statement.
+ */
+export async function packEntries(batch) {
+  const exams = new Map();
+  const out = [];
+  for (const item of batch.items) {
+    const r = await ExamResult.findById(item.result).select('exam taskResults.taskNumber taskResults.audioKey').lean();
+    if (!r) continue;
+    const examId = String(r.exam);
+    if (!exams.has(examId)) exams.set(examId, await Exam.findById(examId).lean());
+    const flat = flattenSections(exams.get(examId));
+    const cand = { code: item.code, answers: [], pictures: [], partThree: null };
+    const picturesDone = new Set();
+    for (const q of flat) {
+      const t = (r.taskResults || []).find(x => x.taskNumber === q.taskNumber);
+      const partName = PART_LABEL[q.part] || `Part ${q.part}`;
+      if (q.part === '1.2' && !picturesDone.has(q.sectionIndex)) {
+        picturesDone.add(q.sectionIndex);
+        for (const img of q.images || []) {
+          const key = imageKey(img);
+          if (key) cand.pictures.push({ key, name: `${item.code}-P12-picture-${cand.pictures.length + 1}` });
+        }
+      }
+      if (q.part === '3') cand.partThree = { statement: q.topic || '', forSide: q.pros || [], againstSide: q.cons || [] };
+      cand.answers.push({
+        part: q.part, partName, number: q.questionInSection, question: q.text || '',
+        audioKey: t?.audioKey || null,
+        name: `${item.code}-${partName.replace('Part ', 'P').replace('.', '')}-Q${q.questionInSection}`
+      });
+    }
+    out.push(cand);
+  }
+  return out;
+}
+
+/** One answer as MP3 (or its original file if it cannot be converted): { buffer, ext, type }. */
+export async function answerAudio(audioKey) {
+  const raw = await AudioStorageService.readBuffer(audioKey);
+  const mp3 = await toMp3(raw);
+  if (mp3) return { buffer: mp3, ext: 'mp3', type: 'audio/mpeg' };
+  const meta = await AudioStorageService.getMetadata(audioKey).catch(() => null);
+  const type = meta?.contentType || 'audio/webm';
+  return { buffer: raw, ext: EXT[type] || 'webm', type };
+}
+
+/** One Part 1.2 picture: { buffer, ext, type }. */
+export async function picture(key) {
+  const meta = await ImageStorageService.getMetadata(key);
+  if (!meta) throw Object.assign(new Error('Picture not found'), { statusCode: 404 });
+  const buffer = await streamToBuffer(ImageStorageService.openDownloadStream(key));
+  const type = meta.contentType || 'image/jpeg';
+  return { buffer, ext: IMG_EXT[type] || 'jpg', type };
+}
+
+const manifestHead = batch => ({
+  title: 'English Hub Family — speaking calibration',
+  created: batch.createdAt,
+  note: EXAMINER_NOTE,
+  parts: SPEAKING_PARTS.map(p => ({ key: p.key, name: p.name, max: p.max }))
+});
+
+/**
+ * The manifest for the Google script's private link: the same pack, with an
+ * address for every recording and picture instead of a file in a ZIP.
+ */
+export async function linkManifest(batch, base) {
+  const entries = await packEntries(batch);
+  return {
+    ...manifestHead(batch),
+    candidates: entries.map(c => ({
+      code: c.code,
+      partThree: c.partThree,
+      pictures: c.pictures.map((p, i) => ({ name: p.name, url: `${base}/picture/${c.code}/${i + 1}` })),
+      answers: c.answers.map((a, i) => ({
+        part: a.part, partName: a.partName, number: a.number, question: a.question, name: a.name,
+        url: a.audioKey ? `${base}/audio/${c.code}/${i + 1}` : null
+      }))
+    }))
+  };
+}
+
+/**
  * Write the ZIP to `out`: README, manifest.json and one folder per candidate
  * (answers as MP3, Part 1.2 pictures, questions.txt).
  */
 export async function writePack(batch, out) {
   const zip = archiver('zip', { zlib: { level: 1 } });
   zip.pipe(out);
-  const manifest = { title: 'English Hub Family — speaking calibration', created: batch.createdAt, parts: SPEAKING_PARTS.map(p => ({ key: p.key, name: p.name, max: p.max })), candidates: [] };
-  const exams = new Map();
-  for (const item of batch.items) {
-    const r = await ExamResult.findById(item.result).select('exam taskResults.taskNumber taskResults.audioKey').lean();
-    if (!r) continue;
-    const examId = String(r.exam);
-    if (!exams.has(examId)) exams.set(examId, await Exam.findById(examId).lean());
-    const exam = exams.get(examId);
-    const flat = flattenSections(exam);
-    const folder = item.code;
-    const cand = { code: item.code, answers: [], pictures: [], partThree: null };
-    const lines = [`${item.code}`, ''];
-    let pic = 0;
-    const picturesDone = new Set();
-    for (const q of flat) {
-      const t = (r.taskResults || []).find(x => x.taskNumber === q.taskNumber);
-      const partName = PART_LABEL[q.part] || `Part ${q.part}`;
-      const base = `${item.code}-${partName.replace('Part ', 'P').replace('.', '')}-Q${q.questionInSection}`;
-      if (q.part === '1.2' && !picturesDone.has(q.sectionIndex)) {
-        picturesDone.add(q.sectionIndex);
-        for (const img of q.images || []) {
-          const key = imageKey(img);
-          if (!key) continue;
-          try {
-            const meta = await ImageStorageService.getMetadata(key);
-            const buf = await streamToBuffer(ImageStorageService.openDownloadStream(key));
-            pic += 1;
-            const name = `${item.code}-P12-picture-${pic}.${IMG_EXT[meta?.contentType] || 'jpg'}`;
-            zip.append(buf, { name: `${folder}/${name}` });
-            cand.pictures.push(name);
-          } catch { /* a missing picture is listed as missing below */ }
-        }
-      }
-      if (q.part === '3' || q.part === 3) cand.partThree = { statement: q.topic || '', forSide: q.pros || [], againstSide: q.cons || [] };
+  const manifest = { ...manifestHead(batch), candidates: [] };
+  for (const c of await packEntries(batch)) {
+    const cand = { code: c.code, answers: [], pictures: [], partThree: c.partThree };
+    const lines = [c.code, ''];
+    for (const p of c.pictures) {
+      try {
+        const img = await picture(p.key);
+        const name = `${p.name}.${img.ext}`;
+        zip.append(img.buffer, { name: `${c.code}/${name}` });
+        cand.pictures.push(name);
+      } catch { /* listed as missing */ }
+    }
+    for (const a of c.answers) {
       let file = null;
-      if (t?.audioKey) {
+      if (a.audioKey) {
         try {
-          const raw = await AudioStorageService.readBuffer(t.audioKey);
-          const mp3 = await toMp3(raw);
-          if (mp3) file = `${base}.mp3`;
-          else {
-            const meta = await AudioStorageService.getMetadata(t.audioKey).catch(() => null);
-            file = `${base}.${EXT[meta?.contentType] || 'webm'}`;
-          }
-          zip.append(mp3 || raw, { name: `${folder}/${file}` });
+          const audio = await answerAudio(a.audioKey);
+          file = `${a.name}.${audio.ext}`;
+          zip.append(audio.buffer, { name: `${c.code}/${file}` });
         } catch { file = null; }
       }
-      cand.answers.push({ part: String(q.part), partName, number: q.questionInSection, question: q.text || '', file });
-      lines.push(`${partName} · Q${q.questionInSection}${file ? `  (${file})` : '  (recording missing)'}`, `  ${String(q.text || '').replace(/\n/g, '\n  ')}`, '');
+      cand.answers.push({ part: a.part, partName: a.partName, number: a.number, question: a.question, file });
+      lines.push(`${a.partName} · Q${a.number}${file ? `  (${file})` : '  (recording missing)'}`, `  ${String(a.question).replace(/\n/g, '\n  ')}`, '');
     }
-    if (cand.partThree) {
-      lines.push('Part 3 statement:', `  ${cand.partThree.statement}`, '  FOR: ' + cand.partThree.forSide.join('; '), '  AGAINST: ' + cand.partThree.againstSide.join('; '), '');
+    if (c.partThree) {
+      lines.push('Part 3 statement:', `  ${c.partThree.statement}`, '  FOR: ' + c.partThree.forSide.join('; '), '  AGAINST: ' + c.partThree.againstSide.join('; '), '');
     }
-    zip.append(lines.join('\r\n'), { name: `${folder}/${item.code}-questions.txt` });
+    zip.append(lines.join('\r\n'), { name: `${c.code}/${c.code}-questions.txt` });
     manifest.candidates.push(cand);
   }
   zip.append(EXAMINER_NOTE, { name: 'README-for-examiner.txt' });
@@ -303,4 +361,4 @@ function flattenSections(exam) {
   return flat;
 }
 
-export default { STRATA, PACK_SIZE, selectPack, usable, disagreement, createBatch, swapItem, keyCsv, writePack };
+export default { STRATA, PACK_SIZE, selectPack, usable, disagreement, createBatch, swapItem, keyCsv, writePack, packEntries, linkManifest, answerAudio, picture };

@@ -1535,7 +1535,15 @@
         ${b ? `<button class="btn btn-sm" data-xp-zip>${state.xpBusy === 'zip' ? 'Preparing the ZIP… (1–3 min)' : '⬇ Examiner pack (ZIP for Google Drive)'}</button>
         <button class="btn btn-ghost btn-sm" data-xp-key>${state.xpBusy === 'key' ? 'Preparing…' : '⬇ Key — keep private'}</button>` : ''}
       </div>
-      ${b ? `<p class="muted" style="margin-top:10px;font-size:13px">Picked ${esc(new Date(b.createdAt).toLocaleString())} from ${esc(b.available)} usable mocks. Listen to any you are unsure of first: use Swap for a bad recording.</p>
+      ${b ? `<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--ground);border:1px solid var(--line)">
+        <strong>Private link for the Google script</strong>
+        <p class="muted" style="font-size:13px;margin-top:4px">The script uses it to copy the recordings and pictures to your Google Drive and build the form. Codes and questions only. Valid for 5 days; stop it when the form is ready.</p>
+        ${b.link ? `<div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap"><input type="text" readonly value="${esc(b.link)}" style="flex:1;min-width:260px" id="xp-link" aria-label="Private link">
+          <button class="btn btn-ghost btn-sm" data-xp-copy>Copy</button><button class="btn btn-ghost btn-sm" data-xp-unlink>Stop link</button></div>
+          <p class="muted" style="font-size:12px;margin-top:6px">Valid until ${esc(new Date(b.linkUntil).toLocaleString())}</p>`
+        : `<button class="btn btn-sm" style="margin-top:8px" data-xp-link>Make the link</button>`}
+      </div>
+      <p class="muted" style="margin-top:10px;font-size:13px">Picked ${esc(new Date(b.createdAt).toLocaleString())} from ${esc(b.available)} usable mocks. Listen to any you are unsure of first: use Swap for a bad recording.</p>
       <div style="overflow-x:auto;margin-top:8px"><table class="table"><thead><tr><th>Code</th><th>Level band</th><th>AI score</th><th>AI bands 1.1 / 1.2 / 2 / 3</th><th>Student</th><th>Mock</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}
     </div>`;
   }
@@ -1573,6 +1581,15 @@
       try { setState({ loading: false, xp: await api(`/admin/expert-pack/swap/${el.dataset.xpSwap}`, { method: 'POST' }), notice: `${el.dataset.xpSwap} replaced.` }); } catch (error) { setState({ loading: false, error: error.message }); }
     }));
     root.querySelector('[data-xp-zip]')?.addEventListener('click', () => xpDownload('pack.zip', 'zip'));
+    root.querySelector('[data-xp-link]')?.addEventListener('click', async () => {
+      try { setState({ xp: await api('/admin/expert-pack/link', { method: 'POST' }), notice: 'Link made — valid for 5 days.' }); } catch (error) { setState({ error: error.message }); }
+    });
+    root.querySelector('[data-xp-unlink]')?.addEventListener('click', async () => {
+      try { setState({ xp: await api('/admin/expert-pack/link', { method: 'DELETE' }), notice: 'Link stopped.' }); } catch (error) { setState({ error: error.message }); }
+    });
+    root.querySelector('[data-xp-copy]')?.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(state.xp?.link || ''); setState({ notice: 'Link copied.' }); } catch { root.querySelector('#xp-link')?.select(); }
+    });
     root.querySelector('[data-xp-key]')?.addEventListener('click', () => xpDownload('key.csv', 'key'));
   }
 

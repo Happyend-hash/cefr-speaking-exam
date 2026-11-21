@@ -76,7 +76,7 @@ import CourseStudent from './models/CourseStudent.js';
 import { startPaymentReports } from './services/PaymentReport.js';
 import { startMoveSync } from './services/CourseMoveSync.js';
 import courseStudentRoutes from './routes/courseStudents.js';
-import expertPackRoutes from './routes/expertPack.js';
+import expertPackRoutes, { filesRouter as expertFilesRoutes } from './routes/expertPack.js';
 import messageRoutes from './routes/messages.js';
 import adminMessageRoutes from './routes/adminMessages.js';
 import supportRoutes from './routes/support.js';
@@ -371,6 +371,8 @@ app.use('/api/materials', authenticate, requireVerifiedEmail, materialRoutes);
 app.use('/api/admin/sponsors', authenticate, sponsorAdminRoutes);
 app.use('/api/admin/course-students', authenticate, courseStudentRoutes);
 app.use('/api/admin/expert-pack', authenticate, expertPackRoutes);
+// The Google script's private link to the calibration pack (no sign-in, token in the address).
+app.use('/api/expert-files', rateLimit({ windowMs: 60 * 1000, max: 400, standardHeaders: true, legacyHeaders: false }), expertFilesRoutes);
 app.use('/api/admin/messages', authenticate, adminMessageRoutes);
 app.use('/api/admin/support', authenticate, adminSupportRoutes);
 app.use('/api/admin/wall', authenticate, wallAdminRoutes);

@@ -24,6 +24,9 @@ const expertBatchSchema = new mongoose.Schema({
   swappedOut: [mongoose.Schema.Types.ObjectId],
   available: Number,          // how many mocks could have been chosen
   createdBy: String,
+  // The private link the Google script reads (2026-11-21): unguessable, for a few days only.
+  shareToken: { type: String, index: { sparse: true } },
+  shareUntil: Date,
   closedAt: { type: Date, default: null }
 }, { timestamps: true });
 
