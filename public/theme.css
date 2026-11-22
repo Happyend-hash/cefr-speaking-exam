@@ -649,3 +649,21 @@ input[type="search"], input[type="number"], input[type="date"], select, textarea
 .offtopic-card p.muted { font-size: 13px; }
 :root[data-theme="night"] .offtopic-card { background: rgba(245, 196, 81, .1); border-color: rgba(245, 196, 81, .35); }
 :root[data-theme="night"] .offtopic-card strong { color: #f5c451; }
+
+/* Inside the Google Play app (2026-11-22): no buying, no prices, no way to pay. */
+html.play-app [data-go="topup"],
+html.play-app [data-cx="premium"],
+html.play-app [data-mt-locked],
+html.play-app [data-pr="buy"],
+html.play-app [data-pc-receipt],
+html.play-app .shop-entry,
+html.play-app .shop-pill { display: none !important; }
+
+/* Hisobni o'chirish (2026-11-22) */
+.prof-delete-link { display: block; margin: 14px auto 4px; background: none; border: 0; padding: 6px 10px; font: inherit; font-size: 13.5px; color: #b42318; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.prof-delete-link:focus-visible { outline: 2px solid #b42318; outline-offset: 2px; border-radius: 6px; }
+.del-card h2 { color: #b42318; }
+.del-list { margin: 12px 0 10px 18px; display: grid; gap: 6px; }
+.del-btn { margin-top: 12px; background: #b42318 !important; border-color: #b42318 !important; color: #fff !important; }
+.del-btn:disabled { opacity: .6; }
+:root[data-theme="night"] .prof-delete-link, :root[data-theme="night"] .del-card h2 { color: #f97066; }

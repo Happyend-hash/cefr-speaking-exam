@@ -89,6 +89,27 @@
     }
   };
 
+  // ------------------------------------------------------------ play app
+
+  /**
+   * Inside the Google Play app (2026-11-22). Google's rules: digital things
+   * bought inside a Play app must be paid through Google Play, and the app may
+   * not point students to another way to pay. So inside the app the shop,
+   * prices and "buy" buttons are hidden; on the website nothing changes.
+   * The Play build starts at /?app=play; links opened in the app arrive with an
+   * android-app:// referrer. Remembered for the tab (sessionStorage), never in
+   * localStorage — the app shares storage with Chrome, where buying must work.
+   */
+  const PLAY_APP = (() => {
+    try {
+      const fromApp = new URLSearchParams(location.search).get('app') === 'play'
+        || String(document.referrer || '').startsWith('android-app://');
+      if (fromApp) sessionStorage.setItem('ehPlayApp', '1');
+      return sessionStorage.getItem('ehPlayApp') === '1';
+    } catch { return false; }
+  })();
+  if (PLAY_APP) document.documentElement.classList.add('play-app');
+
   // ----------------------------------------------------------- utilities
 
   // Marks are out of 75 (the Multilevel scale), but a progress bar is drawn as a
@@ -2164,7 +2185,7 @@
       if (!m.welcome) lastDay = day;
       return sep + spBubble(m);
     }).join('');
-    const kinds = Object.entries(SP_UZ.kinds).map(([k, [e, l]]) =>
+    const kinds = Object.entries(SP_UZ.kinds).filter(([k]) => !(PLAY_APP && k === 'payment')).map(([k, [e, l]]) =>
       `<button type="button" class="sp-chip is-${k} ${sp.kind === k ? 'is-on' : ''}" data-sp-kind="${k}" aria-pressed="${sp.kind === k}">${e} ${l}</button>`).join('');
     return `<button class="crumb" data-go="inbox">${icon('left')} ${INBOX_UZ.back}</button>
       <section class="sp-chat">
@@ -4822,6 +4843,7 @@
     const error = pr.error ? `<p class="pr-error" role="alert">${esc(pr.error)}</p>` : '';
 
     if (!p.active) {
+      if (PLAY_APP) return '';
       return `<section class="card pr-strip is-free">
         ${avatar}
         <div class="pr-body">
@@ -4928,7 +4950,7 @@
     listBody: "Mavzu tanlang, 10 kishigacha yozishing va ovozli xabar yuboring.",
     open: 'Xona ochish',
     openPremium: 'Xona ochish · Premium',
-    openLocked: "Xona ochish faqat Premium o'quvchilar uchun. Premium — 15 000 so'm, 30 kun.",
+    openLocked: PLAY_APP ? "Xona ochish faqat Premium o'quvchilar uchun." : "Xona ochish faqat Premium o'quvchilar uchun. Premium — 15 000 so'm, 30 kun.",
     fixedTitle: 'Umumiy xonalar',
     communityTitle: "O'quvchilar xonalari",
     noCommunity: "Hozircha ochiq xona yo'q. Premium o'quvchilar o'z xonasini ochishi mumkin.",
@@ -8598,7 +8620,7 @@
     { id: 'club', go: 'speak', label: 'Klub', icon: 'mic', screens: ['speak', 'eh', 'duel'] },
     { id: 'friends', go: 'social', label: "Do'stlar", icon: 'message', screens: ['social', 'dm', 'person'] },
     { id: 'rank', go: 'rank', label: 'Reyting', icon: 'trophy', screens: ['rank'] },
-    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'results', 'result', 'writing-result', 'install', 'inbox', 'support', 'wall', 'my-results'] }
+    { id: 'profile', go: 'profile', label: 'Profil', icon: 'user', screens: ['profile', 'delete-account', 'results', 'result', 'writing-result', 'install', 'inbox', 'support', 'wall', 'my-results'] }
   ];
   const currentTab = () => TABS.find(t => t.screens.includes(state.screen))?.id || '';
   const isStudentShell = () => Boolean(state.user) && state.user.role !== 'admin';
@@ -8767,7 +8789,8 @@
       shared: sharedScreen,
       'my-results': myResultsScreen,
       news: newsScreen,
-      materials: materialsScreen
+      materials: materialsScreen,
+      'delete-account': deleteAccountScreen
     }[state.screen] || landingScreen;
 
     const tabs = tabBarMarkup();
@@ -9272,6 +9295,21 @@
     checking: "To'lovingiz tekshirilmoqda… Bir necha soniyada hisobingizga qo'shiladi."
   };
 
+  /** Inside the Play app the shop is replaced by the balance alone. */
+  function playAppNotice() {
+    const access = state.access || {};
+    const premium = state.topupReason === 'premium';
+    state.topupReason = '';
+    const sp = access.credits ?? access.remaining;
+    return `
+      <div class="card form-card" style="max-width:560px">
+        <h2 style="margin-bottom:8px">${premium ? 'Premium imkoniyat' : 'Balans'}</h2>
+        <p class="muted">${premium ? 'Bu imkoniyat Premium a’zolar uchun.' : (sp === 0 ? 'Hozircha speaking mock qolmagan.' : '')}</p>
+        ${typeof sp === 'number' ? `<p style="margin-top:10px">Speaking: <b>${esc(String(sp))}</b> · Writing: <b>${esc(String(access.writing?.credits ?? 0))}</b></p>` : ''}
+        <button class="btn btn-ghost btn-block" style="margin-top:14px" data-go="dashboard">${ACCESS_UZ.toDashboard}</button>
+      </div>`;
+  }
+
   function topupScreen() {
     const access = state.access || {};
     if (access.blocked) {
@@ -9282,6 +9320,7 @@
         <button class="btn btn-ghost btn-block" style="margin-top:14px" data-go="dashboard">${ACCESS_UZ.toDashboard}</button>
       </div>`;
     }
+    if (PLAY_APP) return playAppNotice();
     state.topupReason = '';
     const d = state.prices || {};
     const speaking = d.packages || [];
@@ -10072,6 +10111,7 @@
   const pc = { open: null };
 
   function priceCard() {
+    if (PLAY_APP) return '';
     const d = state.prices;
     if (!d || !isStudentShell()) return '';
     const speaking = d.packages || [];
@@ -10134,7 +10174,7 @@
    * on it.
    */
   function shopEntry() {
-    if (!isStudentShell() || state.access?.blocked) return '';
+    if (PLAY_APP || !isStudentShell() || state.access?.blocked) return '';
     const d = state.prices || {};
     const per = list => (list || []).length ? Math.min(...list.map(p => Math.round(p.price / p.mocks))) : 0;
     const prem = d.premium || { price: 15000 };
@@ -10228,7 +10268,7 @@
     fresh: n => `${n} ta yangi`,
     open: 'Ochish', play: 'Tinglash', watch: 'Ko‘rish', download: 'Yuklab olish', visit: 'Havolani ochish',
     isNew: 'Yangi', premium: 'Premium',
-    locked: 'Bu material faqat Premium a’zolar uchun. Premium — 15 000 so‘m, 30 kun.',
+    locked: PLAY_APP ? 'Bu material faqat Premium a’zolar uchun.' : 'Bu material faqat Premium a’zolar uchun. Premium — 15 000 so‘m, 30 kun.',
     getPremium: 'Premium olish',
     back: 'Materiallar'
   };
@@ -10485,7 +10525,71 @@
       </section>
       ${skills}
       ${state.user?.role === 'student' ? `<section class="card prof-nick">${nicknameRow()}</section>` : ''}
-      <button class="btn btn-ghost btn-block prof-signout" data-action="signout">${icon('logout')} ${PROF_UZ.signout}</button>`;
+      <button class="btn btn-ghost btn-block prof-signout" data-action="signout">${icon('logout')} ${PROF_UZ.signout}</button>
+      ${state.user?.role === 'student' ? `<button class="prof-delete-link" data-go="delete-account">${DEL_UZ.link}</button>` : ''}`;
+  }
+
+  // ------------------------------------------------------ delete account
+  //
+  // "Hisobni o'chirish" (2026-11-22; Google Play requires it in the app).
+  // The student types their email to confirm; services/AccountDeletion.js
+  // removes the account and everything they made. Payment records stay.
+
+  const DEL_UZ = {
+    link: 'Hisobni o‘chirish',
+    title: 'Hisobni o‘chirish',
+    intro: 'Hisobingiz va undagi hamma narsa butunlay o‘chiriladi. Buni ortga qaytarib bo‘lmaydi.',
+    gone: [
+      'Hisobingiz, ismingiz va profil rasmingiz',
+      'Barcha speaking va writing urinishlari, ovoz yozuvlari va natijalar',
+      'Qolgan mocklar va Premium',
+      'Do‘stlar, chatlar, postlar, xabarlar va yuborgan rasmlaringiz',
+      'Reyting va o‘yin ochkolari'
+    ],
+    keptTitle: 'Saqlanib qoladi:',
+    kept: 'To‘lovlar haqidagi yozuvlar (summa, sana, email) — buxgalteriya hisobi uchun.',
+    confirm: 'Tasdiqlash uchun hisobingiz emailini yozing:',
+    button: 'Hisobni butunlay o‘chirish',
+    working: 'O‘chirilmoqda…',
+    cancel: 'Bekor qilish',
+    done: 'Hisobingiz o‘chirildi.'
+  };
+  const del = { busy: false, error: '' };
+
+  function deleteAccountScreen() {
+    const email = state.user?.email || '';
+    return `<button class="crumb" data-go="profile">${icon('left')} Profil</button>
+      <section class="card form-card del-card" style="max-width:560px">
+        <h2>${DEL_UZ.title}</h2>
+        <p style="margin-top:8px">${DEL_UZ.intro}</p>
+        <ul class="del-list">${DEL_UZ.gone.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+        <p class="muted" style="font-size:13.5px"><b>${DEL_UZ.keptTitle}</b> ${DEL_UZ.kept}</p>
+        <form id="del-form" style="margin-top:16px">
+          <label for="del-email">${DEL_UZ.confirm} <b>${esc(email)}</b></label>
+          <input id="del-email" type="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(email)}" style="margin-top:6px">
+          ${del.error ? `<p class="error" role="alert" style="margin-top:8px">${esc(del.error)}</p>` : ''}
+          <button class="btn btn-block del-btn" type="submit" ${del.busy ? 'disabled' : ''}>${del.busy ? DEL_UZ.working : DEL_UZ.button}</button>
+        </form>
+        <button class="btn btn-ghost btn-block" style="margin-top:8px" data-go="profile">${DEL_UZ.cancel}</button>
+      </section>`;
+  }
+
+  async function submitDeleteAccount(event) {
+    event.preventDefault();
+    const typed = (document.getElementById('del-email')?.value || '').trim().toLowerCase();
+    if (typed !== String(state.user?.email || '').toLowerCase()) {
+      del.error = 'Email mos kelmadi — hisobingiz emailini aynan yozing.';
+      return render();
+    }
+    del.busy = true; del.error = ''; render();
+    try {
+      await api('/account/delete', { method: 'POST', body: { email: typed } });
+      del.busy = false;
+      signOut();
+      setState({ notice: DEL_UZ.done });
+    } catch (error) {
+      del.busy = false; del.error = error.message; render();
+    }
   }
 
   // ------------------------------------------------------------ sponsors
@@ -11807,6 +11911,7 @@
         else if (target === 'social') openSocial();
         else if (target === 'wall') openWall();
         else if (target === 'my-results') openMyResults();
+        else if (target === 'delete-account') { del.error = ''; go(target); }
         else go(target);
       });
     });
@@ -11920,6 +12025,7 @@
     document.getElementById('code-login-form')?.addEventListener('submit', handleCodeLoginSubmit);
     document.getElementById('forgot-form')?.addEventListener('submit', handleForgotSubmit);
     document.getElementById('reset-form')?.addEventListener('submit', handleResetSubmit);
+    document.getElementById('del-form')?.addEventListener('submit', submitDeleteAccount);
 
     wireWriting();
     wireLeaderboard();

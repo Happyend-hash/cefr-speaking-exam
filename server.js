@@ -99,6 +99,7 @@ import { publicRouter as sponsorRoutes, adminRouter as sponsorAdminRoutes } from
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { authenticate } from './middleware/auth.js';
 import { requireVerifiedEmail } from './middleware/verifiedEmail.js';
+import { deleteAccount } from './services/AccountDeletion.js';
 
 dotenv.config();
 
@@ -350,6 +351,14 @@ app.post('/api/visit', (req, res) => {
 
 // Protected routes (require authentication)
 app.use('/api/exam', authenticate, requireVerifiedEmail, examRoutes);
+// Deleting one's own account works even before the email is confirmed (Google Play, 2026-11-22).
+app.post('/api/account/delete', authenticate, async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await deleteAccount(req.user.id, { confirmEmail: req.body?.email }) });
+  } catch (error) { next(error); }
+});
+app.get(['/delete-account', '/hisobni-ochirish'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'delete-account.html')));
+app.get(['/terms', '/shartlar'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'terms.html')));
 app.use('/api/user', authenticate, requireVerifiedEmail, userRoutes);
 app.use('/api/evaluation', authenticate, requireVerifiedEmail, evaluationRoutes);
 app.use('/api/writing', authenticate, requireVerifiedEmail, writingRoutes);

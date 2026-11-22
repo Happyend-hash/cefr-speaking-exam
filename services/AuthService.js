@@ -4,6 +4,15 @@ import User from '../models/User.js';
 import { APIError } from '../middleware/errorHandler.js';
 import { sendMail, emailConfigured } from './EmailService.js';
 import { verifyGoogleIdToken } from './GoogleAuth.js';
+import { wasDeleted } from './AccountDeletion.js';
+
+/** An email whose account was deleted before starts again without the free mocks. */
+async function noFreeMockAfterDeletion(user) {
+  if (await wasDeleted(user.email).catch(() => false)) {
+    user.subscription.examsRemaining = 0;
+    user.subscription.writingRemaining = 0;
+  }
+}
 
 const VERIFICATION_CODE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resend requests
@@ -43,6 +52,7 @@ class AuthService {
         emailVerificationLastSentAt: new Date(),
         emailVerificationRequired: true
       });
+      await noFreeMockAfterDeletion(user);
 
       await user.save();
 
@@ -397,6 +407,7 @@ class AuthService {
       emailVerificationRequired: true,
       status: 'active'
     });
+    await noFreeMockAfterDeletion(user);
     await user.save();
     return { ...(await this.startSession(user)), created: true };
   }
