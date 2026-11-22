@@ -85,6 +85,17 @@ export function answerModelFromEnv(value) {
   return v;
 }
 
+/** The marker's "offTopic" notes: { part3: "…" } for known parts only, short text. */
+export function cleanOffTopic(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const key of SPEAKING_PART_KEYS || ['part11', 'part12', 'part2', 'part3']) {
+    const note = value[key];
+    if (typeof note === 'string' && note.trim()) out[key] = note.trim().slice(0, 240);
+  }
+  return out;
+}
+
 class AIEvaluationService {
   constructor() {
     this.apiKey = process.env.CLAUDE_API_KEY;
@@ -452,8 +463,18 @@ ${Object.entries(SPEAKING_PART_MAX).map(([key, max]) => `    "${key}": 0-${max}`
   "reasoning": "Which sentence of which part's descriptor decided each band, in one or two sentences",
   "overallFeedback": "What the candidate does well and what holds them back, addressed to them",
   "strengths": ["...", "...", "..."],
-  "areasForImprovement": ["...", "...", "..."]
+  "areasForImprovement": ["...", "...", "..."],
+  "offTopic": {}
 }
+
+"offTopic": only for a part where MOST of the answer is about a clearly different
+subject from the question or statement the candidate was given (for example a
+different debate statement, or a prepared speech on another topic). Give the
+part's key and one short sentence, addressed to the candidate, saying what they
+talked about instead — e.g. { "part3": "You spoke about cash and digital payments,
+not renewable energy." }. A brief detour, a loose but relevant link to the topic,
+or a weak answer that is still about the question is NOT off-topic. When no part
+is off-topic, return {}.
 
 ${this.languageInstruction}
 Award the bands the official examiner would: neither severe nor generous. Do not
@@ -556,6 +577,7 @@ ${transcript}${measured}${measuredFluency}`;
       score: outcome.score,
       level: outcome.level,
       reasoning: verdict.reasoning || '',
+      offTopic: cleanOffTopic(verdict.offTopic),
       overallFeedback: verdict.overallFeedback || '',
       strengths: verdict.strengths || [],
       areasForImprovement: verdict.areasForImprovement || []

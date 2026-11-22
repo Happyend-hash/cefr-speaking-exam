@@ -11394,6 +11394,20 @@
    * the marker read. Nothing is paraphrased on the way to the screen: a student
    * comparing this against the official sheet has to find the same wording.
    */
+  /**
+   * A part answered about a different subject (2026-11-22): said plainly, so a
+   * low band is understood rather than taken for a site mistake.
+   */
+  function offTopicCard(r) {
+    const parts = (r.criteria || []).filter(c => c.offTopic);
+    if (!parts.length) return '';
+    return `<div class="card offtopic-card" role="note">
+        <strong>⚠ ${parts.length === 1 ? `${esc(parts[0].name)}: boshqa mavzu haqida gapirdingiz` : 'Ba’zi qismlarda boshqa mavzu haqida gapirdingiz'}</strong>
+        ${parts.map(c => `<p>${parts.length > 1 ? `<b>${esc(c.name)}:</b> ` : ''}${esc(c.offTopic)}</p>`).join('')}
+        <p class="muted">Imtihonda savoldan boshqa mavzuda gapirish shu qism bahosini keskin pasaytiradi. Savolni (yoki bahs mavzusini) diqqat bilan o‘qing va aynan unga javob bering.</p>
+      </div>`;
+  }
+
   function criteriaCard() {
     const criteria = state.result?.criteria || [];
     // Attempts marked before part bands existed have none. Showing an empty
@@ -11577,6 +11591,7 @@
           : ''}
       </div>
       ${sharePanel('speaking', r.id)}
+      ${offTopicCard(r)}
 
       ${criteriaCard()}
       ${r.status === 'completed' ? expertForm('speaking',

@@ -33,6 +33,8 @@ import { APIError } from '../middleware/errorHandler.js';
 import { usageReport, usageList } from '../services/UsageStats.js';
 import WritingAttempt from '../models/WritingAttempt.js';
 import { reviewSpeaking, reviewWriting } from '../services/ExpertReview.js';
+import { startCompare, lastComparison, CANDIDATES as TRANSCRIBE_MODELS } from '../services/TranscribeCompare.js';
+import TranscriptionServiceForCheck from '../services/TranscriptionService.js';
 import AuthService from '../services/AuthService.js';
 import Push from '../services/Push.js';
 import crypto from 'crypto';
@@ -2063,6 +2065,21 @@ router.get('/marking-accuracy', async (req, res, next) => {
     const scoreGap = mean(rows.filter(r => r.aiScore !== null && r.expertScore !== null).map(r => r.expertScore - r.aiScore));
     res.json({ success: true, data: { rows, gap, scoreGap, reviewed: rows.length } });
   } catch (error) { next(error); }
+});
+
+/**
+ * The transcription check (2026-11-22): re-transcribe the Part 2 and Part 3
+ * answers of a few recent mocks with another model and show both texts.
+ * Nothing is saved. GET returns the running state and the last comparison.
+ */
+router.get('/transcription-check', (req, res) => {
+  res.json({ success: true, data: { ...lastComparison(), models: TRANSCRIBE_MODELS, current: TranscriptionServiceForCheck.currentModel } });
+});
+router.post('/transcription-check', (req, res, next) => {
+  try {
+    const state = startCompare({ mocks: Number(req.body?.mocks) || 5, model: String(req.body?.model || 'gpt-4o-transcribe') });
+    res.json({ success: true, data: { ...state, models: TRANSCRIBE_MODELS, current: TranscriptionServiceForCheck.currentModel } });
+  } catch (error) { next(error.statusCode ? new APIError(error.message, error.statusCode) : error); }
 });
 
 /**

@@ -226,6 +226,9 @@ const examResultSchema = new mongoose.Schema(
     // Each examiner reading's own bands (two, or three when the first two
     // disagreed badly). partBands above is their combination — see
     // services/DoubleMarking.js. Absent on attempts marked by one reading.
+    // Parts the examiners agreed were about a different subject from the
+    // question: { part3: "You spoke about … not …" } (2026-11-22).
+    offTopic: { type: mongoose.Schema.Types.Mixed, default: undefined },
     markerBands: [{
       _id: false,
       part11: Number,
@@ -428,7 +431,7 @@ examResultSchema.methods.determineCEFRLevel = function () {
  */
 examResultSchema.methods.applyAverageFallback = function (reason) {
   for (const path of [
-    'partBands', 'markerBands', 'rawTotal', 'denominator',
+    'partBands', 'markerBands', 'offTopic', 'rawTotal', 'denominator',
     'overallFeedback', 'overallReasoning'
   ]) {
     this.set(path, undefined);

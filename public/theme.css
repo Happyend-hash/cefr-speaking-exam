@@ -641,3 +641,11 @@ input[type="search"], input[type="number"], input[type="date"], select, textarea
   .shop-head h1 { font-size: 22px; }
 }
 .shop-pkg.is-speaking:not(.is-pop) .shop-buy { background: var(--indigo-600); border-color: var(--indigo-600); color: #fff; box-shadow: none; }
+
+/* A part answered about another subject (2026-11-22) */
+.offtopic-card { border: 1px solid #f6c66b; background: #fff8e6; }
+.offtopic-card strong { color: #8a5a00; }
+.offtopic-card p { margin-top: 6px; font-size: 14px; }
+.offtopic-card p.muted { font-size: 13px; }
+:root[data-theme="night"] .offtopic-card { background: rgba(245, 196, 81, .1); border-color: rgba(245, 196, 81, .35); }
+:root[data-theme="night"] .offtopic-card strong { color: #f5c451; }

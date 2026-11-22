@@ -125,23 +125,29 @@ class TranscriptionService {
     return String(process.env.TRANSCRIBE_KEEP_FILLERS || 'true').toLowerCase() !== 'false';
   }
 
-  async transcribeWithWhisper(audioBuffer, filename, contentType) {
-    if (!this.keepFillers) return this.transcribeOnce(audioBuffer, filename, contentType, '');
+  /** The model used for students' answers now. */
+  get currentModel() {
+    return process.env.WHISPER_MODEL || 'gpt-4o-mini-transcribe';
+  }
 
-    const text = await this.transcribeOnce(audioBuffer, filename, contentType, FILLER_PROMPT);
+  /** `model` is only for the teacher's comparison tool; students' answers always use currentModel. */
+  async transcribeWithWhisper(audioBuffer, filename, contentType, { model } = {}) {
+    if (!this.keepFillers) return this.transcribeOnce(audioBuffer, filename, contentType, '', model);
+
+    const text = await this.transcribeOnce(audioBuffer, filename, contentType, FILLER_PROMPT, model);
     if (!isPromptEcho(text)) return text;
 
     console.warn('Transcription returned the filler prompt itself; retrying without it');
-    return this.transcribeOnce(audioBuffer, filename, contentType, '');
+    return this.transcribeOnce(audioBuffer, filename, contentType, '', model);
   }
 
-  async transcribeOnce(audioBuffer, filename, contentType, prompt) {
+  async transcribeOnce(audioBuffer, filename, contentType, prompt, model = null) {
     const form = new FormData();
     form.append('file', new Blob([audioBuffer], { type: contentType }), filename);
     // gpt-4o-mini-transcribe is half the price of legacy whisper-1 ($0.003 vs
     // $0.006 a minute) and newer, which matters for accented speech. Override
     // with WHISPER_MODEL if it ever mishears these students.
-    form.append('model', process.env.WHISPER_MODEL || 'gpt-4o-mini-transcribe');
+    form.append('model', model || this.currentModel);
     form.append('language', process.env.EXAM_LANGUAGE || 'en');
     if (prompt) form.append('prompt', prompt);
 

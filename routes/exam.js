@@ -135,7 +135,7 @@ function flattenExam(exam, onlyPart = null) {
  * part here), so the client shows the score alone rather than an empty panel
  * promising detail it does not have.
  */
-function buildCriteriaDetail(bands) {
+function buildCriteriaDetail(bands, offTopic = null) {
   if (!bands) return [];
 
   return SPEAKING_PARTS.map(part => {
@@ -156,7 +156,8 @@ function buildCriteriaDetail(bands) {
         ? `${speakingLabel(part.key, low)} – ${speakingLabel(part.key, low + 1)}`
         : speakingLabel(part.key, band),
       descriptor: speakingDescriptor(part.key, low),
-      next: speakingNextBand(part.key, low)
+      next: speakingNextBand(part.key, low),
+      offTopic: offTopic?.[part.key] || null
     };
   }).filter(Boolean);
 }
@@ -367,7 +368,7 @@ router.get('/results/:resultId', async (req, res, next) => {
          * actionable half — a band number alone tells a student where they are
          * and nothing about how to move.
          */
-        criteria: buildCriteriaDetail(result.partBands),
+        criteria: buildCriteriaDetail(result.partBands, result.offTopic),
         // The teacher's correction, if one was recorded. Sent to everyone but
         // only rendered for admins — it is not secret, it is simply not a
         // student's business which way their teacher disagreed with a marker.
@@ -1237,6 +1238,22 @@ function pause(ms) {
   return { done, cancel: () => clearTimeout(timer) };
 }
 
+/**
+ * A part is called off-topic only when the readings agree (both of two, two of
+ * three): one examiner's doubt is not enough to tell a student they answered
+ * the wrong question (2026-11-22).
+ */
+export function agreedOffTopic(verdicts = []) {
+  const notes = verdicts.map(v => v?.offTopic || {});
+  const need = notes.length >= 3 ? 2 : notes.length;
+  const out = {};
+  for (const key of ['part11', 'part12', 'part2', 'part3']) {
+    const flagged = notes.filter(n => n[key]);
+    if (need > 0 && flagged.length >= need) out[key] = flagged[0][key];
+  }
+  return out;
+}
+
 export async function markTwice(markOnce, { staggerMs = markerStagger() } = {}) {
   const wanted = Number(process.env.SPEAKING_MARKERS) === 1 ? 1 : 2;
   const first = settle(Promise.resolve().then(markOnce));
@@ -1269,6 +1286,7 @@ export async function markTwice(markOnce, { staggerMs = markerStagger() } = {}) 
   return {
     ...combined.closest,
     bands: combined.bands,
+    offTopic: agreedOffTopic(verdicts),
     markers: verdicts.map(v => v.bands),
     raw: outcome.expertMark,
     complete: outcome.complete,
@@ -1587,6 +1605,8 @@ export async function markAttempt(resultId) {
     result.partBands = overall.bands;
     // Each examiner's own bands, so a teacher can see where they disagreed.
     result.markerBands = overall.markers;
+    // Parts the examiners agreed were about another subject (shown to the student).
+    result.offTopic = Object.keys(overall.offTopic || {}).length ? overall.offTopic : undefined;
     result.rawTotal = overall.raw;
     result.denominator = SPEAKING_RAW_MAX;
     result.markingMethod = 'whole-performance';

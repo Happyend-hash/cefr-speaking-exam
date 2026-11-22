@@ -320,7 +320,7 @@
     { key: 'messages', icon: 'mail', tone: 'violet', title: 'Messages & gifts', desc: 'Write to students, announce updates and gift mocks.',
       body: () => messagesCard(), open: ['msg-open'], meta: () => 'Send to one, a few or everyone' },
     { key: 'marking', icon: 'check', tone: 'amber', title: 'Marking & reviews', desc: 'Review attempts, expert scores, marking accuracy, calibration and repairs.',
-      body: () => `${unmarkedCard()}${reviewCard()}${accuracyCard()}${expertPackCard()}${calibrationCard()}${remarkCard()}${rescueCard()}${purgeCard()}`,
+      body: () => `${unmarkedCard()}${reviewCard()}${accuracyCard()}${transcriptionCheckCard()}${expertPackCard()}${calibrationCard()}${remarkCard()}${rescueCard()}${purgeCard()}`,
       open: ['review-open', 'acc-open', 'calibration-open'],
       badge: () => (state.unmarked || []).length,
       meta: () => ((state.unmarked || []).length ? `${plural(state.unmarked.length, 'attempt')} not marked` : 'Everything is marked') },
@@ -1505,6 +1505,101 @@
    * sitting at C1, and a teacher can only collect what they can see is missing.
    */
   /**
+   * Transcription check (2026-11-22): the Part 2 and Part 3 answers of a few
+   * recent mocks, transcribed again with another model, beside what the marker
+   * read — with the recording, so the teacher can hear which text is right.
+   * Nothing is saved.
+   */
+  const tcWords = t => String(t || '').split(/\s+/).filter(Boolean);
+  const tcNorm = w => w.toLowerCase().replace(/[^a-z0-9']/g, '');
+  /** Both texts with the words the other text does not have marked. */
+  function tcDiff(a, b) {
+    const x = tcWords(a), y = tcWords(b);
+    const m = x.length, n = y.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = m - 1; i >= 0; i -= 1) for (let j = n - 1; j >= 0; j -= 1) dp[i][j] = tcNorm(x[i]) === tcNorm(y[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const left = [], right = [];
+    let i = 0, j = 0;
+    while (i < m || j < n) {
+      if (i < m && j < n && tcNorm(x[i]) === tcNorm(y[j])) { left.push(esc(x[i])); right.push(esc(y[j])); i += 1; j += 1; }
+      else if (j < n && (i >= m || dp[i][j + 1] >= dp[i + 1][j])) { right.push(`<mark class="tc-add">${esc(y[j])}</mark>`); j += 1; }
+      else { left.push(`<mark class="tc-del">${esc(x[i])}</mark>`); i += 1; }
+    }
+    return [left.join(' '), right.join(' ')];
+  }
+
+  function transcriptionCheckCard() {
+    const d = state.tc;
+    if (!state.tcOpen) {
+      return `<div class="card" style="margin-top:28px">
+        <h2 style="font-size:18px">Transcription check</h2>
+        <p class="muted" style="margin-top:6px">Is the transcription mishearing students? Compare the current model with a stronger one on recent Part 2 and Part 3 answers. Nothing is saved.</p>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-tc-open>Open</button>
+      </div>`;
+    }
+    const last = d?.last;
+    const items = last?.items || [];
+    const avg = items.filter(i => i.candidate).length ? Math.round(items.filter(i => i.candidate).reduce((a, i) => a + i.difference, 0) / items.filter(i => i.candidate).length) : null;
+    const rows = items.map((it, k) => {
+      const [left, right] = it.candidate ? tcDiff(it.current, it.candidate) : [esc(it.current), `<span class="muted">${esc(it.error || 'failed')}</span>`];
+      return `<div class="tc-item">
+        <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <strong>${esc(it.exam)} · Part ${esc(it.part)} <span class="muted" style="font-weight:400">· ${esc(new Date(it.at).toLocaleDateString())} · score ${esc(it.score ?? '—')}</span></strong>
+          <span class="row" style="gap:8px">${it.candidate ? `<span class="tag">${it.difference}% different</span>` : ''}
+            ${state.tcAudio?.[k] ? `<audio controls src="${state.tcAudio[k]}" style="height:32px"></audio>` : `<button class="btn btn-ghost btn-sm" data-tc-listen="${k}">▶ Listen</button>`}</span>
+        </div>
+        <p class="muted" style="font-size:12.5px;margin-top:4px">${esc(it.question)}</p>
+        <div class="tc-cols">
+          <div><div class="tc-h">Now (${esc(last.current || d.current)}) — what the marker read</div><p>${left}</p></div>
+          <div><div class="tc-h">${esc(last.model)}</div><p>${right}</p></div>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="card" style="margin-top:28px">
+      <div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Transcription check</h2><button class="btn btn-ghost btn-sm" data-tc-close>Close</button></div>
+      <p class="muted" style="margin-top:6px">Students' answers are transcribed now with <strong>${esc(d?.current || '…')}</strong>. Pick another model to compare it on the Part 2 and Part 3 answers of recent mocks. Listen and judge which text matches what the student said. About $0.02 per mock; nothing is saved.</p>
+      <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+        <select id="tc-model" aria-label="Model to compare">${(d?.models || ['gpt-4o-transcribe']).filter(m => m !== d?.current).map(m => `<option ${m === 'gpt-4o-transcribe' ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
+        <select id="tc-mocks" aria-label="How many mocks">${[3, 5, 8].map(n => `<option value="${n}" ${n === 5 ? 'selected' : ''}>${n} mocks</option>`).join('')}</select>
+        <button class="btn btn-sm" data-tc-run ${d?.running ? 'disabled' : ''}>${d?.running ? 'Checking… (1–2 min)' : 'Run the check'}</button>
+      </div>
+      ${last?.error ? `<p class="error" style="margin-top:10px">${esc(last.error)}</p>` : ''}
+      ${items.length ? `<p style="margin-top:12px"><strong>${items.length} answers compared</strong> · on average ${avg ?? '—'}% of the words differ. <mark class="tc-del">Struck</mark> = only in the current text · <mark class="tc-add">Highlighted</mark> = only in the new one.</p>${rows}
+        <p class="muted" style="margin-top:12px;font-size:13px">If the new model is clearly closer to what the students said: Railway → Variables → set <code>WHISPER_MODEL</code> to <code>${esc(last.model)}</code>. New answers then use it.</p>` : ''}
+    </div>`;
+  }
+
+  async function tcLoad() {
+    try {
+      const d = await api('/admin/transcription-check');
+      setState({ tc: d });
+      if (d.running) setTimeout(() => { if (state.tcOpen) tcLoad(); }, 5000);
+    } catch (error) { setState({ error: error.message }); }
+  }
+
+  function wireTranscriptionCheck() {
+    root.querySelector('[data-tc-open]')?.addEventListener('click', () => { setState({ tcOpen: true }); tcLoad(); });
+    root.querySelector('[data-tc-close]')?.addEventListener('click', () => setState({ tcOpen: false }));
+    root.querySelector('[data-tc-run]')?.addEventListener('click', async () => {
+      try {
+        const d = await api('/admin/transcription-check', { method: 'POST', body: { model: root.querySelector('#tc-model')?.value, mocks: Number(root.querySelector('#tc-mocks')?.value) || 5 } });
+        setState({ tc: d, tcAudio: {} });
+        setTimeout(tcLoad, 5000);
+      } catch (error) { setState({ error: error.message }); }
+    });
+    root.querySelectorAll('[data-tc-listen]').forEach(el => el.addEventListener('click', async () => {
+      const k = Number(el.dataset.tcListen);
+      const it = state.tc?.last?.items?.[k];
+      if (!it) return;
+      try {
+        const res = await fetch(`${API}/exam/audio/${it.audioKey}`, { headers: { Authorization: `Bearer ${state.token}` } });
+        if (!res.ok) throw new Error(`Recording could not be loaded (${res.status})`);
+        setState({ tcAudio: { ...(state.tcAudio || {}), [k]: URL.createObjectURL(await res.blob()) } });
+      } catch (error) { setState({ error: error.message }); }
+    }));
+  }
+
+  /**
    * Expert calibration pack (2026-11-21): 15 mocks for a certified examiner to
    * mark blind in a Google Form. Picks them across the levels, downloads the
    * ZIP for Google Drive (codes only) and the teacher's key.
@@ -2314,7 +2409,7 @@
     wireVoiceAdmin();
     wireChatAdmin();
     wireTestPanel();
-    if (state.folder === 'marking') wireExpertPack();
+    if (state.folder === 'marking') { wireExpertPack(); wireTranscriptionCheck(); }
     if (state.folder === 'news') { wireNewsAdmin(); paintWallImages(); }
     if (state.folder === 'materials') wireMaterialsAdmin();
     if (state.folder === 'wall') wireWallAdmin();
