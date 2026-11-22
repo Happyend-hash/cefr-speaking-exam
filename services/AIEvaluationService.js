@@ -153,7 +153,8 @@ class AIEvaluationService {
         topic,
         pros,
         cons,
-        anchors
+        anchors,
+        pictures
       } = taskData;
 
       if (!transcription || transcription.trim().length === 0) {
@@ -184,8 +185,9 @@ class AIEvaluationService {
             cefrLevel,
             referenceImages,
             followUpQuestions,
-            { part, instructions, topic, pros, cons, anchors }
+            { part, instructions, topic, pros, cons, anchors, pictures }
           );
+      if (!isWriting && pictures?.length) prompt.images = pictures;
 
       const response = await this.callClaudeAPI(prompt);
       return this.onOfficialScale(this.parseEvaluation(response));
@@ -290,7 +292,7 @@ ${blocks.join('\n\n')}
 `;
   }
 
-  async evaluateAttempt({ answers, examTitle, pronunciation = null, fluency = null, anchors = [] }) {
+  async evaluateAttempt({ answers, examTitle, pronunciation = null, fluency = null, anchors = [], pictures = [] }) {
     const byPart = answers.reduce((groups, answer) => {
       (groups[answer.part] ||= []).push(answer);
       return groups;
@@ -500,7 +502,10 @@ do not return null for it; only a part with no evidence at all gets null.`;
 ${fluency.wordsPerMin} words/min; ${fluency.longPausesPerMin} pauses ≥1s per minute (${fluency.longPauses} in all, ${fluency.veryLongPauses} of them ≥2s, longest ${fluency.longestPauseSec}s); silent ${fluency.pauseRatio}% of speaking time; ${fluency.fillersPerMin} fillers per minute (${fluency.fillers} in all); ${fluency.repeats} repeats${fluency.slowStarts ? `; ${fluency.slowStarts} answer(s) started only after 3s+ of silence` : ''}.`
       : '';
 
-    const user = `${examTitle ? `Exam: ${examTitle}\n\n` : ''}THE CANDIDATE'S FULL PERFORMANCE:
+    const seenPictures = pictures?.length
+      ? `THE PART 1.2 PICTURES the candidate was shown are attached above. Use them to judge how accurately and fully Part 1.2 describes and compares what is shown.\n\n`
+      : '';
+    const user = `${examTitle ? `Exam: ${examTitle}\n\n` : ''}${seenPictures}THE CANDIDATE'S FULL PERFORMANCE:
 ${transcript}${measured}${measuredFluency}`;
 
     // The longest reply of all — every part's band and reasoning, plus the
@@ -510,6 +515,7 @@ ${transcript}${measured}${measuredFluency}`;
     const response = await this.callClaudeAPI({
       cached,
       user,
+      images: pictures?.length ? pictures : undefined,
       maxTokens: Math.max(this.maxTokens, OVERALL_MIN_TOKENS)
     });
     const verdict = this.parseEvaluation(response);
@@ -869,8 +875,8 @@ ${a.notes ? `Why: ${a.notes}` : ''}`).join('\n')}
              'relevant answer with a little detail. Brevity is correct here and must not be penalised.',
       '1.2': 'Part 1.2 — the student sees two pictures and describes them, then answers two ' +
              'short follow-ups. Reward accurate description, comparison and the language of ' +
-             'speculation. The transcript is all you have, so judge the description on its own ' +
-             'internal coherence and detail, not on whether it matches an image you cannot see. ' +
+             'speculation. When the pictures are attached, judge how accurately and fully the description ' +
+             'and comparison match them; when they are not, judge the description on its own coherence and detail. ' +
              'The school\'s priority for this part is fluency and the ability to form sentences ' +
              'naturally, not grammatical precision: when scoring the grammar and vocabulary ' +
              'criteria below, frequent errors are expected and should not pull the score down on ' +
@@ -974,7 +980,9 @@ Mark as the official examiner would: neither severe nor generous.`;
       pros?.length ? `\nArguments FOR shown to the student: ${pros.join('; ')}` : ''
     }${cons?.length ? `\nArguments AGAINST shown to the student: ${cons.join('; ')}` : ''}${
       followUpQuestions?.length ? `\nFollow-up questions: ${followUpQuestions.join(', ')}` : ''
-    }${referenceImages?.length ? `\nThe student was shown ${referenceImages.length} picture(s). You cannot see them.` : ''}
+    }${context.pictures?.length
+      ? `\nThe picture(s) the student was shown are attached above. Check the description and comparison against them: what is shown, what was missed, and whether it is described accurately.`
+      : referenceImages?.length ? `\nThe student was shown ${referenceImages.length} picture(s). You cannot see them.` : ''}
 
 THE STUDENT'S ANSWER (transcribed):
 "${transcription}"`;
@@ -1022,6 +1030,12 @@ THE STUDENT'S ANSWER (transcribed):
       // instead, and stop asking the cheaper one until the next deploy. A
       // comment from the better model is worth more than no comment at all.
       const isSplitPrompt = prompt && typeof prompt === 'object';
+
+      // A picture the API would not take must never cost the mark: ask again without it.
+      if (isSplitPrompt && prompt.images?.length && status === 400) {
+        console.warn(`Claude refused the Part 1.2 picture(s) (${error.message}); marking without them.`);
+        return this.callClaudeAPI({ ...prompt, images: undefined }, attempt);
+      }
       if (isSplitPrompt && prompt.model && prompt.model !== this.model && (status === 400 || status === 404)) {
         console.warn(`Answer model "${prompt.model}" refused (${status}); using ${this.model} for per-answer comments from now on: ${error.message}`);
         if (this.answerModel === prompt.model) this.answerModel = null;
@@ -1077,7 +1091,13 @@ THE STUDENT'S ANSWER (transcribed):
       messages: [
         {
           role: 'user',
-          content: userText
+          // Pictures the student saw (Part 1.2) go first, then the text that refers to them.
+          content: isSplit && prompt.images?.length
+            ? [
+              ...prompt.images.map(img => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })),
+              { type: 'text', text: userText }
+            ]
+            : userText
         }
       ]
     };

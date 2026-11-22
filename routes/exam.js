@@ -6,6 +6,7 @@ import Exam from '../models/Exam.js';
 import ExamResult, { MAX_SCORE } from '../models/ExamResult.js';
 import CalibrationSample from '../models/CalibrationSample.js';
 import AIEvaluationService from '../services/AIEvaluationService.js';
+import { partTwelvePictures } from '../services/ExamPictures.js';
 import TranscriptionService from '../services/TranscriptionService.js';
 import AudioStorageService, {
   ALLOWED_AUDIO_TYPES,
@@ -1207,8 +1208,9 @@ export async function trialMark(resultId) {
   const answers = speakingInputs(result, questionByNumber);
   if (!answers.length) throw Object.assign(new Error('This attempt has no transcripts to mark'), { statusCode: 400 });
   const anchors = (await ExamResult.markingAnchors()).filter(a => String(a._id || a.id || '') !== String(result._id));
+  const pictures = await partTwelvePictures(flattenExam(exam));
   return markTwice(() => AICallLimiter.run(() =>
-    AIEvaluationService.evaluateAttempt({ answers, examTitle: exam.title, pronunciation: result.pronunciation, fluency: result.fluency, anchors })
+    AIEvaluationService.evaluateAttempt({ answers, examTitle: exam.title, pronunciation: result.pronunciation, fluency: result.fluency, anchors, pictures })
   ));
 }
 
@@ -1319,6 +1321,8 @@ export async function markAttempt(resultId) {
 
   const untranscribed = [];
   const jobs = [];
+  // The Part 1.2 pictures the student saw, for the marker to look at (2026-11-22).
+  const pictures = await partTwelvePictures(flat);
 
   for (const taskResult of result.taskResults) {
     const task = exam.tasks.find(t => t.taskNumber === taskResult.taskNumber);
@@ -1359,6 +1363,7 @@ export async function markAttempt(resultId) {
           // Context the examiner would have in front of them: which part this
           // is, and the stimulus the student was answering about.
           part: question?.part,
+          pictures: String(question?.part) === '1.2' ? pictures : undefined,
           instructions: question?.instructions,
           topic: question?.topic,
           pros: question?.pros,
@@ -1537,7 +1542,8 @@ export async function markAttempt(resultId) {
           examTitle: exam.title,
           pronunciation: result.pronunciation,
           fluency: result.fluency,
-          anchors
+          anchors,
+          pictures
         })
       ));
     } catch (error) {
