@@ -18,7 +18,8 @@ export const DAILY_CAP = Object.freeze({
   taboo: Number(process.env.GAME_CAP_TABOO) || 500,
   // A whole unit in one race can be 50+ words, so this cap is generous —
   // it exists to keep the ranking about playing well, not grinding all night.
-  'vocab-race': Number(process.env.GAME_CAP_VOCAB_RACE) || 1500
+  // Raised from 1500 to 3000 a day (Jamshid, 2026-11-25).
+  'vocab-race': Number(process.env.GAME_CAP_VOCAB_RACE) || 3000
 });
 
 const DAY = 24 * 60 * 60 * 1000;

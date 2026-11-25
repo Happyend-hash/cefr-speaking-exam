@@ -210,3 +210,8 @@ test('the games week starts on Monday in Tashkent', () => {
   assert.equal(startOfDay(t).toISOString(), '2026-09-23T19:00:00.000Z');
   assert.equal(startOfWeek(t).toISOString(), '2026-09-20T19:00:00.000Z');
 });
+
+test('vocabulary learning counts up to 3000 points a day', async () => {
+  const { DAILY_CAP } = await import('../services/Games.js');
+  if (!process.env.GAME_CAP_VOCAB_RACE) assert.equal(DAILY_CAP['vocab-race'], 3000);
+});
